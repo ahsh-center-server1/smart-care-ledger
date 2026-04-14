@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Care Ledger</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+  <!-- Firebase SDK (Firestore만 사용, Auth 제거) -->
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
+    import { getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+
+    // ★ 본인 Firebase 설정으로 변경하세요
+    const firebaseConfig = {
+      apiKey:            "AIzaSyBYm__B_uz6hg_epUlpvI8jWdjhkRQgMuo",
+      authDomain:        "smart-care-ledger.firebaseapp.com",
+      projectId:         "smart-care-ledger",
+      storageBucket:     "smart-care-ledger.firebasestorage.app",
+      messagingSenderId: "731965168909",
+      appId:             "1:731965168909:web:1fa16a4b4d050a32e7e444"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    // 전역 노출
+    window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy };
+
+    // Firestore 준비 완료 → 앱 초기화 트리거
+    window._fbReady = true;
+    if (window.onFirebaseReady) window.onFirebaseReady();
+  </script>
+
+  <!-- 외부 라이브러리 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google OAuth (Drive 업로드용) -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <!-- 파서 설정 — 은행/카드사 추가 시 이 파일만 수정 -->
+  <script src="parser-config.js"></script>
+
+  <style>
+    :root {
+      --bg:      #f1f5f9;
+      --green:   #10b981;
+      --card:    #ffffff;
+      --sidebar: #1e293b;
+      --border:  #e2e8f0;
+      --bm:      #cbd5e1;
+      --text:    #1e293b;
+      --sub:     #475569;
+      --muted:   #94a3b8;
+      --blue:    #3b82f6;
+      --blue2:   #1d4ed8;
+      --green:   #10b981;
+      --red:     #f43f5e;
+      --amber:   #f59e0b;
+      --shadow:  0 1px 3px rgba(0,0,0,0.08),0 1px 2px rgba(0,0,0,0.04);
+      --shadow2: 0 4px 12px rgba(0,0,0,0.08);
+      --r:       12px;
+      --r2:      18px;
+      --tr:      all 0.15s ease;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Noto Sans KR',-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:14px;-webkit-font-smoothing:antialiased;}
+    .spinner{width:32px;height:32px;border:3px solid #e2e8f0;border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+    .nav-item{width:100%;text-align:left;padding:10px 14px;border-radius:10px;font-size:14px;font-weight:600;color:#94a3b8;transition:var(--tr);display:flex;align-items:center;gap:10px;margin-bottom:2px;border:1px solid transparent;background:none;cursor:pointer;}
+    .nav-item:hover{background:rgba(255,255,255,.08);color:#f1f5f9;}
+    .nav-item.active{background:rgba(59,130,246,.18);color:#93c5fd;border-color:rgba(59,130,246,.25);}
+    .nav-sub{width:100%;text-align:left;padding:8px 14px;border-radius:8px;font-size:13px;color:#64748b;transition:var(--tr);display:block;background:none;cursor:pointer;}
+    .nav-sub:hover{color:#93c5fd;background:rgba(59,130,246,.08);}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);box-shadow:var(--shadow);transition:var(--tr);}
+    .card:hover{box-shadow:var(--shadow2);}
+    .client-card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--r2);box-shadow:var(--shadow);padding:28px 20px;cursor:pointer;transition:var(--tr);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;min-height:130px;}
+    .client-card:hover{border-color:var(--blue);box-shadow:0 8px 24px rgba(59,130,246,.15);transform:translateY(-2px);}
+    .client-avatar{width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#dbeafe,#ede9fe);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:var(--blue);border:2px solid #bfdbfe;}
+    .client-name{font-size:17px;font-weight:800;color:var(--text);transition:var(--tr);}
+    .client-card:hover .client-name{color:var(--blue);}
+    table thead th{position:sticky;top:0;z-index:10;background:#f8fafc;border-bottom:2px solid var(--bm);white-space:nowrap;font-size:12px;font-weight:700;color:var(--sub);padding:12px 14px;}
+    table tbody tr{transition:background .1s;}
+    table tbody tr:hover{background:#f8fafc;}
+    table tbody td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:14px;color:var(--text);vertical-align:middle;}
+    .col-in{color:#059669!important;font-weight:700;font-family:'JetBrains Mono',monospace;}
+    .col-out{color:#dc2626!important;font-weight:700;font-family:'JetBrains Mono',monospace;}
+    .input{background:#fff!important;border:1.5px solid var(--bm)!important;color:var(--text)!important;padding:9px 13px;border-radius:9px;width:100%;font-size:14px;transition:border-color .15s;font-family:inherit;}
+    .input:focus{outline:none;border-color:var(--blue)!important;box-shadow:0 0 0 3px rgba(59,130,246,.1);}
+    .input::placeholder{color:var(--muted);}
+    .label{font-size:12px;font-weight:700;color:var(--sub);margin-bottom:5px;display:block;}
+    .btn{background:var(--blue);color:#fff;padding:9px 18px;border-radius:9px;font-weight:700;font-size:14px;transition:var(--tr);border:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;}
+    .btn:hover{background:var(--blue2);transform:translateY(-1px);}
+    .btn:disabled{opacity:.5;cursor:not-allowed;transform:none;}
+    .btn-sub{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:9px;font-weight:700;font-size:13px;cursor:pointer;transition:var(--tr);border:1.5px solid;background:transparent;}
+    .icon-btn{width:30px;height:30px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;border:none;transition:var(--tr);background:transparent;}
+    .icon-btn:hover.edit{background:#dbeafe;color:var(--blue);}
+    .icon-btn:hover.del{background:#fee2e2;color:#dc2626;}
+    .badge{display:inline-block;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;background:#f1f5f9;border:1px solid var(--bm);color:var(--sub);}
+    .period-btn{padding:5px 10px;border-radius:7px;font-size:12px;font-weight:700;background:#fff;color:var(--sub);border:1.5px solid var(--bm);cursor:pointer;transition:var(--tr);}
+    .period-btn:hover,.period-btn.active{background:var(--blue);color:#fff;border-color:var(--blue);}
+    .cat-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;transition:var(--tr);white-space:nowrap;border:1.5px solid transparent;}
+    .cat-chip:hover{opacity:.85;}
+    .cat-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+    .cat-dd{position:absolute;z-index:300;background:#fff;border:1px solid var(--bm);border-radius:10px;box-shadow:var(--shadow2);padding:5px;min-width:130px;display:none;}
+    .cat-dd.show{display:block;}
+    .cat-dd-item{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);}
+    .cat-dd-item:hover{background:var(--bg);}
+    #toast-wrap{position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
+    .toast{background:#fff;border:1px solid var(--bm);padding:12px 16px;border-radius:10px;font-size:14px;font-weight:600;color:var(--text);box-shadow:var(--shadow2);animation:toastIn .25s ease;pointer-events:auto;display:flex;align-items:center;gap:8px;min-width:200px;}
+    .toast.success{border-left:4px solid var(--green);}
+    .toast.error{border-left:4px solid var(--red);}
+    .toast.info{border-left:4px solid var(--blue);}
+    @keyframes toastIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes toastOut{to{opacity:0;transform:translateY(8px)}}
+    #confirm-dialog{position:fixed;inset:0;background:rgba(15,23,42,.5);backdrop-filter:blur(4px);z-index:9000;display:none;align-items:center;justify-content:center;padding:20px;}
+    #confirm-dialog.show{display:flex;}
+    .confirm-box{background:#fff;border:1px solid var(--border);border-radius:20px;padding:32px;max-width:360px;width:100%;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.1);animation:fadeUp .2s ease;}
+    .confirm-box h4{font-size:17px;font-weight:800;color:var(--text);margin-bottom:8px;}
+    .confirm-box p{font-size:14px;color:var(--sub);margin-bottom:24px;line-height:1.7;white-space:pre-line;}
+    #receipt-modal{position:fixed;inset:0;background:rgba(15,23,42,.7);backdrop-filter:blur(6px);z-index:9100;display:none;align-items:center;justify-content:center;padding:20px;}
+    #receipt-modal.show{display:flex;}
+    #receipt-inner{background:#fff;border-radius:18px;max-width:720px;width:100%;max-height:92vh;overflow:auto;padding:20px 24px;box-shadow:0 10px 30px rgba(0,0,0,.1);position:relative;animation:fadeUp .2s ease;}
+    #receipt-inner img{max-width:100%;border-radius:8px;}
+    #receipt-close{position:absolute;top:12px;right:12px;width:30px;height:30px;border-radius:50%;background:#f1f5f9;border:none;cursor:pointer;font-size:15px;color:var(--sub);display:flex;align-items:center;justify-content:center;}
+    #receipt-close:hover{background:#fee2e2;color:#dc2626;}
+    #modal-wrap{position:fixed;inset:0;background:rgba(15,23,42,.4);backdrop-filter:blur(4px);z-index:700;display:none;align-items:center;justify-content:center;padding:20px;}
+    #modal-wrap.show{display:flex;}
+    #modal-box{background:#fff;border:1px solid var(--border);padding:24px;border-radius:24px;width:100%;max-width:500px;box-shadow:0 10px 30px rgba(0,0,0,.1);position:relative;max-height:90vh;overflow-y:auto;animation:fadeUp .2s ease;}
+    #modal-close-btn{position:absolute;top:14px;right:14px;width:28px;height:28px;border-radius:50%;background:#f1f5f9;border:none;cursor:pointer;font-size:14px;color:var(--sub);display:flex;align-items:center;justify-content:center;}
+    #modal-close-btn:hover{background:#fee2e2;color:#dc2626;}
+    .loading-overlay{position:fixed;inset:0;background:rgba(255,255,255,.8);z-index:500;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;backdrop-filter:blur(3px);}
+    .loading-overlay.show{display:flex;}
+    .animate-in{animation:fadeUp .2s ease;}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    ::-webkit-scrollbar{width:5px;height:5px;}
+    ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:10px;}
+    .empty-state{padding:50px 20px;text-align:center;color:var(--muted);}
+    .empty-state .icon{font-size:32px;margin-bottom:10px;opacity:.4;}
+    .cat-tag{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:99px;border:1.5px solid;cursor:default;transition:var(--tr);background:#fff;}
+    .cat-del{margin-left:2px;width:15px;height:15px;border-radius:50%;background:#f1f5f9;color:#94a3b8;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;border:none;}
+    .cat-del:hover{background:#fee2e2;color:#dc2626;}
+    .rule-tag{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:9px;background:#f8fafc;border:1.5px solid var(--bm);}
+    .stat-card{background:var(--card);padding:20px;border-radius:var(--r2);border:1px solid var(--border);box-shadow:var(--shadow);}
+    /* 보고서 */
+    #print-area{font-family:'Noto Sans KR',sans-serif;}
+    #print-area table{border-collapse:collapse;}
+    #print-area table tbody tr{border-bottom:1px solid #e5e7eb;}
+    #print-area table tbody td{padding:10px 6px;font-size:14px;color:#374151;}
+    .rs-rejected { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; padding: 4px 12px; border-radius: 99px; font-size: 11px; font-weight: 800; display: inline-block; }
+  .rs-draft    {background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1;padding:4px 11px;border-radius:99px;font-size:12px;font-weight:800;display:inline-block;}
+    .rs-submitted{background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:4px 11px;border-radius:99px;font-size:12px;font-weight:800;display:inline-block;}
+    .rs-team     {background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe;padding:4px 11px;border-radius:99px;font-size:12px;font-weight:800;display:inline-block;}
+    .rs-confirmed{background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;padding:4px 11px;border-radius:99px;font-size:12px;font-weight:800;display:inline-block;}
+    /* 연간 통계 */
+    .stat-num{font-size:22px;font-weight:900;font-family:'JetBrains Mono',monospace;margin-top:4px;}
+    /* 인쇄 */
+    @media print{
+      body{background:#fff!important;font-size:15px!important;margin:0!important;}
+      #toast-wrap,#confirm-dialog,#receipt-modal,#modal-wrap,#loading-overlay,
+      aside,header,.no-print{display:none!important;}
+      /* 조회영역/결재현황/자동요약/트랙 인쇄 제외 */
+      #view-report>*:not(#rpt-subtab-monthly){display:none!important;}
+      #rpt-subtab-monthly>*:not(#report-area){display:none!important;}
+      #rpt-pending-wrap,#rpt-track,#rpt-ai-summary,
+      #rpt-action-btns,#rpt-status-badge{display:none!important;}
+      #view-dashboard,#view-history,#view-management,
+      #view-settings{display:none!important;}
+      #app-view{display:block!important;height:auto!important;overflow:visible!important;padding:0!important;}
+      main{overflow:visible!important;padding:0!important;}
+      .no-print-hide{display:none!important;}
+      #view-report{display:block!important;padding:0!important;}
+      #report-area{display:block!important;}
+      #rpt-comments-area{display:block!important;}
+      /* 페이지 설정 — 프린터/PDF 모두 A4 강제 */
+      @page{
+        size:A4 portrait;
+        margin:10mm 12mm;
+      }
+      /* print-area: mm 단위로 폭 고정 → 프린터 OS 설정과 무관하게 A4에 맞춤 */
+      #print-area{
+        box-shadow:none!important;border-radius:0!important;border:none!important;
+        font-size:13px!important;
+        width:186mm!important;        /* 210mm - 좌12mm - 우12mm */
+        max-width:186mm!important;
+        margin:0 auto!important;
+      }
+      /* 섹션 padding 축소 */
+      #print-area>div{padding:8px 12px!important;}
+      /* 헤더 섹션 */
+      #print-area h1{font-size:18px!important;margin:0!important;}
+      /* 테이블 공통 */
+      #print-area table{width:100%!important;border-collapse:collapse!important;table-layout:fixed!important;}
+      #print-area table td,#print-area table th{
+        font-size:13px!important;padding:5px 3px!important;
+        word-break:break-all!important;overflow-wrap:break-word!important;
+      }
+      /* 거래내역 테이블 컬럼 — mm 단위 (합계 186mm) */
+      #rpt-trx-body tr td:nth-child(1){width:17mm!important;}   /* 날짜 */
+      #rpt-trx-body tr td:nth-child(2){width:20mm!important;}   /* 분류 */
+      #rpt-trx-body tr td:nth-child(3){width:95mm!important;}   /* 내용 */
+      #rpt-trx-body tr td:nth-child(4){width:22mm!important;}   /* 수입 */
+      #rpt-trx-body tr td:nth-child(5){width:22mm!important;}   /* 지출 */
+      #rpt-trx-body tr td:nth-child(6){width:10mm!important;}   /* 증빙 */
+      /* 헤더도 동일 */
+      #print-area table thead tr th:nth-child(1){width:17mm!important;}
+      #print-area table thead tr th:nth-child(2){width:20mm!important;}
+      #print-area table thead tr th:nth-child(3){width:95mm!important;}
+      #print-area table thead tr th:nth-child(4){width:22mm!important;}
+      #print-area table thead tr th:nth-child(5){width:22mm!important;}
+      #print-area table thead tr th:nth-child(6){width:10mm!important;}
+      /* 색상 보존 */
+      #print-area *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
+      /* I001: 테이블 행 페이지 경계 잘림 방지 */
+      #print-area table tr{page-break-inside:avoid!important;}
+      #print-area table tbody tr{page-break-inside:avoid!important;break-inside:avoid!important;}
+      /* 섹션 단위로 페이지 나눔 방지 */
+      #print-area>div{page-break-inside:avoid!important;break-inside:avoid!important;}
+      /* 인쇄 시 숨겨진 섹션 여백 제거 */
+      #rpt-bank-stmt-section,#rpt-excel-cmp-section{display:none!important;padding:0!important;margin:0!important;border:none!important;}
+      #print-area>div[style*="display: none"],#print-area>div[style*="display:none"]{padding:0!important;margin:0!important;border:none!important;height:0!important;overflow:hidden!important;}
+    }
+    @media(max-width:768px){aside{display:none;}}
+  </style>
+</head>
+<body>
+
+<div id="toast-wrap"></div>
+<div id="confirm-dialog">
+  <div class="confirm-box">
+    <div style="font-size:28px;margin-bottom:12px">⚠️</div>
+    <h4 id="c-title">확인</h4>
+    <p  id="c-msg">계속 진행하시겠습니까?</p>
+    <div style="display:flex;gap:10px;">
+      <button id="c-cancel" class="btn-sub" style="flex:1;justify-content:center;color:#64748b;border-color:#cbd5e1;" onclick="closeConfirm()">취소</button>
+      <button id="c-ok"     class="btn"     style="flex:1;">확인</button>
+    </div>
+  </div>
+</div>
+
+<div id="receipt-modal" onclick="if(event.target===this)closeReceiptModal()">
+  <div id="receipt-inner">
+    <button id="receipt-close" onclick="closeReceiptModal()">✕</button>
+    <div id="receipt-body" style="margin-top:6px;"></div>
+  </div>
+</div>
+
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <p style="font-size:13px;font-weight:700;color:var(--blue);">로딩 중...</p>
+</div>
+
+<!-- 로그인 -->
+<div id="login-view" style="position:fixed;inset:0;background:linear-gradient(135deg,#f0f9ff,#e0e7ff);display:flex;align-items:center;justify-content:center;padding:20px;z-index:600;">
+  <div style="background:#fff;padding:40px;border-radius:24px;border:1px solid var(--border);box-shadow:0 10px 30px rgba(0,0,0,.08);width:100%;max-width:400px;" class="animate-in">
+    <div style="text-align:center;margin-bottom:32px;">
+      <div style="width:56px;height:56px;background:var(--blue);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 14px;">📋</div>
+      <h1 style="font-size:22px;font-weight:900;color:var(--text);">CARE LEDGER</h1>
+      <p style="color:var(--muted);font-size:13px;margin-top:4px;">사회복지사 전용 금전관리 시스템</p>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <input id="login-id" class="input" placeholder="아이디" type="text" style="font-size:15px;padding:12px;">
+      <input id="login-pw" class="input" placeholder="비밀번호" type="password" style="font-size:15px;padding:12px;">
+      <button id="login-btn" class="btn" style="width:100%;padding:13px;font-size:15px;margin-top:4px;" onclick="handleLogin()">시스템 접속</button>
+    </div>
+    <p id="login-err" style="color:var(--red);font-size:13px;text-align:center;margin-top:10px;display:none;"></p>
+  </div>
+</div>
+
+<!-- 메인 앱 -->
+<div id="app-view" class="hidden" style="display:none;height:100vh;overflow:hidden;">
+  <div style="display:flex;height:100%;">
+
+    <!-- 사이드바 -->
+    <aside style="width:216px;background:var(--sidebar);display:flex;flex-direction:column;flex-shrink:0;">
+      <div style="padding:18px 16px;border-bottom:1px solid #334155;">
+        <div style="color:#fff;font-weight:900;font-size:14px;">📋 SMART CARE</div>
+        <div style="color:#64748b;font-size:10px;margin-top:2px;text-transform:uppercase;letter-spacing:.05em;">Care Ledger v2.0</div>
+      </div>
+      <div style="padding:10px;">
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;">
+          <div id="user-avatar" style="width:32px;height:32px;background:var(--blue);border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;flex-shrink:0;">-</div>
+          <div style="overflow:hidden;">
+            <div id="user-name" style="color:#fff;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">-</div>
+            <div id="user-role" style="color:#64748b;font-size:10px;text-transform:uppercase;">-</div>
+          </div>
+        </div>
+      </div>
+      <nav style="flex:1;padding:0 8px;overflow-y:auto;">
+        <button class="nav-item active" data-view="dashboard">📊 대시보드</button>
+        <button class="nav-item" data-view="history">📜 거래 내역</button>
+        <button class="nav-item" data-view="report">📑 보고서 <span id="nav-rpt-badge" style="display:none;background:#ef4444;color:#fff;font-size:10px;font-weight:900;padding:1px 6px;border-radius:99px;margin-left:4px;"></span></button>
+        <button class="nav-item" data-view="settings">⚙️ 설정</button>
+        <div style="padding:14px 10px 4px;color:#475569;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;">작업</div>
+        <button class="nav-sub" id="btn-trx">✍️ 수기 입력</button>
+        <button class="nav-sub" id="btn-excel">📂 파일 업로드</button>
+      </nav>
+      <div style="padding:8px;border-top:1px solid #334155;">
+        <button onclick="handleLogout()" style="width:100%;padding:9px;border-radius:9px;font-size:12px;font-weight:700;color:#64748b;background:transparent;border:none;cursor:pointer;transition:var(--tr);" onmouseover="this.style.background='rgba(244,63,94,.1)';this.style.color='#f87171';" onmouseout="this.style.background='transparent';this.style.color='#64748b';">로그아웃</button>
+      </div>
+    </aside>
+
+    <!-- 메인 -->
+    <main style="flex:1;overflow-y:auto;background:var(--bg);display:flex;flex-direction:column;">
+
+      <!-- 헤더 -->
+      <header style="position:sticky;top:0;z-index:30;background:rgba(255,255,255,.92);backdrop-filter:blur(10px);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);box-shadow:0 1px 3px rgba(0,0,0,.04);">
+        <div>
+          <h2 id="view-title" style="font-size:18px;font-weight:900;color:var(--text);">대시보드</h2>
+          <p  id="view-sub"   style="color:var(--muted);font-size:12px;margin-top:1px;">관리 중인 입주자를 선택하세요</p>
+        </div>
+      </header>
+
+      <div style="flex:1;padding:22px 28px 28px;">
+
+        <!-- 대시보드 -->
+        <div id="view-dashboard" class="animate-in">
+          <!-- 퀵 액션 버튼 -->
+          <div id="dashboard-actions" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+            <button onclick="openModal('excel')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;color:var(--amber);min-width:90px;">
+              <span style="font-size:40px;">📤</span>파일 업로드
+            </button>
+            <button onclick="changeView('history')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;color:var(--blue);min-width:90px;">
+              <span style="font-size:40px;">📋</span>거래내역
+            </button>
+            <button onclick="openModal('trx')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;color:var(--green);min-width:90px;">
+              <span style="font-size:40px;">✍️</span>수기 입력
+            </button>
+            <button onclick="changeView('report')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;color:#8b5cf6;min-width:90px;">
+              <span style="font-size:40px;">📑</span>보고서
+            </button>
+            <button onclick="changeView('settings')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;color:var(--muted);min-width:90px;">
+              <span style="font-size:40px;">⚙️</span>설정
+            </button>
+          </div>
+          <!-- 입주자 카드 -->
+          <div id="client-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;"></div>
+        </div>
+
+        <!-- 거래 내역 -->
+        <div id="view-history" style="display:none;" class="animate-in">
+          <div class="card" style="padding:20px;margin-bottom:14px;">
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+              <div style="min-width:150px;">
+                <label class="label">입주자</label>
+                <select id="h-client" class="input" style="padding:8px 12px;"></select>
+              </div>
+              <div style="flex:1;min-width:150px;">
+                <label class="label">내용 검색</label>
+                <input id="h-search" class="input" placeholder="가맹점명..." style="padding:8px 12px;">
+              </div>
+              <div>
+                <label class="label">구분</label>
+                <select id="h-type" class="input" style="padding:8px 12px;width:110px;">
+                  <option value="all">전체</option>
+                  <option value="지출">지출</option>
+                  <option value="수입">수입</option>
+                  <option value="자산이동">자산이동</option>
+                  <option value="취소">취소</option>
+                </select>
+              </div>
+              <div>
+                <label class="label">계좌</label>
+                <select id="h-account" class="input" style="padding:8px 12px;min-width:120px;">
+                  <option value="">전체 계좌</option>
+                </select>
+              </div>
+              <div>
+                <label class="label">증빙</label>
+                <select id="h-receipt" class="input" style="padding:8px 12px;width:90px;">
+                  <option value="all">전체</option><option value="yes">있음</option><option value="no">없음</option>
+                </select>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+              <button class="period-btn" data-p="this-month">이번 달</button>
+              <button class="period-btn" data-p="last-month">지난 달</button>
+              <button class="period-btn" data-p="this-week">이번 주</button>
+              <button class="period-btn" data-p="last-3month">최근 3개월</button>
+              <button class="period-btn" data-p="this-year">올해 전체</button>
+              <input id="h-start" type="date" class="input" style="width:140px;padding:5px 10px;">
+              <span style="color:var(--muted);align-self:center;">~</span>
+              <input id="h-end" type="date" class="input" style="width:140px;padding:5px 10px;">
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:12px;">
+              <div style="display:flex;gap:8px;align-items:center;">
+                <button class="btn-sub" id="btn-h-trx" style="color:var(--blue);border-color:#bfdbfe;">✍️ 수기 입력</button>
+                <button class="btn-sub" id="btn-h-excel" style="color:var(--amber);border-color:#fde68a;">📂 파일 업로드</button>
+                <button class="btn-sub" id="btn-h-fixed" style="color:#059669;border-color:#a7f3d0;" title="이번 달 고정항목 자동 입력">📌 고정항목 입력</button>
+                <button class="btn-sub" id="btn-h-receipt-print" style="color:#7c3aed;border-color:#ddd6fe;" title="증빙 A4 일괄 출력">🖨️ 증빙 출력</button>
+                <span id="h-count" style="font-size:12px;color:var(--muted);font-family:'JetBrains Mono',monospace;"></span>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <button id="btn-trx-view-toggle" title="달력/목록 전환" style="font-size:12px;font-weight:700;color:#6366f1;border:1px solid #c7d2fe;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;">🗓️ 달력</button>
+                <button id="btn-csv-export" style="font-size:12px;font-weight:700;color:#059669;border:1px solid #a7f3d0;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;">⬇️ CSV</button>
+                <button id="btn-bulk-del" style="font-size:12px;font-weight:700;color:var(--red);border:1px solid #fecaca;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;">🗑️ 일괄 삭제</button>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="overflow:hidden;">
+            <div style="overflow-x:auto;max-height:580px;">
+              <table style="width:100%;border-collapse:collapse;min-width:650px;">
+                <thead>
+                  <tr>
+                    <th style="width:24px;"></th>
+                    <th style="width:36px;text-align:center;"><input type="checkbox" id="check-all" style="accent-color:var(--blue);width:14px;height:14px;cursor:pointer;"></th>
+                    <th data-sort="date" style="cursor:pointer;">날짜 ⇅</th>
+                    <th data-sort="category" style="cursor:pointer;">카테고리 ⇅</th>
+                    <th data-sort="description" style="cursor:pointer;">내용 ⇅</th>
+                    <th data-sort="_accLabel" style="cursor:pointer;">계좌 ⇅</th>
+                    <th style="text-align:right;" data-sort="amountIn">수입 ⇅</th>
+                    <th style="text-align:right;" data-sort="amountOut">지출 ⇅</th>
+                    <th style="text-align:center;" data-sort="receiptUrl" style="cursor:pointer;">증빙 ⇅</th>
+                    <th style="text-align:center;">관리</th>
+                  </tr>
+                </thead>
+                <tbody id="h-body"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="h-pages" style="display:flex;justify-content:center;gap:6px;flex-wrap:wrap;padding-top:10px;"></div>
+        </div>
+
+        <!-- 보고서 -->
+        <div id="view-report" style="display:none;" class="animate-in">
+          <!-- 서브탭: 월간 보고서 / 연간 통계 -->
+          <div id="rpt-subtabs" style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--border);" class="no-print">
+            <button class="rpt-subtab active" data-subtab="monthly" style="padding:8px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;border-bottom:2px solid var(--blue);margin-bottom:-2px;color:var(--blue);">📋 월간 보고서</button>
+            <button class="rpt-subtab" data-subtab="annual" style="padding:8px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;color:var(--muted);">📈 연간 통계</button>
+          </div>
+          <!-- 월간 보고서 패널 -->
+          <div id="rpt-subtab-monthly">
+          <div class="card" style="padding:18px;margin-bottom:14px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:flex-end;">
+              <div><label class="label">입주자</label><select id="r-client" class="input" style="padding:8px 12px;"></select></div>
+              <div><label class="label">연도</label><select id="r-year" class="input" style="padding:8px 12px;"></select></div>
+              <div><label class="label">월</label><select id="r-month" class="input" style="padding:8px 12px;"></select></div>
+              <button class="btn" id="btn-rpt-load">📊 조회</button>
+            </div>
+          </div>
+          <!-- ⑥ 결재 대기 섹션 -->
+          <div id="rpt-pending-wrap" style="display:none;margin-bottom:16px;" class="no-print">
+            <div class="card" style="padding:16px 20px;border-left:4px solid #f59e0b;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="font-size:14px;font-weight:800;color:#92400e;">⏳ 결재 대기 <span id="rpt-pending-count" style="font-size:12px;background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:99px;margin-left:6px;"></span></div>
+              </div>
+              <div id="rpt-pending-list"></div>
+            </div>
+          </div>
+
+          <div id="rpt-list-area" class="no-print" style="margin-top:10px;margin-bottom:18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <h3 style="font-size:14px;font-weight:700;color:var(--sub);">저장된 보고서</h3>
+              <button id="btn-rpt-list-refresh" style="font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;">↺ 새로고침</button>
+            </div>
+            <div id="rpt-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+          </div>
+
+          <div id="report-area" style="display:none;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;" class="no-print">
+              <button onclick="document.getElementById('report-area').style.display='none';if(window.S)S.reportData=null;document.querySelectorAll('#rpt-list .card').forEach(el=>el.style.background='');" style="font-size:13px;font-weight:700;color:var(--muted);background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;">← 목록으로</button>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <div id="rpt-status-badge"></div>
+                <div style="display:flex;gap:8px;" id="rpt-action-btns"></div>
+              </div>
+            </div>
+            <div id="rpt-track" class="card no-print" style="padding:18px;margin-bottom:14px;">
+              <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px;">결재 진행 현황</div>
+              <div id="rpt-track-inner" style="display:flex;align-items:center;"></div>
+            </div>
+            <!-- AI 자동 요약 -->
+            <div id="rpt-ai-summary" class="card no-print-hide" style="padding:18px;margin-bottom:14px;border-left:4px solid var(--blue);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="font-size:13px;font-weight:700;color:var(--blue);">🤖 AI 자동 요약</div>
+                <div style="display:flex;gap:6px;align-items:center;">
+                  <label style="font-size:12px;color:var(--sub);display:flex;align-items:center;gap:4px;cursor:pointer;">
+                    <input type="checkbox" id="rpt-summary-print" checked style="accent-color:var(--blue);"> 인쇄 포함
+                  </label>
+                  <button class="btn" id="btn-gen-summary" style="font-size:12px;padding:6px 12px;">✨ 생성</button>
+                </div>
+              </div>
+              <div id="rpt-summary-text" style="font-size:14px;color:var(--sub);line-height:1.7;min-height:40px;">조회 후 생성 버튼을 클릭하세요.</div>
+            </div>
+            <div id="print-area" style="background:#fff;border-radius:16px;box-shadow:var(--shadow2);overflow:hidden;border:1px solid var(--border);">
+              <div style="padding:20px 24px 16px;border-bottom:2px solid #e5e7eb;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                  <div>
+                    <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Care Ledger</div>
+                    <h1 style="font-size:22px;font-weight:900;color:#111827;">월별 금전관리 보고서</h1>
+                    <p id="rpt-period" style="font-size:14px;color:#6b7280;margin-top:4px;"></p>
+                  </div>
+                  <div style="text-align:right;">
+                    <div id="rpt-created" style="font-size:12px;color:#9ca3af;"></div>
+                    <div id="rpt-status-label" style="margin-top:4px;"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="padding:12px 24px;background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
+                  <div><div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:3px;">입주자</div><div id="rpt-client-name" style="font-size:15px;font-weight:800;color:#111827;"></div></div>
+                  <div><div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:3px;">기간</div><div id="rpt-month-label" style="font-size:15px;font-weight:800;color:#111827;"></div></div>
+                  <div><div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:3px;">담당자</div><div id="rpt-staff-name" style="font-size:15px;font-weight:800;color:#111827;"></div></div>
+                </div>
+              </div>
+              <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
+                <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">수입 / 지출 요약</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                  <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;font-weight:700;color:#16a34a;margin-bottom:3px;">총 수입</div><div id="rpt-total-in" style="font-size:18px;font-weight:900;color:#15803d;"></div></div>
+                  <div style="background:#fff1f2;border:1px solid #fecaca;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;font-weight:700;color:#dc2626;margin-bottom:3px;">총 지출</div><div id="rpt-total-out" style="font-size:18px;font-weight:900;color:#b91c1c;"></div></div>
+                  <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;font-weight:700;color:#2563eb;margin-bottom:3px;">잔액</div><div id="rpt-balance" style="font-size:18px;font-weight:900;color:#1d4ed8;"></div></div>
+                </div>
+              </div>
+              <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;"><div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">계좌 현황</div><div id="rpt-accounts"></div></div>
+              <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
+                <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">분류별 지출</div>
+                <div id="rpt-cat-table" style="width:100%;"></div>
+              </div>
+              <!-- AI 요약 인쇄 영역 -->
+              <div id="rpt-summary-print-area" style="padding:14px 24px;border-bottom:1px solid #e5e7eb;display:none;">
+                <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">🤖 지출 분석 요약</div>
+                <div id="rpt-summary-print-text" style="font-size:14px;color:#374151;line-height:1.7;"></div>
+              </div>
+              <!-- 엑셀 원본 대조 섹션 -->
+              <div id="rpt-excel-cmp-section" class="no-print" style="padding:14px 24px;border-bottom:1px solid #e5e7eb;display:none;"></div>
+              <!-- 통장 사진 섹션 -->
+              <div id="rpt-bank-stmt-section" style="padding:14px 24px;border-bottom:1px solid #e5e7eb;display:none;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                  <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;">통장 사진</div>
+                  <div style="display:flex;gap:6px;" class="no-print">
+                    <button id="btn-view-bank-stmts" style="font-size:11px;font-weight:700;color:#059669;border:1px solid #a7f3d0;background:#ecfdf5;padding:3px 10px;border-radius:6px;cursor:pointer;">🔍 전체보기</button>
+                    <button id="btn-upload-bank-stmt" style="font-size:11px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:3px 10px;border-radius:6px;cursor:pointer;">📸 사진 추가</button>
+                  </div>
+                </div>
+                <div id="rpt-bank-stmt-gallery" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;"></div>
+              </div>
+
+              <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
+                <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">거래 내역</div>
+                <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+                  <colgroup>
+                    <col style="width:62px;"><!-- 날짜 -->
+                    <col style="width:72px;"><!-- 분류 -->
+                    <col style="width:200px;"><!-- 내용 200px 고정 -->
+                    <col style="width:80px;"><!-- 수입 -->
+                    <col style="width:80px;"><!-- 지출 -->
+                    <col style="width:44px;"><!-- 증빙 -->
+                  </colgroup>
+                  <thead><tr style="border-bottom:2px solid #d1d5db;">
+                    <th data-rpt-sort="date" style="padding:8px 4px;text-align:left;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">날짜 <span class="rpt-sort-arrow"></span></th>
+                    <th data-rpt-sort="category" style="padding:8px 4px;text-align:left;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">분류 <span class="rpt-sort-arrow"></span></th>
+                    <th data-rpt-sort="description" style="padding:8px 4px;text-align:left;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">내용 <span class="rpt-sort-arrow"></span></th>
+                    <th data-rpt-sort="amountIn" style="padding:8px 4px;text-align:right;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">수입 <span class="rpt-sort-arrow"></span></th>
+                    <th data-rpt-sort="amountOut" style="padding:8px 4px;text-align:right;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">지출 <span class="rpt-sort-arrow"></span></th>
+                    <th data-rpt-sort="receiptUrl" style="padding:8px 4px;text-align:center;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">증빙 <span class="rpt-sort-arrow"></span></th>
+                  </tr></thead>
+                  <tbody id="rpt-trx-body"></tbody>
+                  <tfoot><tr style="border-top:2px solid #d1d5db;">
+                    <td colspan="3" style="padding:8px 4px;font-size:14px;font-weight:900;color:#374151;">합계</td>
+                    <td id="rpt-foot-in"  style="padding:8px 4px;text-align:right;font-size:14px;font-weight:900;color:#15803d;"></td>
+                    <td id="rpt-foot-out" style="padding:8px 4px;text-align:right;font-size:14px;font-weight:900;color:#b91c1c;"></td>
+                    <td></td>
+                  </tr></tfoot>
+                </table>
+              </div>
+              <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
+                <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px;">결재</div>
+                <div id="rpt-approval-grid" style="display:flex;border:1px solid #d1d5db;border-radius:10px;overflow:hidden;width:fit-content;"></div>
+                <p style="font-size:11px;color:#9ca3af;margin-top:12px;">작성일: <span id="rpt-created-bottom"></span></p>
+              </div>
+              <!-- ⑦ 의견란 -->
+              <div id="rpt-comments-area" style="padding:14px 24px;"></div>
+            </div>
+            <!-- 제출/결재 버튼 (보고서 하단) -->
+            <div id="rpt-submit-btns" class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-top:12px;padding:12px 0;border-top:1px solid var(--border);"></div>
+          </div>
+          </div><!-- /rpt-subtab-monthly -->
+          <!-- 연간 통계 패널 (서브탭) -->
+          <div id="rpt-subtab-annual" style="display:none;">
+            <div class="card" style="padding:18px;margin-bottom:16px;">
+              <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+                <div><label class="label">입주자</label><select id="a-client" class="input" style="padding:8px 12px;min-width:140px;"></select></div>
+                <div><label class="label">연도</label><select id="a-year" class="input" style="padding:8px 12px;width:110px;"></select></div>
+                <button class="btn" id="btn-annual-load">📈 조회</button>
+              </div>
+            </div>
+            <div id="annual-content" style="display:none;">
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px;">
+                <div class="stat-card"><div style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;">연간 수입</div><div class="stat-num" id="a-total-in" style="color:#059669;">0원</div></div>
+                <div class="stat-card"><div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;">연간 지출</div><div class="stat-num" id="a-total-out" style="color:#dc2626;">0원</div></div>
+                <div class="stat-card"><div style="font-size:11px;font-weight:700;color:var(--blue);text-transform:uppercase;">연간 잔액</div><div class="stat-num" id="a-balance" style="color:var(--blue);">0원</div></div>
+                <div class="stat-card"><div style="font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;">총 거래</div><div class="stat-num" id="a-count" style="color:var(--amber);">0건</div></div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">
+                <div class="card" style="padding:18px;"><div style="font-size:13px;font-weight:700;color:var(--sub);margin-bottom:12px;">월별 수입/지출 비교</div><div style="height:200px;"><canvas id="a-monthly-chart"></canvas></div></div>
+                <div class="card" style="padding:18px;"><div style="font-size:13px;font-weight:700;color:var(--sub);margin-bottom:12px;">월별 잔액 추이</div><div style="height:200px;"><canvas id="a-balance-chart"></canvas></div></div>
+              </div>
+              <div class="card" style="overflow:hidden;margin-bottom:16px;">
+                <div style="padding:16px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:700;color:var(--sub);">월별 상세 내역</div>
+                <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:500px;"><thead><tr><th>월</th><th style="text-align:right;">수입</th><th style="text-align:right;">지출</th><th style="text-align:right;">잔액</th><th style="text-align:right;">건수</th></tr></thead><tbody id="a-monthly-body"></tbody></table></div>
+              </div>
+              <div class="card" style="overflow:hidden;"><div style="padding:16px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:700;color:var(--sub);">카테고리별 연간 지출 순위</div><div id="a-cat-rank" style="padding:12px 18px;"></div></div>
+            </div>
+          </div><!-- /rpt-subtab-annual -->
+        </div>
+
+        <!-- 설정 (관리 통합) -->
+        <div id="view-settings" style="display:none;" class="animate-in">
+          <div style="display:flex;flex-direction:column;gap:14px;">
+
+            <!-- 직원 관리 (관리자/팀장/센터장만) -->
+            <div id="admin-staff" style="display:none;" class="card" style="padding:20px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">👤</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">직원 관리</h3></div>
+                <button class="btn" id="btn-add-staff" style="font-size:13px;padding:7px 14px;">+ 직원 등록</button>
+              </div>
+              <div id="staff-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;"></div>
+            </div>
+
+            <!-- 입주자/계좌 관리 -->
+            <div class="card" style="padding:20px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+                <div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏠</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">입주자 목록</h3></div>
+                    <button class="btn" id="btn-add-client" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+                  </div>
+                  <div id="client-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+                </div>
+                <div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏦</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">계좌 목록</h3></div>
+                    <button class="btn" id="btn-add-account" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+                  </div>
+                  <div id="account-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 입주자별 카테고리 선택 -->
+            <div class="card" style="padding:16px 20px;">
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <span style="font-size:13px;font-weight:700;color:var(--sub);">📋 카테고리 관리 대상:</span>
+                <select id="settings-client-sel" class="input" style="width:180px;padding:7px 10px;">
+                  <option value="">공통 (전체 입주자)</option>
+                </select>
+                <span style="font-size:12px;color:var(--muted);">특정 입주자 선택 시 해당 입주자 전용 카테고리가 표시됩니다.</span>
+              </div>
+            </div>
+            <div class="card" style="padding:20px;">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><span style="font-size:18px;">🗂️</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">지출 카테고리</h3></div>
+              <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">지출 카테고리를 추가/삭제합니다. 입주자를 선택하면 해당 입주자 전용 카테고리를 추가할 수 있습니다.</p>
+              <div style="display:flex;gap:8px;margin-bottom:12px;">
+                <input id="new-exp-cat" class="input" placeholder="새 카테고리 이름" maxlength="20" style="flex:1;">
+                <button class="btn" id="btn-add-exp-cat" style="padding:9px 16px;font-size:13px;">추가</button>
+              </div>
+              <div id="exp-cat-tags" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+            </div>
+            <div class="card" style="padding:20px;">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><span style="font-size:18px;">💰</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">수입 카테고리</h3></div>
+              <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">수입 카테고리를 추가/삭제합니다.</p>
+              <div style="display:flex;gap:8px;margin-bottom:12px;">
+                <input id="new-inc-cat" class="input" placeholder="새 카테고리 이름" maxlength="20" style="flex:1;">
+                <button class="btn" id="btn-add-inc-cat" style="padding:9px 16px;font-size:13px;">추가</button>
+              </div>
+              <div id="inc-cat-tags" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+            </div>
+            <div class="card" style="padding:20px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">🏷️</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">자동 분류 규칙</h3></div>
+                <button id="btn-reset-cats" style="font-size:12px;font-weight:700;color:var(--muted);border:1px solid var(--border);padding:5px 10px;border-radius:7px;background:transparent;cursor:pointer;">기본값 초기화</button>
+              </div>
+              <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">키워드 포함 시 자동 카테고리 분류됩니다.</p>
+              <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                <input id="new-rule-kw" class="input" placeholder="키워드" maxlength="20" style="flex:1;min-width:100px;">
+                <select id="new-rule-type" class="input" style="width:90px;padding:8px 10px;"><option value="지출">지출</option><option value="수입">수입</option></select>
+                <select id="new-rule-cat" class="input" style="width:120px;padding:8px 10px;"></select>
+                <button class="btn" id="btn-add-rule" style="padding:9px 16px;font-size:13px;">추가</button>
+              </div>
+              <div id="rule-tags" style="display:flex;flex-wrap:wrap;gap:8px;max-height:200px;overflow-y:auto;"></div>
+            </div>
+            <!-- ⑩ 고정 수입/지출 관리 -->
+            <div class="card" style="padding:20px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">📌</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">고정 수입/지출</h3></div>
+                <button class="btn" id="btn-add-fixed-item" style="font-size:13px;padding:7px 14px;">+ 항목 추가</button>
+              </div>
+              <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">입주자별 매월 고정으로 발생하는 수입/지출을 등록합니다. 거래내역에서 "고정항목 입력" 버튼으로 일괄 입력할 수 있습니다.</p>
+              <div style="margin-bottom:8px;"><label class="label">관리 대상 입주자</label><select id="fixed-client-sel" class="input" style="width:200px;padding:7px 10px;"><option value="">입주자를 선택하세요</option></select></div>
+              <div id="fixed-items-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+            </div>
+
+            <!-- 예산 관리 -->
+            <div id="budget-section" class="card" style="padding:20px;">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                <span style="font-size:18px;">💰</span>
+                <h3 style="font-size:15px;font-weight:800;color:var(--text);">연간 예산 관리</h3>
+              </div>
+              <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">입주자별 연간 지출 예산을 카테고리별로 설정합니다. 연간 통계에서 예산 대비 실적을 확인할 수 있습니다.</p>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+                <div><label class="label">입주자</label><select id="budget-client-sel" class="input" style="width:160px;padding:7px 10px;"><option value="">선택</option></select></div>
+                <div><label class="label">연도</label><select id="budget-year-sel" class="input" style="width:110px;padding:7px 10px;"></select></div>
+                <button id="btn-budget-load" class="btn-sub" style="color:var(--blue);border-color:#bfdbfe;">불러오기</button>
+              </div>
+              <div id="budget-form" style="display:none;">
+                <div id="budget-cat-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;"></div>
+                <button id="btn-budget-save" class="btn" style="padding:10px 24px;">💾 예산 저장</button>
+              </div>
+            </div>
+
+            <!-- 데이터 마감 -->
+            <div id="archive-section" style="display:none;" class="card" style="padding:20px;border:1px solid #fecaca;">
+              <div style="border:1px solid #fecaca;border-radius:var(--r2);padding:20px;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                  <span style="font-size:18px;">📦</span>
+                  <h3 style="font-size:15px;font-weight:800;color:var(--text);">연도별 데이터 마감</h3>
+                  <span style="font-size:11px;font-weight:700;color:var(--red);border:1px solid #fecaca;background:#fff1f2;padding:2px 8px;border-radius:99px;">관리자 전용</span>
+                </div>
+                <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">마감 연도 거래를 Archive_YYYY 컬렉션에 백업하고 계좌 기초잔액을 업데이트합니다. <span style="color:var(--red);font-weight:700;">되돌릴 수 없습니다.</span></p>
+                <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:16px;">
+                  <div><label class="label">마감할 연도</label><select id="archive-year" class="input" style="width:130px;padding:8px 12px;"></select></div>
+                  <button id="btn-archive" style="font-size:13px;font-weight:700;color:var(--red);border:1px solid #fecaca;padding:9px 16px;border-radius:9px;background:transparent;cursor:pointer;">📦 마감 실행</button>
+                </div>
+                <div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <span style="font-size:13px;font-weight:700;color:var(--sub);">마감 이력</span>
+                    <button id="btn-archive-refresh" style="font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;">↺</button>
+                  </div>
+                  <div id="archive-history"></div>
+                </div>
+              </div>
+            </div>
+            <!-- Firebase 초기화 (관리자 전용) -->
+            <div id="reset-section" style="display:none;margin-top:20px;">
+              <div style="border:2px solid #dc2626;border-radius:var(--r2);padding:20px;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                  <span style="font-size:18px;">🗑️</span>
+                  <h3 style="font-size:15px;font-weight:800;color:#dc2626;">Firebase 전체 초기화</h3>
+                  <span style="font-size:11px;font-weight:700;color:var(--red);border:1px solid #fecaca;background:#fff1f2;padding:2px 8px;border-radius:99px;">관리자 전용</span>
+                </div>
+                <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">모든 거래, 계좌, 입주자, 보고서 데이터를 삭제합니다. <span style="color:#dc2626;font-weight:700;">절대 되돌릴 수 없습니다.</span></p>
+                <button id="btn-firebase-reset" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;">🗑️ 전체 초기화</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- 모달 -->
+<div id="modal-wrap" onclick="if(event.target===this)closeModal()">
+  <div id="modal-box">
+    <button id="modal-close-btn" onclick="closeModal()">✕</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<!-- 모바일 전용 뷰 -->
+<div id="mobile-view" style="display:none;height:100vh;width:100%;flex-direction:column;background:var(--bg);overflow:hidden;">
+  <!-- 헤더 -->
+  <div id="m-header" style="background:var(--surface);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;">
+    <div style="width:32px;height:32px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;" id="m-avatar">?</div>
+    <div style="flex:1;">
+      <div style="font-size:14px;font-weight:800;color:var(--text);" id="m-title">대시보드</div>
+      <div style="font-size:11px;color:var(--muted);" id="m-subtitle"></div>
+    </div>
+    <button onclick="handleLogout()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);" title="로그아웃">🚪</button>
+  </div>
+  <!-- 콘텐츠 -->
+  <div id="m-content" style="flex:1;overflow-y:auto;padding:12px 14px;-webkit-overflow-scrolling:touch;">
+    <!-- 대시보드 -->
+    <div id="m-dashboard" style="display:block;">
+      <div id="m-client-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;"></div>
+    </div>
+    <!-- 거래내역 -->
+    <div id="m-history" style="display:none;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <button onclick="mobileView('dashboard')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">‹</button>
+        <span style="font-size:14px;font-weight:700;color:var(--text);" id="m-client-name"></span>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+        <select id="m-acc-filter" class="input" style="flex:1;padding:7px 10px;font-size:13px;" onchange="renderMobileHistory()"><option value="">전체 계좌</option></select>
+        <select id="m-type-filter" class="input" style="flex:1;padding:7px 10px;font-size:13px;" onchange="renderMobileHistory()">
+          <option value="">전체</option><option value="수입">수입</option><option value="지출">지출</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <input type="month" id="m-month-filter" class="input" style="flex:1;padding:7px 10px;font-size:13px;" onchange="renderMobileHistory()">
+        <button onclick="document.getElementById('m-month-filter').value='';renderMobileHistory();" style="padding:7px 12px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--muted);">전체</button>
+      </div>
+      <div id="m-trx-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+    </div>
+    <!-- 수기 입력 -->
+    <div id="m-trx-form" style="display:none;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <button onclick="mobileView('history')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">‹</button>
+        <span style="font-size:14px;font-weight:700;color:var(--text);">수기 입력</span>
+      </div>
+      <div id="m-form-body" style="display:flex;flex-direction:column;gap:12px;"></div>
+    </div>
+    <!-- 보고서 목록 -->
+    <div id="m-report" style="display:none;">
+      <div id="m-report-list-area">
+        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:12px;">📑 보고서</div>
+        <div id="m-report-list"></div>
+      </div>
+      <!-- 보고서 상세 -->
+      <div id="m-report-detail" style="display:none;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+          <button onclick="document.getElementById('m-report-detail').style.display='none';document.getElementById('m-report-list-area').style.display='block';" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">‹</button>
+          <span style="font-size:14px;font-weight:700;color:var(--text);">보고서 상세</span>
+        </div>
+        <div id="m-report-content"></div>
+        <div id="m-report-actions" style="display:flex;flex-direction:column;gap:8px;margin-top:14px;"></div>
+      </div>
+    </div>
+  </div>
+  <!-- 하단 탭바 -->
+  <div id="m-bottom-nav" style="display:flex;border-top:1px solid var(--border);background:var(--surface);flex-shrink:0;safe-area-inset-bottom:env(safe-area-inset-bottom);">
+    <button class="m-tab active" onclick="mobileView('dashboard')" style="flex:1;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:2px;border:none;background:none;cursor:pointer;font-size:10px;font-weight:700;color:var(--blue);">
+      <span style="font-size:22px;">🏠</span>홈
+    </button>
+    <button class="m-tab" onclick="mobileView('history')" style="flex:1;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:2px;border:none;background:none;cursor:pointer;font-size:10px;font-weight:700;color:var(--muted);">
+      <span style="font-size:22px;">📋</span>거래
+    </button>
+    <button class="m-tab" onclick="mobileView('trx-form')" style="flex:1;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:2px;border:none;background:none;cursor:pointer;font-size:10px;font-weight:700;color:var(--muted);">
+      <span style="font-size:22px;">✍️</span>입력
+    </button>
+    <button class="m-tab" id="m-tab-report" onclick="mobileView('report')" style="flex:1;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:2px;border:none;background:none;cursor:pointer;font-size:10px;font-weight:700;color:var(--muted);">
+      <span style="font-size:22px;">📑</span>보고서
+    </button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

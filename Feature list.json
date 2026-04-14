@@ -1,0 +1,1636 @@
+{
+  "version": "2.0",
+  "last_updated": "2026-04-13 (D001~D011 구현 완료)",
+  "project": "Smart Care Ledger",
+  "summary": {
+    "total": 86,
+    "done": 86,
+    "pending": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "features": [
+    {
+      "id": "A001",
+      "category": "feature",
+      "title": "Firebase 마이그레이션 (GAS → Firebase)",
+      "description": "GAS v17에서 Firebase Firestore + Hosting으로 전체 마이그레이션. Firestore 직접 userId/password 비교 인증.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [],
+      "priority": "critical",
+      "status": "done",
+      "success_criteria": [
+        "Firebase Hosting 배포",
+        "Firestore CRUD 작동",
+        "로그인/로그아웃 작동"
+      ],
+      "notes": "Firebase Auth 미사용. sessionStorage 세션 관리.",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A002",
+      "category": "feature",
+      "title": "ID/PW 로그인 및 세션 관리",
+      "description": "Firestore users에서 userId/password 직접 비교. sessionStorage 세션 유지.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A001"
+      ],
+      "priority": "critical",
+      "status": "done",
+      "success_criteria": [
+        "올바른 ID/PW 로그인 성공",
+        "세션 새로고침 유지",
+        "로그아웃 시 로그인 화면"
+      ],
+      "notes": "",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A003",
+      "category": "feature",
+      "title": "역할(Role) 기반 권한 관리",
+      "description": "담당자/팀장/센터장/관리자 4단계 역할. 역할별 UI 요소 표시/숨김.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A002"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "역할별 메뉴 접근 제어",
+        "관리자/센터장 데이터 마감 접근"
+      ],
+      "notes": "",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A004",
+      "category": "feature",
+      "title": "대시보드 — 입주자 카드 그리드",
+      "description": "입주자를 카드로 표시. 클릭 시 해당 입주자 거래내역으로 이동.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A001"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "카드 그리드 표시",
+        "카드 클릭 시 거래내역 이동"
+      ],
+      "notes": "",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A005",
+      "category": "feature",
+      "title": "거래내역 — 기본 CRUD (수기입력/수정/삭제)",
+      "description": "거래 수기 입력, 수정, 삭제. Firestore 저장. 계좌 잔액 자동 재계산.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A001"
+      ],
+      "priority": "critical",
+      "status": "done",
+      "success_criteria": [
+        "수기입력 저장",
+        "수정 저장",
+        "삭제 후 잔액 재계산",
+        "일괄 삭제"
+      ],
+      "notes": "",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A006",
+      "category": "feature",
+      "title": "거래내역 — 다중 필터 (입주자/계좌/구분/증빙/기간)",
+      "description": "입주자·계좌·유형·증빙여부·날짜 기간 필터. 빠른 기간 선택 버튼.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A005"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "각 필터 조합 작동",
+        "입주자 변경 시 계좌 필터 갱신"
+      ],
+      "notes": "",
+      "created_at": "2026-03-30",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A007",
+      "category": "feature",
+      "title": "거래내역 — 컬럼 헤더 정렬",
+      "description": "날짜/수입/지출 컬럼 클릭으로 정렬. 기본: sortOrder 우선, 날짜 오름차순.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A005"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "컬럼 클릭 정렬 전환",
+        "기본 오름차순 정렬"
+      ],
+      "notes": "",
+      "created_at": "2026-03-30",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A008",
+      "category": "feature",
+      "title": "거래내역 — 드래그앤드롭 순서 변경",
+      "description": "⠿ 핸들로 현재 페이지 내 드래그. sortOrder Firestore 저장. 보고서에도 반영.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A007"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "드래그로 순서 변경",
+        "Firestore sortOrder 저장",
+        "보고서도 같은 순서"
+      ],
+      "notes": "현재 페이지 내에서만 가능.",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A009",
+      "category": "feature",
+      "title": "거래내역 — 수정 후 정렬 유지",
+      "description": "수정 시 로컬 배열만 업데이트. 정렬/페이지 상태 유지.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A007"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "수정 후 정렬 순서 유지",
+        "현재 페이지 유지"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A010",
+      "category": "feature",
+      "title": "거래내역 — 페이지네이션 100건",
+      "description": "100건씩 페이지 분할.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A005"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "100건 초과 시 페이지 버튼",
+        "페이지 이동"
+      ],
+      "notes": "pageSize: 100",
+      "created_at": "2026-03-30",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A011",
+      "category": "feature",
+      "title": "거래내역 — 카테고리 칩 인라인 수정",
+      "description": "카테고리 칩 클릭 시 드롭다운. 빈 공간 클릭 시 닫힘.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A005"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "칩 클릭 드롭다운",
+        "선택 즉시 저장",
+        "빈 공간 클릭 닫힘"
+      ],
+      "notes": "",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A012",
+      "category": "feature",
+      "title": "거래 유형 — 자산이동 (계좌간 이체)",
+      "description": "출금/입금 계좌 지정 시 2개 거래 생성. 수입/지출 집계 제외. 잔액 반영.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A005"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "자산이동 선택 시 입금계좌 선택창",
+        "2개 거래 생성",
+        "집계 제외",
+        "잔액 반영"
+      ],
+      "notes": "linkedAccountId, linkedTrxId 필드.",
+      "created_at": "2026-04-02",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A013",
+      "category": "feature",
+      "title": "거래 유형 — 취소 (카드승인취소)",
+      "description": "취소 유형: 수입/지출 집계 제외, 잔액 계산 제외.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A005"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "취소 선택 가능",
+        "보고서 집계 제외",
+        "잔액 제외"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A014",
+      "category": "feature",
+      "title": "엑셀 업로드 — 다중 은행 파서",
+      "description": "KB국민은행/카드, NH농협, 우리은행, 신한은행, SMS XML, HTML-XLS 지원.",
+      "files_affected": [
+        "app.js",
+        "parser-config.js"
+      ],
+      "dependencies": [
+        "A001"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "각 은행 파일 정상 파싱",
+        "날짜/금액/내용 추출"
+      ],
+      "notes": "_defaultConfig 내장으로 타이밍 문제 해결.",
+      "created_at": "2026-03-30",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A015",
+      "category": "feature",
+      "title": "엑셀 업로드 — 파일 순서 sortOrder 부여",
+      "description": "파싱된 항목에 기존 최대 sortOrder 이후 값 부여. 파일 내 순서 유지.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A014",
+        "A008"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "업로드 후 파일 순서 유지"
+      ],
+      "notes": "",
+      "created_at": "2026-04-02",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A016",
+      "category": "feature",
+      "title": "엑셀 업로드 — 음수 지출 처리",
+      "description": "출금 음수 → 지출에서 음수 처리 (수입 전환 안함). 잔액 정확 반영.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A014"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "음수 지출 표시",
+        "잔액 증가 반영"
+      ],
+      "notes": "",
+      "created_at": "2026-04-02",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A017",
+      "category": "feature",
+      "title": "엑셀 업로드 — 중복 경고",
+      "description": "기존 거래와 날짜+금액 비교. '중복의심' 뱃지 표시.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A014"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "중복 행 노란 뱃지",
+        "중복 건수 토스트"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A018",
+      "category": "feature",
+      "title": "증빙 — Google Drive 업로드",
+      "description": "OAuth 2.0. 이미지 압축(1200px, JPEG 0.78). 드래그앤드롭.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A001"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "드롭/클릭 선택",
+        "Drive 업로드 후 URL 저장",
+        "토큰 만료 재발급"
+      ],
+      "notes": "DRIVE_FOLDER_ID, GOOGLE_OAUTH_CLIENT_ID 설정 필요.",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-04-01"
+    },
+    {
+      "id": "A019",
+      "category": "feature",
+      "title": "증빙 — 미리보기 (Drive 썸네일 API)",
+      "description": "📎 클릭 시 Drive 썸네일 API 이미지 미리보기. 새 탭 원본 보기.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A018"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "미리보기 모달",
+        "로딩 스피너",
+        "실패 시 새 탭 버튼"
+      ],
+      "notes": "drive.google.com/thumbnail?id=&sz=w800",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-01"
+    },
+    {
+      "id": "A020",
+      "category": "feature",
+      "title": "증빙 — A4 일괄 출력",
+      "description": "증빙 있는 거래 2×2 격자로 A4 출력. 날짜/내용/금액 표시.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A018",
+        "A019"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "🖨️ 버튼으로 새 탭 출력",
+        "2×2 격자"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A021",
+      "category": "feature",
+      "title": "통장 사진 — 다중 업로드 (연월 지정)",
+      "description": "계좌 관리에서 연월 지정 후 다중 사진 업로드. bankStatements[{url,month}].",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A018"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "연월 지정 업로드",
+        "썸네일 갤러리에 연월 표시"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A022",
+      "category": "feature",
+      "title": "통장 사진 — 보고서에서 해당 월 조회",
+      "description": "보고서에 해당 월 통장사진 섹션. 사진 없으면 숨김.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A021",
+        "A019"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "해당 월 사진 표시",
+        "추가 업로드 가능",
+        "없으면 숨김"
+      ],
+      "notes": "",
+      "created_at": "2026-04-02",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A023",
+      "category": "feature",
+      "title": "카테고리 — 공통/입주자별 전용",
+      "description": "clientId 필드로 공통/전용 분리. 거래 입력 시 해당 입주자 카테고리만 표시.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A001"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "입주자별 전용 카테고리 추가",
+        "전용 카테고리 뱃지",
+        "거래 입력 시 필터"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A024",
+      "category": "feature",
+      "title": "카테고리 — 드래그 순서 변경",
+      "description": "설정에서 드래그앤드롭 순서 변경. sortOrder Firestore 저장. 드롭다운 동일 순서.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A023"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "드래그 순서 변경",
+        "Firestore 저장",
+        "드롭다운 반영"
+      ],
+      "notes": "",
+      "created_at": "2026-04-02",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A025",
+      "category": "feature",
+      "title": "자동분류 규칙 — 공통/입주자별",
+      "description": "키워드 자동분류. 공통+입주자 전용 규칙 합산 매칭.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A023"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "입주자별 규칙 추가",
+        "파싱 시 적용"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A026",
+      "category": "feature",
+      "title": "계좌 — 기초잔액 기준일 설정",
+      "description": "initialBalanceDate + initialBalance. 기준일 이후 거래만 합산.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A001"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "기준일/기초잔액 입력",
+        "기준일 이전 거래 제외",
+        "보고서 정확한 잔액"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A027",
+      "category": "feature",
+      "title": "고정항목 — 입주자별 등록 및 일괄 입력",
+      "description": "fixedItems 컬렉션. 매월 고정 수입/지출. 버튼 클릭 시 이번 달 일괄 저장.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A005"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "고정항목 등록",
+        "일괄 입력",
+        "중복 방지"
+      ],
+      "notes": "isFixed, fixedItemId 필드.",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A028",
+      "category": "feature",
+      "title": "연간 통계 — 차트 및 분석",
+      "description": "월별 수입/지출 차트, 잔액 차트, 카테고리 순위. 자산이동/취소 제외.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A005"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "월별 차트",
+        "카테고리 순위",
+        "자산이동/취소 제외"
+      ],
+      "notes": "",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A029",
+      "category": "feature",
+      "title": "보고서 — 결재 흐름 (담당자→팀장→센터장)",
+      "description": "draft→submitted→team_approved→confirmed. 순서 강제. 팀장 직접 담당 처리.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A001"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "담당자 임시저장/제출",
+        "팀장 결재/반려/수정/삭제",
+        "센터장 team_approved 상태에서만 결재"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A030",
+      "category": "feature",
+      "title": "보고서 — 반려/수정/삭제 기능",
+      "description": "팀장/센터장이 반려(rejected), 초안 복귀, 삭제 가능. 반려 후 재제출 가능.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "반려 시 rejected 상태",
+        "담당자 재제출 가능",
+        "초안 복귀",
+        "삭제"
+      ],
+      "notes": "",
+      "created_at": "2026-04-02",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A031",
+      "category": "feature",
+      "title": "보고서 — 의견란 (담당자/팀장/센터장)",
+      "description": "staffComment, leaderComment, centerComment. 역할별 입력/읽기 전용.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "역할별 의견 입력",
+        "타 역할 읽기 전용",
+        "인쇄 포함"
+      ],
+      "notes": "",
+      "created_at": "2026-04-02",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A032",
+      "category": "feature",
+      "title": "보고서 — 결재 대기 목록 + 네비 뱃지",
+      "description": "팀장/센터장 결재 대기 목록. 보고서 네비에 건수 뱃지.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "결재 대기 목록 표시",
+        "빨간 숫자 뱃지",
+        "클릭 시 이동"
+      ],
+      "notes": "",
+      "created_at": "2026-04-02",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A033",
+      "category": "feature",
+      "title": "보고서 — 계좌 현황 잔액 직접 계산",
+      "description": "기초잔액+기준일이후~보고서월말 거래를 직접 계산.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A026",
+        "A029"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "해당 월까지 실제 잔액",
+        "기준일 적용",
+        "취소 제외"
+      ],
+      "notes": "S.transactions 비어있을 때 처리는 B002.",
+      "created_at": "2026-04-02",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A034",
+      "category": "feature",
+      "title": "보고서 — 분류별 지출 바차트 (원차트 제거)",
+      "description": "비율순 정렬 + 가로 바 시각화. 금액 200px 고정.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "비율순 정렬",
+        "가로 바 표시",
+        "원차트 없음"
+      ],
+      "notes": "",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A035",
+      "category": "feature",
+      "title": "보고서 — 월별 추이 차트 (최근 6개월)",
+      "description": "보고서 내 6개월 수입/지출 막대차트.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "6개월 차트 표시",
+        "자산이동/취소 제외"
+      ],
+      "notes": "",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A036",
+      "category": "feature",
+      "title": "보고서 — 규칙 기반 자동 분석",
+      "description": "규칙 기반 전월 대비, 카테고리 비율, 확인필요 분석 텍스트 생성.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "분석 텍스트 생성",
+        "인쇄 포함/제외 선택"
+      ],
+      "notes": "",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A037",
+      "category": "feature",
+      "title": "보고서 — 인쇄/PDF (A4 최적화)",
+      "description": "A4 세로. 조회/결재트랙/자동요약 인쇄 제외. 거래내역 컬럼 너비 고정. 15px.",
+      "files_affected": [
+        "index.html"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "A4 portrait",
+        "불필요 요소 숨김",
+        "내용 200px",
+        "body 15px"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A038",
+      "category": "feature",
+      "title": "보고서 — 엑셀 저장",
+      "description": "보고서 거래내역 Excel 다운로드.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "엑셀 다운로드"
+      ],
+      "notes": "XLSX.js 사용.",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A039",
+      "category": "feature",
+      "title": "설정 — 관리·정보 탭 통합",
+      "description": "'관리·정보' 탭을 '설정' 탭으로 통합.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "관리 메뉴 없음",
+        "설정에 직원/입주자/계좌 섹션",
+        "management→settings 리다이렉트"
+      ],
+      "notes": "",
+      "created_at": "2026-04-02",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A040",
+      "category": "feature",
+      "title": "데이터 마감 — 연도별 Archive",
+      "description": "관리자/센터장 전용. archive_YYYY 백업. 계좌 기초잔액 업데이트.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A001"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "archive_YYYY 생성",
+        "기초잔액 업데이트",
+        "마감 이력 표시"
+      ],
+      "notes": "되돌릴 수 없음.",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A041",
+      "category": "design",
+      "title": "전체 UI — 다크 사이드바 + 라이트 메인",
+      "description": "사이드바 #0f172a, 메인 #f1f5f9. 카드/테이블/모달 일관 스타일.",
+      "files_affected": [
+        "index.html"
+      ],
+      "dependencies": [],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "사이드바 다크",
+        "메인 라이트",
+        "버튼/카드 일관성"
+      ],
+      "notes": "",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A042",
+      "category": "design",
+      "title": "거래내역 — 계좌명 컬럼 표시",
+      "description": "거래내역 테이블에 계좌명 컬럼 추가.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A006"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "계좌명 컬럼 표시"
+      ],
+      "notes": "",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A043",
+      "category": "feature",
+      "title": "저장된 보고서 목록 (rpt-list)",
+      "description": "보고서 탭 하단 저장된 보고서 목록. 결재 상태 뱃지.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "목록 표시",
+        "상태 뱃지",
+        "클릭 이동"
+      ],
+      "notes": "",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A044",
+      "category": "improvement",
+      "title": "app.js 중복 함수 제거 (복구)",
+      "description": "복구 과정 중복 선언 47개 제거. node --check 통과.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [],
+      "priority": "critical",
+      "status": "done",
+      "success_criteria": [
+        "중복 0개",
+        "node --check 통과"
+      ],
+      "notes": "2026-04-03 완료.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "B001",
+      "category": "bugfix",
+      "title": "자산이동 삭제 시 연결 거래 함께 삭제",
+      "description": "linkedTrxId로 연결된 반대 거래도 자동 삭제. 두 계좌 잔액 재계산.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A012"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "삭제 시 안내 다이얼로그",
+        "두 거래 모두 삭제",
+        "두 계좌 잔액 재계산"
+      ],
+      "notes": "delTrx와 confirmBulkDelete 모두 linkedTrxId 확인 후 연결 거래 함께 삭제. 연결 계좌 잔액도 재계산.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "B002",
+      "category": "bugfix",
+      "title": "보고서 목록 클릭 시 계좌 현황 0원 표시",
+      "description": "S.transactions 비어있을 때 계좌 잔액 0 표시. loadReport 시 거래 보장 필요.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A033"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "목록 클릭해도 잔액 정상",
+        "S.transactions 자동 로드"
+      ],
+      "notes": "loadReport에서 allTrx(전체 거래)를 S.reportData.allTrx에 보존. renderReportView의 잔액 계산을 S.transactions 대신 S.reportData.allTrx 사용.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "B003",
+      "category": "bugfix",
+      "title": "자산이동 수정 시 연결 거래 동기화",
+      "description": "수정 시 linkedTrxId 반대 거래도 업데이트.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A012"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "수정 후 두 거래 금액/날짜 일치",
+        "두 계좌 잔액 재계산"
+      ],
+      "notes": "자산이동 수정(existId) 시 t.linkedTrxId가 있으면 연결 입금 거래도 date/description/amountIn/linkedAccountId 업데이트. 두 모달 핸들러 모두 수정.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "B004",
+      "category": "bugfix",
+      "title": "직원 폼 팀 필드 빈문자열 처리",
+      "description": "u.team undefined 시 'undefined' 표시 방지.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "팀 필드 비어있으면 빈 문자열"
+      ],
+      "notes": "fetchBaseData에서 S.users 로드 시 u.team=u.team||'' 정규화. 모든 표시 코드는 이미 가드 처리 완료.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "B005",
+      "category": "bugfix",
+      "title": "설정 탭 직원 섹션 역할별 표시 조건 확인",
+      "description": "관리 통합 후 admin-staff 섹션 표시/숨김 정상 작동 확인.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A039"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "담당자: 직원 섹션 숨김",
+        "팀장/센터장/관리자: 표시"
+      ],
+      "notes": "renderManagement에서 btn-add-client, btn-add-account 버튼도 역할별 표시/숨김 추가. admin-staff 섹션 로직은 이미 정상.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "F001",
+      "category": "feature",
+      "title": "대시보드 — 입주자별 잔액 미리보기",
+      "description": "대시보드 카드에 현재 잔액 표시 (계좌 합산).",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A004"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "카드에 현재 잔액 표시",
+        "S.accounts 활용 (추가 쿼리 없음)"
+      ],
+      "notes": "renderClientCards에서 S.accounts.filter(clientId).reduce(currentBalance) 합산. 양수 초록, 음수 빨강.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "F002",
+      "category": "feature",
+      "title": "보고서 거래내역 드래그 순서 변경",
+      "description": "보고서 화면에서도 드래그앤드롭 sortOrder 변경.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A008",
+        "A029"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "보고서 거래에 드래그 핸들",
+        "sortOrder 업데이트"
+      ],
+      "notes": "renderRptTrxTable 함수 신규 추가 (rpt-trx-body 채움). reorderRptTrx로 sortOrder 업데이트. renderReportView에서 renderRptTrxTable + renderApproval + renderComments + renderTrendChart + renderRptBankStatements 모두 호출 추가.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "F003",
+      "category": "feature",
+      "title": "수기입력 시간 필드 (동일 날짜 내 순서)",
+      "description": "수기 입력에 선택적 HH:MM 입력. 같은 날 시간순 정렬.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A005"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "시간 입력 필드(선택)",
+        "시간순 정렬"
+      ],
+      "notes": "renderTrxForm에 f-time 입력 추가. saveTrx에 time 필드 포함. loadTransactions 정렬에서 sortOrder 동률 시 date+time 문자열 비교로 시간순 정렬.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "I001",
+      "category": "improvement",
+      "title": "보고서 인쇄 페이지 나눔 최적화",
+      "description": "테이블 행이 페이지 경계에서 잘리지 않도록.",
+      "files_affected": [
+        "index.html"
+      ],
+      "dependencies": [
+        "A037"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "행 잘림 없음"
+      ],
+      "notes": "@media print에 table tr, tbody tr { page-break-inside:avoid; break-inside:avoid } 추가. 섹션 div도 동일 처리.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "I002",
+      "category": "improvement",
+      "title": "거래내역 CSV 내보내기",
+      "description": "현재 필터 기준 CSV 다운로드.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A006"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "CSV 버튼",
+        "필터 적용 데이터 다운로드"
+      ],
+      "notes": "exportFilteredCSV 함수 추가. S.filteredTrx 기준 CSV 생성. BOM(\uFEFF) 포함 UTF-8. btn-csv-export 버튼을 index.html 일괄삭제 버튼 옆에 추가.",
+      "created_at": "2026-04-03",
+      "completed_at": "2026-04-03"
+    },
+    {
+      "id": "A045",
+      "category": "feature",
+      "title": "로그아웃 버튼",
+      "description": "사이드바 하단 로그아웃 버튼. 클릭 시 sessionStorage 초기화, Google OAuth 토큰 초기화, 로그인 화면으로 이동.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A002"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "사이드바 하단 로그아웃 버튼 표시",
+        "클릭 시 세션·토큰 초기화 후 로그인 화면 이동"
+      ],
+      "notes": "handleLogout() 함수. gapi.auth2 또는 직접 토큰 삭제.",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A046",
+      "category": "feature",
+      "title": "거래내역 — 일괄 삭제 (체크박스)",
+      "description": "거래내역 테이블 각 행 체크박스 선택 후 일괄 삭제 버튼으로 삭제. 전체 선택/해제 지원.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A005"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "각 행 체크박스로 선택",
+        "전체 선택/해제 (check-all)",
+        "일괄 삭제 버튼 클릭 시 확인 후 삭제",
+        "삭제 후 잔액 재계산"
+      ],
+      "notes": "confirmBulkDelete() 함수. 계좌별 잔액 재계산 포함.",
+      "created_at": "2026-03-30",
+      "completed_at": "2026-04-01"
+    },
+    {
+      "id": "A047",
+      "category": "design",
+      "title": "거래내역 — 자산이동/취소 유형 뱃지 표시",
+      "description": "거래내역 테이블에서 자산이동은 파란색, 취소는 회색 뱃지로 유형 표시. 수입/지출 금액도 색상 구분.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A012",
+        "A013"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "자산이동 행: 파란색(#0ea5e9) 금액 표시",
+        "취소 행: 회색 '취소' 텍스트 표시",
+        "수입: 녹색(+), 지출: 빨간색"
+      ],
+      "notes": "col-in, col-out 클래스 스타일 분기.",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A048",
+      "category": "feature",
+      "title": "엑셀 업로드 — 미리보기 행 삭제",
+      "description": "엑셀 파싱 후 미리보기 테이블에서 개별 행 ✕ 버튼으로 삭제 가능. 삭제 후 미리보기 갱신.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A014"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "미리보기 각 행에 ✕ 버튼",
+        "클릭 시 해당 행 제거",
+        "전체 제거 시 미리보기 영역 숨김"
+      ],
+      "notes": "removeXlItem() 함수. S.excelTemp 배열 splice 후 renderXlPreview 재호출.",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-04-01"
+    },
+    {
+      "id": "A049",
+      "category": "feature",
+      "title": "거래내역 — 키워드 검색",
+      "description": "거래내역 필터에 검색어(h-search) 입력 시 내용(description), 분류(category) 실시간 필터링.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A006"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "검색창 입력 시 실시간 필터",
+        "내용·분류 모두 검색 대상"
+      ],
+      "notes": "applyFilters() 내 h-search 처리.",
+      "created_at": "2026-03-30",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A050",
+      "category": "feature",
+      "title": "거래내역 — 기간 빠른 선택 버튼",
+      "description": "이번달/지난달/이번주/최근3개월/올해 버튼 클릭으로 날짜 범위 자동 설정.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A006"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "이번달/지난달/이번주/최근3개월/올해 버튼",
+        "클릭 시 h-start, h-end 자동 설정 후 필터 적용",
+        "선택된 버튼 활성화 스타일"
+      ],
+      "notes": "applyPeriod(p) 함수. period-btn 클래스.",
+      "created_at": "2026-03-30",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A051",
+      "category": "feature",
+      "title": "연간 통계 — 월별 상세 테이블",
+      "description": "연간 통계 화면 하단에 월별 수입/지출/순액 상세 테이블 표시.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A028"
+      ],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "월별 수입·지출·순액 테이블",
+        "자산이동/취소 제외"
+      ],
+      "notes": "loadAnnual() 내 테이블 렌더링.",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A052",
+      "category": "feature",
+      "title": "보고서 — 수입/지출 요약 섹션",
+      "description": "보고서 상단에 총 수입, 총 지출, 순액(잔액) 3개 수치 요약 카드 표시. 자산이동/취소 제외.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "총 수입·총 지출·순액 카드 표시",
+        "자산이동/취소 집계 제외",
+        "인쇄 시 포함"
+      ],
+      "notes": "loadReport() 내 summary 계산. rpt-total-in, rpt-total-out, rpt-balance 요소.",
+      "created_at": "2026-03-31",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A053",
+      "category": "feature",
+      "title": "보고서 — 거래내역 sortOrder 기반 표시",
+      "description": "보고서 거래내역이 sortOrder 우선, 없으면 날짜 오름차순으로 표시됨. 거래내역과 동일한 정렬 기준.",
+      "files_affected": [
+        "app.js"
+      ],
+      "dependencies": [
+        "A029",
+        "A008"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "보고서 거래내역이 거래내역 탭과 동일 순서",
+        "sortOrder 있으면 우선, 없으면 날짜 오름차순"
+      ],
+      "notes": "loadReport() 내 trxList 정렬 로직.",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A054",
+      "category": "feature",
+      "title": "결재 트랙 시각화 (rpt-track)",
+      "description": "보고서 화면에 결재 단계(제출→팀장결재→센터장최종)를 원형 아이콘과 연결선으로 시각화.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "결재 단계 원형 아이콘 표시",
+        "완료된 단계는 파란색, 미완료는 회색",
+        "단계 간 연결선 색상 구분"
+      ],
+      "notes": "rpt-track-inner 요소. renderApproval() 내 트랙 렌더링.",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A055",
+      "category": "feature",
+      "title": "결재란 (도장란) — 담당/팀장/센터장",
+      "description": "보고서 하단에 담당·팀장·센터장 결재란(도장란) 표시. 결재 완료 시 이름과 날짜 자동 기입.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [
+        "A029"
+      ],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "3칸 결재란 표시",
+        "결재 완료 시 이름·날짜 기입",
+        "인쇄 시 포함"
+      ],
+      "notes": "rpt-approval-grid 요소. renderApproval() 내 grid 렌더링.",
+      "created_at": "2026-04-01",
+      "completed_at": "2026-04-02"
+    },
+    {
+      "id": "A056",
+      "category": "feature",
+      "title": "확인 다이얼로그 (showConfirm)",
+      "description": "삭제/결재 등 중요 작업 전 확인 다이얼로그. 제목·메시지·확인 버튼 라벨 커스터마이징.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "작업별 커스텀 메시지 표시",
+        "확인/취소 버튼 작동"
+      ],
+      "notes": "showConfirm(title, msg, onOk, okLabel) 함수.",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A057",
+      "category": "design",
+      "title": "토스트 알림 시스템",
+      "description": "성공/오류/정보 3가지 타입 토스트 메시지. 우측 하단 표시, 자동 사라짐.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "success(녹색)/error(빨간)/info(파란) 타입",
+        "자동 사라짐 (기본 3초)",
+        "중복 토스트 쌓임"
+      ],
+      "notes": "toast(msg, type, duration) 함수.",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "A058",
+      "category": "design",
+      "title": "로딩 오버레이",
+      "description": "비동기 작업(마감 등) 중 전체 화면 로딩 스피너 표시.",
+      "files_affected": [
+        "app.js",
+        "index.html"
+      ],
+      "dependencies": [],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "작업 중 스피너 표시",
+        "작업 완료 후 사라짐"
+      ],
+      "notes": "showLoading(on) 함수.",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {
+      "id": "C001",
+      "category": "feature",
+      "title": "거래내역 — 전체 컬럼 헤더 정렬 (카테고리/내용/계좌/증빙 추가)",
+      "description": "거래내역 테이블에서 날짜/카테고리/내용/계좌/수입/지출/증빙 모든 컬럼 클릭 시 정렬 가능하도록. 현재는 날짜/수입/지출 3개만 data-sort 속성 있음. 나머지 컬럼 헤더에 data-sort 추가 및 sortTransactions() 함수에서 해당 키 처리.",
+      "files_affected": ["app.js", "index.html"],
+      "dependencies": ["A007"],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "카테고리 컬럼 헤더 클릭 시 category 기준 정렬",
+        "내용 컬럼 헤더 클릭 시 description 기준 정렬",
+        "계좌 컬럼 헤더 클릭 시 accountId(계좌명) 기준 정렬",
+        "증빙 컬럼 헤더 클릭 시 receiptUrl 유무 기준 정렬",
+        "오름차순/내림차순 토글 및 화살표 표시"
+      ],
+      "notes": "index.html 헤더에 data-sort 추가(category, description, _accLabel, receiptUrl). app.js 정렬 함수에 _accLabel 특수처리(계좌 label 조회) 추가.",
+      "created_at": "2026-04-06",
+      "completed_at": "2026-04-06"
+    },
+    {
+      "id": "C002",
+      "category": "feature",
+      "title": "엑셀 업로드 — 자동 분류 규칙 적용 (입주자별 우선 + 공통 합산)",
+      "description": "엑셀 업로드 미리보기 시 categories/rules 컬렉션 기반으로 자동 분류. 입주자별 전용 규칙 먼저 매칭, 없으면 공통 규칙. 현재 autoClassify/applyRule 함수가 app.js에 없거나 미연결 상태.",
+      "files_affected": ["app.js"],
+      "dependencies": ["A014", "A025"],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "엑셀 업로드 미리보기 행에 분류/소분류 자동 채워짐",
+        "입주자별 규칙이 공통 규칙보다 우선 적용",
+        "규칙 미매칭 시 빈 상태 유지"
+      ],
+      "notes": "parserCats 배열 생성 시 .sort()로 clientId===clientId인 규칙을 앞에 배치. Array.find()가 첫 매칭을 반환하므로 자동으로 입주자별 우선 적용. analyzeXlFile 두 곳 모두 수정.",
+      "created_at": "2026-04-06",
+      "completed_at": "2026-04-06"
+    },
+    {
+      "id": "C003",
+      "category": "feature",
+      "title": "증빙 — 영수증 A4 일괄 출력 (2×4 격자) 검증 및 수정",
+      "description": "printReceiptSheet() 함수가 이미 존재하나 CLAUDE.md에서 미완성으로 표시됨. 실제 동작 확인 및 2×4 격자(한 페이지 8장) 레이아웃 정확히 구현.",
+      "files_affected": ["app.js", "index.html"],
+      "dependencies": ["A020"],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "거래내역에서 증빙 있는 항목 선택 후 일괄 출력 버튼 클릭 시 인쇄 다이얼로그",
+        "A4 페이지에 2열×4행 = 8장 배치",
+        "페이지 넘김 시 다음 8장 배치"
+      ],
+      "notes": "printReceiptSheet() 페이지 분기를 4→8로 변경(2열×4행). cell-img 높이 55→58mm, 여백 축소. btn-h-receipt-print 버튼에 이미 연결됨.",
+      "created_at": "2026-04-06",
+      "completed_at": "2026-04-06"
+    },
+    {
+      "id": "C004",
+      "category": "improvement",
+      "title": "통장 사진 — 갤러리 연월 내림차순 정렬",
+      "description": "계좌 관리 모달의 통장 사진 갤러리에서 연월 최신순(내림차순)으로 표시. 현재 정렬 없음.",
+      "files_affected": ["app.js"],
+      "dependencies": ["A021"],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "통장 사진 갤러리가 연월 내림차순으로 표시 (2025-12 > 2025-11 > ...)"
+      ],
+      "notes": "openBankStatementModal() 내 existing 배열 로드 직후 sort() 추가. renderGallery() 내에서도 sorted 배열 정렬 후 렌더링.",
+      "created_at": "2026-04-06",
+      "completed_at": "2026-04-06"
+    },
+    {
+      "id": "C005",
+      "category": "feature",
+      "title": "통장 사진 — 리스트 기본 보기 (연월 필터)",
+      "description": "계좌 관리 모달 또는 별도 섹션에서 통장 사진을 썸네일 그리드 외에 리스트 테이블 뷰로도 볼 수 있게. 연월 필터 셀렉트 박스로 특정 월만 조회 가능.",
+      "files_affected": ["app.js", "index.html"],
+      "dependencies": ["A021", "C004"],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "연월 필터 셀렉트 박스로 특정 월 사진만 표시",
+        "전체 보기 시 내림차순 정렬된 리스트 표시",
+        "각 항목에 연월 레이블 + 썸네일 + 클릭 시 확대 미리보기"
+      ],
+      "notes": "openBankStatementModal() 헤더 영역에 bs-month-filter select 추가(전체+연월 옵션). renderGallery()에서 filterVal 읽어 filtered 배열로 렌더링. bs-month-filter change 이벤트로 재렌더링.",
+      "created_at": "2026-04-06",
+      "completed_at": "2026-04-06"
+    },
+    {
+      "id": "C006",
+      "category": "improvement",
+      "title": "보고서 — 거래내역 sortOrder 기준 → 날짜/시간 오름차순 자동 정렬",
+      "description": "보고서 내 거래내역 표시 시 sortOrder 기준 우선 정렬, 동일 sortOrder면 날짜+시간 오름차순. F003에서 time 필드 추가됐으므로 loadReport() 정렬 로직에 time을 3번째 키로 추가.",
+      "files_affected": ["app.js"],
+      "dependencies": ["A053", "F003"],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "보고서 거래내역이 sortOrder → date → time 순으로 정렬",
+        "time 없는 거래는 날짜 기준으로만 정렬"
+      ],
+      "notes": "loadReport() 정렬 로직에 dtA/dtB = date+time 합산 문자열 비교 추가. time 없으면 date만 비교.",
+      "created_at": "2026-04-06",
+      "completed_at": "2026-04-06"
+    },
+    {
+      "id": "A059",
+      "category": "feature",
+      "title": "Firestore 보안 규칙 (firestore.rules)",
+      "description": "인증된 사용자만 읽기/쓰기 허용하는 Firestore 보안 규칙 설정.",
+      "files_affected": [
+        "firestore.rules"
+      ],
+      "dependencies": [
+        "A001"
+      ],
+      "priority": "high",
+      "status": "done",
+      "success_criteria": [
+        "비인증 접근 차단",
+        "규칙 배포 완료"
+      ],
+      "notes": "",
+      "created_at": "2026-03-29",
+      "completed_at": "2026-03-31"
+    },
+    {"id":"D001","category":"bugfix","title":"엑셀 대조 수기추가 오탐 수정","description":"matchExcelToTrx Map→pool(shift) 방식으로 동일 날짜+금액 거래 2건 정확히 1:1 매칭","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {"id":"D002","category":"security","title":"confirmed 결재 완료 후 거래 수정/삭제 불가","description":"fetchBaseData에서 S.confirmedMonths 캐시, saveTrx/delTrx/일괄삭제 전 체크","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {"id":"D003","category":"security","title":"담당자 보고서 탭 타 담당자 보고서 숨김","description":"loadReportList에서 role===담당자이면 S.clients 기반 필터 적용","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {"id":"D004","category":"ux","title":"연간 통계 → 보고서 탭 서브탭으로 통합","description":"nav에서 연간통계 제거, view-report 내 월간/연간 서브탭으로 분리","files_affected":["index.html","app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {"id":"D005","category":"feature","title":"거래내역 달력형 뷰","description":"목록/달력 토글 버튼, renderCalendarView 함수, 날짜 클릭 상세","files_affected":["index.html","app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {"id":"D006","category":"feature","title":"대상자/계좌 비활성화 기능","description":"active 필드, fetchBaseData 필터, 설정탭 🔒/🔓 버튼, toggleClientActive/toggleAccountActive","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {"id":"D007","category":"ux","title":"고정항목 카테고리 sortOrder 순서 반영","description":"renderFixedItemForm의 fillCats를 Map+sort로 교체","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {"id":"D008","category":"feature","title":"보고서 계좌 현황 전월 잔액 표시","description":"prevEnd 기준 prevBal 계산 후 계좌 현황 행에 전월 잔액 함께 표시","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {"id":"D009","category":"ux","title":"영수증 미리보기 + 거래정보 split 플로팅 패널","description":"openReceiptModal을 드래그 가능 플로팅 패널로 교체, trxId 파라미터 추가","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {"id":"D010","category":"ux","title":"결재 시 통장사진 새창으로 열기","description":"openBankStatementsForApproval 함수, 팀장/센터장 결재 버튼에 훅 추가","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {"id":"D011","category":"ux","title":"홈 화면 퀵 액션 버튼 추가","description":"dashboard-actions에 파일업로드/거래내역/수기입력/보고서/설정 아이콘 버튼","files_affected":["index.html"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"}
+  ]
+}
