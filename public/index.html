@@ -46,6 +46,7 @@
   <style>
     :root {
       --bg:      #f1f5f9;
+      --surface: #ffffff;
       --green:   #10b981;
       --card:    #ffffff;
       --sidebar: #1e293b;
@@ -223,6 +224,23 @@
       #print-area>div[style*="display: none"],#print-area>div[style*="display:none"]{padding:0!important;margin:0!important;border:none!important;height:0!important;overflow:hidden!important;}
     }
     @media(max-width:768px){aside{display:none;}}
+    /* 대시보드 퀵 액션 버튼 — 창 너비에 따라 자동 조정 */
+    #dashboard-actions{display:flex;gap:10px;margin-bottom:16px;flex-wrap:nowrap;}
+    .dash-action-btn{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:20px 8px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;transition:var(--tr);white-space:nowrap;}
+    .dash-action-btn:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.08);border-color:#93c5fd;}
+    .dash-action-btn .dash-icon{font-size:36px;line-height:1;transition:font-size .2s;}
+    @media(max-width:1100px){
+      .dash-action-btn{padding:16px 6px;font-size:12px;gap:6px;}
+      .dash-action-btn .dash-icon{font-size:28px;}
+    }
+    @media(max-width:860px){
+      .dash-action-btn{padding:12px 4px;font-size:11px;gap:5px;}
+      .dash-action-btn .dash-icon{font-size:22px;}
+    }
+    @media(max-width:680px){
+      #dashboard-actions{flex-wrap:wrap;}
+      .dash-action-btn{flex:1 1 calc(33% - 8px);min-width:70px;padding:12px 4px;}
+    }
   </style>
 </head>
 <body>
@@ -318,21 +336,21 @@
         <!-- 대시보드 -->
         <div id="view-dashboard" class="animate-in">
           <!-- 퀵 액션 버튼 -->
-          <div id="dashboard-actions" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
-            <button onclick="openModal('excel')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;color:var(--amber);min-width:90px;">
-              <span style="font-size:40px;">📤</span>파일 업로드
+          <div id="dashboard-actions">
+            <button onclick="openModal('excel')" class="dash-action-btn" style="color:var(--amber);">
+              <span class="dash-icon">📤</span>파일 업로드
             </button>
-            <button onclick="changeView('history')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;color:var(--blue);min-width:90px;">
-              <span style="font-size:40px;">📋</span>거래내역
+            <button onclick="changeView('history')" class="dash-action-btn" style="color:var(--blue);">
+              <span class="dash-icon">📋</span>거래내역
             </button>
-            <button onclick="openModal('trx')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;color:var(--green);min-width:90px;">
-              <span style="font-size:40px;">✍️</span>수기 입력
+            <button onclick="openModal('trx')" class="dash-action-btn" style="color:var(--green);">
+              <span class="dash-icon">✍️</span>수기 입력
             </button>
-            <button onclick="changeView('report')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;color:#8b5cf6;min-width:90px;">
-              <span style="font-size:40px;">📑</span>보고서
+            <button onclick="changeView('report')" class="dash-action-btn" style="color:#8b5cf6;">
+              <span class="dash-icon">📑</span>보고서
             </button>
-            <button onclick="changeView('settings')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 24px;background:#fff;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-size:13px;font-weight:700;color:var(--muted);min-width:90px;">
-              <span style="font-size:40px;">⚙️</span>설정
+            <button onclick="changeView('settings')" class="dash-action-btn" style="color:var(--muted);">
+              <span class="dash-icon">⚙️</span>설정
             </button>
           </div>
           <!-- 입주자 카드 -->
@@ -836,6 +854,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,29 @@
+/**
+ * modules/dashboard.js — Smart Care Ledger v2
+ * 대시보드: 입주자 카드 그리드 렌더링
+ */
+
+'use strict';
+
+import { S } from '../state.js';
+
+// changeView, loadTransactions — imported via app.js
+
+export function renderDashboard() {
+  const grid=document.getElementById('client-grid'); if(!grid)return;
+  grid.innerHTML='';
+  if (!S.clients.length) { grid.innerHTML='<div class="empty-state"><div class="icon">👤</div>등록된 입주자가 없습니다.</div>'; return; }
+  S.clients.forEach(client=>{
+    const card=document.createElement('div'); card.className='client-card';
+    // F001: 입주자별 계좌 잔액 합산 미리보기
+    const totalBal=S.accounts.filter(a=>a.clientId===client.id).reduce((s,a)=>s+Number(a.currentBalance||0),0);
+    const balColor=totalBal>=0?'#10b981':'#ef4444';
+    card.innerHTML=`<div class="client-avatar">${client.name.charAt(0)}</div><div class="client-name">${client.name}</div><div style="font-size:12px;font-weight:700;color:${balColor};margin-top:4px;">${totalBal.toLocaleString()}원</div>`;
+    card.addEventListener('click',()=>{
+      S.activeClient=client.id;
+      const hc=document.getElementById('h-client'); if(hc)hc.value=client.id;
+      changeView('history'); loadTransactions(client.id); // imported via app.js
+    });
+    grid.appendChild(card);
+  });
+}
