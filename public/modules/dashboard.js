@@ -21,7 +21,7 @@ export function renderDashboard() {
     card.addEventListener('click',()=>{
       S.activeClient=client.id;
       const hc=document.getElementById('h-client'); if(hc)hc.value=client.id;
-      changeView('history'); loadTransactions(client.id); // imported via app.js
+      changeView('history'); loadTransactions(client.id);
     });
     grid.appendChild(card);
   });

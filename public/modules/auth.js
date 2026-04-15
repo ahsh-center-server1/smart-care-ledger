@@ -60,6 +60,7 @@ export async function _enterApp() {
     });
     document.getElementById('login-view').style.display='none';
     await fetchBaseData();
+    // isMobile / initMobileApp는 app.js에 정의됨 (모바일 전용, 미모듈화) — window 경유
     if(window.isMobile()){
       window.initMobileApp();
     } else {
