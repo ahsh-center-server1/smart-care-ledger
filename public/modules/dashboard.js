@@ -6,8 +6,7 @@
 'use strict';
 
 import { S } from '../state.js';
-
-// changeView, loadTransactions — imported via app.js
+import { loadTransactions, changeView } from './core.js';
 
 export function renderDashboard() {
   const grid=document.getElementById('client-grid'); if(!grid)return;

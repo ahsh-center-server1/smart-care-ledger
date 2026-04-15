@@ -9,8 +9,9 @@ import { S } from '../state.js';
 import { COLS } from '../constants.js';
 import { fb, fdb } from '../services/firestore.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
+import { fetchBaseData, changeView } from './core.js';
 
-// fetchBaseData, changeView, isMobile, initMobileApp — app.js에서 window로 노출됨
+// isMobile, initMobileApp — app.js에서 window로 노출됨 (core.js 미포함)
 // window.onFirebaseReady, 이벤트 바인딩 — app.js에서 일괄 처리
 
 // ─────────────────────────────────────────────
@@ -59,12 +60,12 @@ export async function _enterApp() {
       if(el)el.style.display=isInputOnly?'none':'';
     });
     document.getElementById('login-view').style.display='none';
-    await fetchBaseData(); // imported via app.js
-    if(isMobile()){ // imported via app.js
-      initMobileApp(); // imported via app.js
+    await fetchBaseData();
+    if(window.isMobile()){
+      window.initMobileApp();
     } else {
       document.getElementById('app-view').style.display='block';
-      changeView('dashboard'); // imported via app.js
+      changeView('dashboard');
     }
   } catch(e) { toast('초기화 오류: '+e.message,'error'); }
   showLoading(false);
