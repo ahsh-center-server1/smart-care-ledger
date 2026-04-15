@@ -11,7 +11,6 @@ import { fb, fdb } from '../services/firestore.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fetchBaseData, changeView } from './core.js';
 
-// isMobile, initMobileApp — app.js에서 window로 노출됨 (core.js 미포함)
 // window.onFirebaseReady, 이벤트 바인딩 — app.js에서 일괄 처리
 
 // ─────────────────────────────────────────────
