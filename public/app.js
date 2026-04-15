@@ -10,7 +10,7 @@
  *   1) 모듈 import
  *   2) ExcelParser (파서 로직 · parser-config.js와 연동)
  *   3) Firebase 준비 / 세션 / 기본 데이터 로드
- *   4) loadTransactions / changeView / switchRptSubtab 등 코어 흐름
+ *   4) Core 흐름 위임 (fetchBaseData / loadTransactions / changeView → modules/core.js)
  *   5) 모바일 뷰
  *   6) HTML onclick 호환을 위한 window 전역 노출
  *   7) 이벤트 바인딩

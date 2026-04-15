@@ -2,7 +2,10 @@
  * modules/core.js — Smart Care Ledger v2
  * 코어 흐름: 기본 데이터 로드, 거래 로드, 뷰 전환
  *
- * 참고: Dash/Trx/Rpt/Settings와 상호 import 관계 (ES6 circular — 함수 바디 내 호출만 있으므로 안전)
+ * 순환 import 안전성:
+ *   - core.js → Dash/Trx/Rpt/Settings (이 파일이 먼저 import)
+ *   - Dash/Trx/Rpt/Settings → core.js (Tasks 2~4 이후 추가 예정)
+ *   - 양방향 모두 함수 바디 내 호출만 있으므로 모듈 초기화 시점 undefined 없음
  */
 'use strict';
 
