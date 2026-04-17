@@ -2,9 +2,11 @@
  * modules/settings.js — Smart Care Ledger v2
  * 설정 / 관리 (직원·입주자·계좌·카테고리·규칙·고정항목·예산·마감)
  *
- * 주의: 교차모듈 참조(openModal, loadFixedItems, renderFixedItemsList,
- * fetchBaseData, loadTransactions 등)는 app.js에서 window로 노출되거나
- * import되어 사용된다. 이 파일은 직접 import하지 않고 런타임 전역을 참조한다.
+ * 의존성:
+ *   - core.js  : fetchBaseData, loadTransactions (명시적 import)
+ *   - modals.js: openModal, renderFixedItemsList (명시적 import)
+ *   - innerHTML onclick 문자열 내 bare global: openModal, toggleClientActive,
+ *     toggleAccountActive (window 경유 필수 — 변경 금지)
  */
 
 'use strict';
@@ -13,10 +15,16 @@ import { S } from '../state.js';
 import { toast, showConfirm, showLoading } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { COLS } from '../constants.js';
+// loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
+import { fetchBaseData, loadTransactions } from './core.js';
+import { openModal, renderFixedItemsList } from './modals.js';
 
 // ─────────────────────────────────────────────
 // 직원·입주자·계좌 관리 통합 렌더
 // ─────────────────────────────────────────────
+// ⚠️ 아래 함수들의 innerHTML에는 bare global 호출이 포함됨
+// (openModal, toggleClientActive, toggleAccountActive 등)
+// window 경유로 해석되므로 import된 심볼명으로 교체하면 런타임 오류 발생
 export function renderManagement(){
   const isAdmin=['관리자','센터장','팀장'].includes(S.user?.role);
   // B005: admin-staff 섹션 및 등록 버튼 역할별 표시/숨김
@@ -59,13 +67,13 @@ export async function toggleClientActive(id,makeActive){
   const{doc,updateDoc}=fb();
   await updateDoc(doc(fdb(),COLS.CLIENTS,id),{active:makeActive});
   toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
-  await window.fetchBaseData(); renderManagement();
+  await fetchBaseData(); renderManagement();
 }
 export async function toggleAccountActive(id,makeActive){
   const{doc,updateDoc}=fb();
   await updateDoc(doc(fdb(),COLS.ACCOUNTS,id),{active:makeActive});
   toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
-  await window.fetchBaseData(); renderManagement();
+  await fetchBaseData(); renderManagement();
 }
 
 export function confirmDelete(type,id){
@@ -74,7 +82,7 @@ export function confirmDelete(type,id){
     const{doc,deleteDoc}=fb();
     const cols={client:COLS.CLIENTS,account:COLS.ACCOUNTS,staff:COLS.USERS};
     await deleteDoc(doc(fdb(),cols[type],id));
-    await window.fetchBaseData(); renderManagement();
+    await fetchBaseData(); renderManagement();
     toast('삭제됨','success');
   },'삭제');
 }
@@ -118,8 +126,8 @@ export async function loadSettings(){
     fixedClientSel.innerHTML='<option value="">입주자를 선택하세요</option>';
     S.clients.forEach(c=>fixedClientSel.add(new Option(c.name,c.id)));
     if(S.clients.some(c=>c.id===prevFixed))fixedClientSel.value=prevFixed;
-    if(!fixedClientSel.dataset.bound){fixedClientSel.dataset.bound='1';fixedClientSel.addEventListener('change',()=>window.renderFixedItemsList(fixedClientSel.value));}
-    if(fixedClientSel.value)window.renderFixedItemsList(fixedClientSel.value);
+    if(!fixedClientSel.dataset.bound){fixedClientSel.dataset.bound='1';fixedClientSel.addEventListener('change',()=>renderFixedItemsList(fixedClientSel.value));}
+    if(fixedClientSel.value)renderFixedItemsList(fixedClientSel.value);
   }
   const addFixedBtn=document.getElementById('btn-add-fixed-item');
   if(addFixedBtn&&!addFixedBtn.dataset.bound){
@@ -127,7 +135,7 @@ export async function loadSettings(){
     addFixedBtn.addEventListener('click',()=>{
       const cid=document.getElementById('fixed-client-sel')?.value;
       if(!cid){toast('입주자를 먼저 선택하세요.','error');return;}
-      S.activeClient=cid; window.openModal('fixed-item');
+      S.activeClient=cid; openModal('fixed-item');
     });
   }
   initBudgetSection();
@@ -216,7 +224,7 @@ export async function addCategory(type,clientId=''){
   if(clientId)data.clientId=clientId;
   await addDoc(collection(fdb(),COLS.CATEGORIES),data);
   if(input)input.value='';
-  await window.fetchBaseData(); loadSettings();
+  await fetchBaseData(); loadSettings();
   toast(`"${name}" 추가됨`,'success');
 }
 export async function deleteCategory(type,name,clientId=''){
@@ -228,7 +236,7 @@ export async function deleteCategory(type,name,clientId=''){
     if(!clientId&&data.clientId)continue;
     await deleteDoc(doc(fdb(),COLS.CATEGORIES,d.id));
   }
-  await window.fetchBaseData(); loadSettings(); toast(`"${name}" 삭제됨`,'success');
+  await fetchBaseData(); loadSettings(); toast(`"${name}" 삭제됨`,'success');
 }
 export async function addRule(){
   const kw=(document.getElementById('new-rule-kw')?.value||'').trim();
@@ -243,12 +251,12 @@ export async function addRule(){
   if(clientId)data.clientId=clientId;
   await addDoc(collection(fdb(),COLS.CATEGORIES),data);
   const kwInput=document.getElementById('new-rule-kw'); if(kwInput)kwInput.value='';
-  await window.fetchBaseData(); loadSettings(); toast(`"${kw}" 규칙 추가됨`,'success');
+  await fetchBaseData(); loadSettings(); toast(`"${kw}" 규칙 추가됨`,'success');
 }
 export async function deleteRule(docId){
   const{doc,deleteDoc}=fb();
   await deleteDoc(doc(fdb(),COLS.CATEGORIES,docId));
-  await window.fetchBaseData(); loadSettings(); toast('규칙 삭제됨','success');
+  await fetchBaseData(); loadSettings(); toast('규칙 삭제됨','success');
 }
 export async function resetCategories(){
   showConfirm('기본값 초기화','기존 카테고리와 규칙을 모두 삭제하고 기본값으로 초기화합니다.',async()=>{
@@ -267,7 +275,7 @@ export async function resetCategories(){
       {keyword:'',type:'수입',category:'확인필요',subcategory:'',sortOrder:1},
     ];
     for(const d of defaults)await addDoc(collection(fdb(),COLS.CATEGORIES),d);
-    await window.fetchBaseData(); loadSettings(); toast('기본값으로 초기화됨','success');
+    await fetchBaseData(); loadSettings(); toast('기본값으로 초기화됨','success');
   },'초기화');
 }
 
@@ -310,7 +318,7 @@ export async function executeArchive(year){
     }
     for(const t of trxList)await deleteDoc(doc(db,COLS.TRANSACTIONS,t.id));
     await addDoc(collection(db,COLS.CONFIG),{type:'archive',year,archivedAt:new Date().toISOString(),count:trxList.length});
-    await window.fetchBaseData(); loadSettings();
+    await fetchBaseData(); loadSettings();
     toast(`${year}년 마감 완료! ${trxList.length}건 보관.`,'success',5000);
   }catch(e){toast('마감 오류: '+e.message,'error');}
   showLoading(false);
@@ -414,7 +422,7 @@ export async function executeFirebaseReset(){
         const snap=await getDocs(collection(db,col));
         for(const d of snap.docs)await deleteDoc(doc(db,col,d.id));
       }
-      await window.fetchBaseData();
+      await fetchBaseData();
       loadSettings();
       toast('초기화 완료. 모든 데이터가 삭제되었습니다.','success',5000);
     }catch(e){toast('초기화 오류: '+e.message,'error');}

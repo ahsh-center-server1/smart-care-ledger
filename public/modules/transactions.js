@@ -9,6 +9,8 @@ import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
+import { loadTransactions, isConfirmedLocked } from './core.js';
+import { openModal } from './modals.js';
 
 // ① 계좌 필터 셀렉터 업데이트 (현재 선택된 입주자 기준)
 export function rebuildAccountFilter(){
