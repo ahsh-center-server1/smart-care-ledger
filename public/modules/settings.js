@@ -2,9 +2,11 @@
  * modules/settings.js — Smart Care Ledger v2
  * 설정 / 관리 (직원·입주자·계좌·카테고리·규칙·고정항목·예산·마감)
  *
- * 주의: 교차모듈 참조(openModal, loadFixedItems, renderFixedItemsList,
- * fetchBaseData, loadTransactions 등)는 app.js에서 window로 노출되거나
- * import되어 사용된다. 이 파일은 직접 import하지 않고 런타임 전역을 참조한다.
+ * 의존성:
+ *   - core.js  : fetchBaseData, loadTransactions (명시적 import)
+ *   - modals.js: openModal, renderFixedItemsList (명시적 import)
+ *   - innerHTML onclick 문자열 내 bare global: openModal, toggleClientActive,
+ *     toggleAccountActive (window 경유 필수 — 변경 금지)
  */
 
 'use strict';
@@ -13,12 +15,16 @@ import { S } from '../state.js';
 import { toast, showConfirm, showLoading } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { COLS } from '../constants.js';
+// loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, loadTransactions } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
 
 // ─────────────────────────────────────────────
 // 직원·입주자·계좌 관리 통합 렌더
 // ─────────────────────────────────────────────
+// ⚠️ 아래 함수들의 innerHTML에는 bare global 호출이 포함됨
+// (openModal, toggleClientActive, toggleAccountActive 등)
+// window 경유로 해석되므로 import된 심볼명으로 교체하면 런타임 오류 발생
 export function renderManagement(){
   const isAdmin=['관리자','센터장','팀장'].includes(S.user?.role);
   // B005: admin-staff 섹션 및 등록 버튼 역할별 표시/숨김
