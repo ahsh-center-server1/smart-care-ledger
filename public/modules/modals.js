@@ -9,7 +9,7 @@ import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
-import { uploadToDrive } from '../services/drive.js';
+import { uploadToDrive, compressImage } from '../services/drive.js';
 import { fetchBaseData, loadTransactions } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
