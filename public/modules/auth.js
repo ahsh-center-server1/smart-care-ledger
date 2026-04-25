@@ -26,32 +26,31 @@ export async function handleLogin() {
   const btn=document.getElementById('login-btn');
   btn.disabled=true; btn.textContent='접속 중...';
   try {
-    // 1. Cloud Function으로 custom token 받기
-    const { functions, httpsCallable } = window._fbFunctions;
-    const signInFn = httpsCallable(functions, 'signInWithCustomAuth');
-    const result = await signInFn({ userId: id, password: pw });
+    // Firestore users 컬렉션에서 직접 인증 (Cloud Functions 미사용)
+    const { getDocs, collection, query, where } = fb();
+    const snap = await getDocs(query(collection(fdb(), COLS.USERS), where('userId', '==', id)));
 
-    // 2. Firebase Auth에 custom token으로 로그인
-    const { auth, signInWithCustomToken } = window._fbAuth;
-    await signInWithCustomToken(auth, result.data.token);
+    if (snap.empty) {
+      throw new Error('아이디 또는 비밀번호가 올바르지 않습니다.');
+    }
 
-    // 3. 세션에 사용자 정보 저장
-    S.user = { ...result.data.user };
+    const userData = snap.docs[0].data();
+    if (userData.password !== pw) {
+      throw new Error('아이디 또는 비밀번호가 올바르지 않습니다.');
+    }
+
+    // 세션에 사용자 정보 저장
+    S.user = { userId: id, name: userData.name, role: userData.role, team: userData.team };
     sessionStorage.setItem('scl_user', JSON.stringify(S.user));
 
-    // 4. 권한 초기화
+    // 권한 초기화
     await initPermissions();
 
     btn.disabled=false; btn.textContent='시스템 접속';
     await _enterApp();
   } catch(e) {
-    const isCredentialError = e.code === 'functions/permission-denied'
-      || e.code === 'functions/not-found'
-      || e.code === 'functions/invalid-argument';
-    const msg = isCredentialError
-      ? '아이디 또는 비밀번호가 올바르지 않습니다.'
-      : '오류: ' + e.message;
-    errEl.textContent=msg; errEl.style.display='block';
+    errEl.textContent=e.message || '로그인 실패. 다시 시도하세요.';
+    errEl.style.display='block';
     btn.disabled=false; btn.textContent='시스템 접속';
   }
 }
@@ -86,10 +85,6 @@ export async function _enterApp() {
 }
 
 export function handleLogout() {
-  // Firebase Auth 로그아웃
-  const { auth, signOut } = window._fbAuth;
-  signOut(auth).catch(()=>{}); // 에러 무시 (세션은 로컬에서 이미 삭제)
-
   S.user=null; S.transactions=[]; S.filteredTrx=[]; S.activeClient=null;
   S.clients=[]; S.accounts=[]; S.categories=[];
   S.driveToken=null; S.driveTokenExpiry=null;
