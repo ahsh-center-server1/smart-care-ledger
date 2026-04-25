@@ -9,6 +9,7 @@ import { S } from '../state.js';
 import { COLS, CAT_COLORS, STATUS_LABELS, STATUS_CLASSES, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
+import { can } from './permissions.js';
 
 // ─────────────────────────────────────────────
 // 규칙 기반 자동 분석 (API 없음)
@@ -918,13 +919,13 @@ export async function loadReportList(){
       pendingEl.appendChild(div);
     });
     const pendingWrap=document.getElementById('rpt-pending-wrap');
-    if(pendingWrap)pendingWrap.style.display=(role==='팀장'||role==='센터장'||role==='관리자')?'block':'none';
+    if(pendingWrap)pendingWrap.style.display=can('report.view.all')?'block':'none';
     const badge=document.getElementById('nav-rpt-badge');
     if(badge){if(pending.length>0){badge.textContent=pending.length;badge.style.display='inline';}else badge.style.display='none';}
   }
   // 담당자 역할은 자신이 담당하는 대상자의 보고서만 표시 (S.clients는 이미 필터됨)
   const myClientIds=new Set(S.clients.map(c=>c.id));
-  const visibleList=(role==='담당자')?list.filter(r=>myClientIds.has(r.clientId)):list;
+  const visibleList=!can('report.view.all')?list.filter(r=>myClientIds.has(r.clientId)):list;
   if(!visibleList.length){el.innerHTML='<div class="empty-state"><div class="icon">📑</div>저장된 보고서가 없습니다.</div>';return;}
   el.innerHTML=''; // 매 호출마다 컨테이너 비우기 (중복 누적 방지)
   // 테이블 형식 렌더링

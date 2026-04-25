@@ -18,6 +18,7 @@ import { COLS } from '../constants.js';
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, loadTransactions } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
+import { can } from './permissions.js';
 
 // ─────────────────────────────────────────────
 // 직원·입주자·계좌 관리 통합 렌더
@@ -26,7 +27,7 @@ import { openModal, renderFixedItemsList } from './modals.js';
 // (openModal, toggleClientActive, toggleAccountActive 등)
 // window 경유로 해석되므로 import된 심볼명으로 교체하면 런타임 오류 발생
 export function renderManagement(){
-  const isAdmin=['관리자','센터장','팀장'].includes(S.user?.role);
+  const isAdmin=can('nav.staff');
   // B005: admin-staff 섹션 및 등록 버튼 역할별 표시/숨김
   const adminStaff=document.getElementById('admin-staff');
   if(adminStaff)adminStaff.style.display=isAdmin?'block':'none';
@@ -91,8 +92,8 @@ export function confirmDelete(type,id){
 // 설정 화면
 // ─────────────────────────────────────────────
 export async function loadSettings(){
-  const isArchive=['관리자','센터장'].includes(S.user?.role);
-  const isResetAdmin=S.user?.role==='관리자';
+  const isArchive=can('settings.archive');
+  const isResetAdmin=can('settings.reset');
   const archSec=document.getElementById('archive-section');
   if(archSec)archSec.style.display=isArchive?'block':'none';
   const resetSec=document.getElementById('reset-section');
@@ -409,7 +410,7 @@ export async function saveBudget(){
 // Firebase 초기화 (관리자 전용)
 // ─────────────────────────────────────────────
 export async function executeFirebaseReset(){
-  if(S.user?.role!=='관리자'){toast('관리자만 초기화할 수 있습니다.','error');return;}
+  if(!can('settings.reset')){toast('권한이 없습니다.','error');return;}
   showConfirm('Firebase 전체 초기화','모든 거래/계좌/입주자/보고서 데이터를 삭제합니다. 정말로 진행하시겠습니까?',async()=>{
     const code=prompt('확인을 위해 "초기화"를 입력하세요:');
     if(code!=='초기화'){toast('취소되었습니다.','info');return;}

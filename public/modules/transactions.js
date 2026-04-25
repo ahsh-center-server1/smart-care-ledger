@@ -11,6 +11,7 @@ import { toast, showConfirm, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
 import { openModal } from './modals.js';
+import { can } from './permissions.js';
 
 // ① 계좌 필터 셀렉터 업데이트 (현재 선택된 입주자 기준)
 export function rebuildAccountFilter(){
@@ -80,7 +81,7 @@ export function renderHistoryTable() {
   const start=(S.page-1)*S.pageSize, end=Math.min(start+S.pageSize,total);
   if(ce)ce.textContent=`총 ${total}건 (${start+1}–${end})`;
   tbody.innerHTML='';
-  const isInputOnly=S.user?.role==='입력자';
+  const isInputOnly=!can('trx.view.all');
   S.filteredTrx.slice(start,end).forEach((t,idx)=>{
     const c=cs(t.category), tr=document.createElement('tr');
     tr.dataset.id=t.id; tr.dataset.idx=String(start+idx);
@@ -114,7 +115,7 @@ export function renderHistoryTable() {
           :`<button class="icon-btn receipt-add" data-id="${t.id}" title="증빙 추가" style="color:#94a3b8;">＋</button>`}
       </td>
       <td style="text-align:center;"><div style="display:flex;justify-content:center;gap:4px;">${(()=>{
-        const canEdit=S.user?.role!=='입력자'||(t.createdBy===S.user?.userId);
+        const canEdit=can('trx.edit')&&(!isInputOnly||(t.createdBy===S.user?.userId));
         return canEdit
           ?`<button class="icon-btn trx-edit-btn" data-id="${t.id}" title="수정" style="color:#64748b;" onmouseover="this.style.background='#dbeafe';this.style.color='#2563eb';" onmouseout="this.style.background='transparent';this.style.color='#64748b';">✏️</button>
         <button class="icon-btn trx-del-btn"  data-id="${t.id}" data-acc="${t.accountId}" title="삭제" style="color:#94a3b8;" onmouseover="this.style.background='#fee2e2';this.style.color='#dc2626';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">🗑️</button>`

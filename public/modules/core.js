@@ -17,10 +17,11 @@ import * as Dash     from './dashboard.js';
 import * as Trx      from './transactions.js';
 import * as Rpt      from './report.js';
 import * as Settings from './settings.js';
+import { can } from './permissions.js';
 
 export async function fetchBaseData() {
   const { getDocs, collection } = fb();
-  const db=fdb(), isAdmin=['관리자','센터장','팀장'].includes(S.user?.role);
+  const db=fdb(), isAdmin=can('nav.staff');
   const [uSnap,cSnap,aSnap,catSnap,rSnap] = await Promise.all([
     getDocs(collection(db,COLS.USERS)),
     getDocs(collection(db,COLS.CLIENTS)),
@@ -53,7 +54,7 @@ export async function loadTransactions(clientId) {
     const { getDocs, collection, query, where } = fb();
     const snap = await getDocs(query(collection(fdb(),COLS.TRANSACTIONS), where('clientId','==',clientId)));
     let allTrx = snap.docs.map(d=>({id:d.id,...d.data()}));
-    if(S.user?.role==='입력자') allTrx=allTrx.filter(t=>t.createdBy===S.user.userId);
+    if(!can('trx.view.all')) allTrx=allTrx.filter(t=>t.createdBy===S.user.userId);
     S.transactions = allTrx.sort((a,b)=>{
       const oA=a.sortOrder!=null?a.sortOrder:99999;
       const oB=b.sortOrder!=null?b.sortOrder:99999;
@@ -83,7 +84,7 @@ export function rebuildSelectors() {
 
 export function changeView(view) {
   if(view==='management') view='settings';
-  if(S.user?.role==='입력자'&&(view==='report'||view==='settings')){
+  if((view==='report'&&!can('nav.report'))||(view==='settings'&&!can('nav.settings'))){
     toast('접근 권한이 없습니다.','error'); return;
   }
   if(view==='annual'){ changeView('report'); switchRptSubtab('annual'); return; }

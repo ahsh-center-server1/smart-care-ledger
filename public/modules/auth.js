@@ -10,7 +10,7 @@ import { COLS } from '../constants.js';
 import { fb, fdb } from '../services/firestore.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fetchBaseData, changeView } from './core.js';
-import { initPermissions } from './permissions.js';
+import { initPermissions, can } from './permissions.js';
 
 // window.onFirebaseReady, 이벤트 바인딩 — app.js에서 일괄 처리
 
@@ -62,9 +62,9 @@ export async function _enterApp() {
     setText('user-name',   S.user.name||S.user.userId);
     setText('user-role',   S.user.role||'');
     document.getElementById('user-avatar').textContent=(S.user.name||'?').charAt(0);
-    if (['관리자','센터장','팀장'].includes(S.user.role)) document.getElementById('admin-staff').style.display='block';
+    if (can('nav.staff')) document.getElementById('admin-staff').style.display='block';
     // 입력자 전용: 보고서/설정 nav + 일부 버튼 숨김
-    const isInputOnly=S.user.role==='입력자';
+    const isInputOnly=!can('trx.view.all');
     document.querySelectorAll('.nav-item[data-view="report"],.nav-item[data-view="settings"]').forEach(el=>{
       el.style.display=isInputOnly?'none':'';
     });

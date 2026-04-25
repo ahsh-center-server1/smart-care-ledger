@@ -13,6 +13,7 @@ import { uploadToDrive, compressImage } from '../services/drive.js';
 import { fetchBaseData, loadTransactions } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
+import { can } from './permissions.js';
 
 // ─────────────────────────────────────────────
 // 모달
@@ -741,7 +742,7 @@ export async function uploadBankStatements(files,accRef,existing,renderGallery){
 // 입주자 폼
 // ─────────────────────────────────────────────
 export function renderClientForm(c){
-  const isEdit=!!c, isAdmin=['관리자','센터장','팀장'].includes(S.user?.role);
+  const isEdit=!!c, isAdmin=can('nav.staff');
   const teamLeaders=S.users.filter(u=>u.role==='팀장');
   document.getElementById('modal-body').innerHTML=`
     <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">${isEdit?'입주자 수정':'입주자 등록'}</h3>
@@ -753,7 +754,7 @@ export function renderClientForm(c){
       <button id="fc-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
     </div>`;
   document.getElementById('fc-save').addEventListener('click',async()=>{
-    const isAdm=['관리자','센터장','팀장'].includes(S.user?.role);
+    const isAdm=can('nav.staff');
     const staffIds=isAdm?Array.from(document.querySelectorAll('input[name="fc-staff"]:checked')).map(c=>c.value).join(','):String(S.user.userId);
     const leaderId=isAdm?document.getElementById('fc-leader')?.value||'':'';
     const data={id:document.getElementById('fc-id').value,name:document.getElementById('fc-name').value,contact:isEdit?c.contact||'':'',memo:document.getElementById('fc-memo').value,userIds:staffIds,teamLeader:leaderId};
