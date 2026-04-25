@@ -32,6 +32,7 @@ import { fb, fdb } from './services/firestore.js';
 import { compressImage, getDriveToken, uploadToDrive } from './services/drive.js';
 
 import * as Auth     from './modules/auth.js';
+import { initPermissions } from './modules/permissions.js';
 import * as Core     from './modules/core.js';
 import * as Dash     from './modules/dashboard.js';
 import * as Trx      from './modules/transactions.js';
@@ -325,10 +326,15 @@ window.ExcelParser = ExcelParser;
 // ─────────────────────────────────────────────
 // Firebase 준비 훅 (index.html에서 호출)
 // ─────────────────────────────────────────────
-window.onFirebaseReady = function() {
+window.onFirebaseReady = async function() {
   const saved = sessionStorage.getItem('scl_user');
   if (saved) {
-    try { S.user=JSON.parse(saved); Auth._enterApp(); return; }
+    try {
+      S.user=JSON.parse(saved);
+      await initPermissions();
+      Auth._enterApp();
+      return;
+    }
     catch(e) { sessionStorage.removeItem('scl_user'); }
   }
   document.getElementById('login-view').style.display='flex';

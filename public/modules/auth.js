@@ -10,6 +10,7 @@ import { COLS } from '../constants.js';
 import { fb, fdb } from '../services/firestore.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fetchBaseData, changeView } from './core.js';
+import { initPermissions } from './permissions.js';
 
 // window.onFirebaseReady, 이벤트 바인딩 — app.js에서 일괄 처리
 
@@ -25,19 +26,29 @@ export async function handleLogin() {
   const btn=document.getElementById('login-btn');
   btn.disabled=true; btn.textContent='접속 중...';
   try {
-    const { getDocs, collection, query, where } = fb();
-    const snap = await getDocs(query(collection(fdb(),COLS.USERS), where('userId','==',id), where('password','==',pw)));
-    if (snap.empty) {
-      errEl.textContent='아이디 또는 비밀번호가 올바르지 않습니다.';
-      errEl.style.display='block'; btn.disabled=false; btn.textContent='시스템 접속'; return;
-    }
-    const d=snap.docs[0];
-    S.user={...d.data(),userId:d.id};
-    sessionStorage.setItem('scl_user',JSON.stringify(S.user));
+    // 1. Cloud Function으로 custom token 받기
+    const { functions, httpsCallable } = window._fbFunctions;
+    const signInFn = httpsCallable(functions, 'signInWithCustomAuth');
+    const result = await signInFn({ userId: id, password: pw });
+
+    // 2. Firebase Auth에 custom token으로 로그인
+    const { auth, signInWithCustomToken } = window._fbAuth;
+    await signInWithCustomToken(auth, result.data.token);
+
+    // 3. 세션에 사용자 정보 저장
+    S.user = { ...result.data.user };
+    sessionStorage.setItem('scl_user', JSON.stringify(S.user));
+
+    // 4. 권한 초기화
+    await initPermissions();
+
     btn.disabled=false; btn.textContent='시스템 접속';
     await _enterApp();
   } catch(e) {
-    errEl.textContent='오류: '+e.message; errEl.style.display='block';
+    const msg = e.message?.includes('permission-denied') || e.message?.includes('not-found')
+      ? '아이디 또는 비밀번호가 올바르지 않습니다.'
+      : '오류: ' + e.message;
+    errEl.textContent=msg; errEl.style.display='block';
     btn.disabled=false; btn.textContent='시스템 접속';
   }
 }
@@ -72,6 +83,10 @@ export async function _enterApp() {
 }
 
 export function handleLogout() {
+  // Firebase Auth 로그아웃
+  const { auth, signOut } = window._fbAuth;
+  signOut(auth).catch(()=>{}); // 에러 무시 (세션은 로컬에서 이미 삭제)
+
   S.user=null; S.transactions=[]; S.filteredTrx=[]; S.activeClient=null;
   S.clients=[]; S.accounts=[]; S.categories=[];
   S.driveToken=null; S.driveTokenExpiry=null;
