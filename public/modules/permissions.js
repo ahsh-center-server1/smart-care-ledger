@@ -22,9 +22,10 @@
 'use strict';
 
 import { S } from '../state.js';
-import { fdb } from '../services/firestore.js';
+import { fb, fdb } from '../services/firestore.js';
+import { COLS } from '../constants.js';
 
-const DEFAULT_PERMISSIONS = {
+export const DEFAULT_PERMISSIONS = {
   입력자: {
     'nav.report': false, 'nav.settings': false, 'nav.staff': false,
     'trx.view.all': false, 'trx.create': true, 'trx.edit': true,
@@ -93,9 +94,10 @@ const DEFAULT_PERMISSIONS = {
  */
 export async function initPermissions() {
   try {
-    const doc = await fdb.collection('config').doc('permissions').get();
-    if (doc.exists) {
-      S.permissions = doc.data();
+    const { getDoc, doc } = fb();
+    const snap = await getDoc(doc(fdb(), COLS.CONFIG, 'permissions'));
+    if (snap.exists()) {
+      S.permissions = snap.data();
     } else {
       S.permissions = DEFAULT_PERMISSIONS;
     }
@@ -125,6 +127,7 @@ export async function savePermissions(permissionsObj) {
   if (S.user?.role !== '관리자') {
     throw new Error('권한이 없습니다');
   }
-  await fdb.collection('config').doc('permissions').set(permissionsObj);
+  const { setDoc, doc } = fb();
+  await setDoc(doc(fdb(), COLS.CONFIG, 'permissions'), permissionsObj);
   S.permissions = permissionsObj;
 }
