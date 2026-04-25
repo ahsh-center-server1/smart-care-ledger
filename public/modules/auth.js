@@ -45,7 +45,10 @@ export async function handleLogin() {
     btn.disabled=false; btn.textContent='시스템 접속';
     await _enterApp();
   } catch(e) {
-    const msg = e.message?.includes('permission-denied') || e.message?.includes('not-found')
+    const isCredentialError = e.code === 'functions/permission-denied'
+      || e.code === 'functions/not-found'
+      || e.code === 'functions/invalid-argument';
+    const msg = isCredentialError
       ? '아이디 또는 비밀번호가 올바르지 않습니다.'
       : '오류: ' + e.message;
     errEl.textContent=msg; errEl.style.display='block';

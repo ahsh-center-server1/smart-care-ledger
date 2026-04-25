@@ -331,8 +331,14 @@ window.onFirebaseReady = async function() {
   if (saved) {
     try {
       S.user=JSON.parse(saved);
+      const { auth } = window._fbAuth || {};
+      if (auth && !auth.currentUser) {
+        // Firebase Auth 세션 없음 — 재로그인 필요
+        sessionStorage.removeItem('scl_user');
+        throw new Error('Firebase Auth session expired');
+      }
       await initPermissions();
-      Auth._enterApp();
+      await Auth._enterApp();
       return;
     }
     catch(e) { sessionStorage.removeItem('scl_user'); }
