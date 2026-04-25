@@ -26,4 +26,5 @@ export const S = {
   driveTokenExpiry: null,
   fixedItems: [],          // 고정항목
   confirmedMonths: new Set(), // 최종 결재 완료된 월 캐시
+  permissions: null,       // 역할별 권한 맵 (initPermissions() 로드)
 };
