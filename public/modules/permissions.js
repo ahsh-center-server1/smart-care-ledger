@@ -124,7 +124,7 @@ export function can(key) {
  * @param {Object} permissionsObj - 역할별 권한 객체
  */
 export async function savePermissions(permissionsObj) {
-  if (S.user?.role !== '관리자') {
+  if (!can('settings.reset')) {
     throw new Error('권한이 없습니다');
   }
   const { setDoc, doc } = fb();
