@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Firestore 설계</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; padding: 28px; color: #0f172a; }
+  h2 { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
+  .subtitle { color: #64748b; font-size: 13px; margin-bottom: 28px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); overflow: hidden; }
+  .card-header { padding: 14px 18px; font-weight: 700; font-size: 13px; color: #fff; display: flex; align-items: center; gap: 8px; }
+  .card-header.blue { background: #1d4ed8; }
+  .card-header.green { background: #065f46; }
+  .card-header.amber { background: #b45309; }
+  .card-header.red { background: #991b1b; }
+  .card-header.purple { background: #5b21b6; }
+  .card-body { padding: 16px 18px; }
+
+  /* JSON tree */
+  pre.code { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 14px 16px; font-size: 11.5px; line-height: 1.7; overflow-x: auto; margin: 0; }
+  .k { color: #93c5fd; } /* key */
+  .s { color: #86efac; } /* string */
+  .b-true { color: #34d399; font-weight: 700; } /* bool true */
+  .b-false { color: #f87171; } /* bool false */
+  .cm { color: #64748b; font-style: italic; } /* comment */
+
+  /* Flow diagram */
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .flow-row { display: flex; align-items: center; gap: 0; }
+  .flow-box { background: #eff6ff; border: 1.5px solid #93c5fd; border-radius: 8px; padding: 8px 14px; font-size: 12px; font-weight: 600; color: #1e40af; white-space: nowrap; }
+  .flow-box.action { background: #f0fdf4; border-color: #86efac; color: #166534; }
+  .flow-box.warn { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+  .flow-arrow { font-size: 18px; color: #94a3b8; padding: 0 8px; }
+  .flow-down { text-align: center; color: #94a3b8; font-size: 18px; line-height: 1; padding: 4px 0; padding-left: 14px; }
+
+  /* Rule table */
+  table.rules { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.rules th { background: #1e293b; color: #fff; padding: 8px 12px; text-align: left; font-size: 11px; }
+  table.rules td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  table.rules tr:last-child td { border-bottom: none; }
+  table.rules td:first-child { font-family: 'Courier New', monospace; font-size: 11px; color: #6366f1; white-space: nowrap; }
+  .allow { color: #10b981; font-weight: 700; font-size: 11px; }
+  .deny { color: #ef4444; font-weight: 700; font-size: 11px; }
+  .note { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+
+  /* Warning box */
+  .warn-box { background: #fef3c7; border-radius: 10px; padding: 14px 18px; font-size: 12px; color: #78350f; border-left: 4px solid #f59e0b; margin-bottom: 20px; }
+  .warn-box strong { display: block; margin-bottom: 4px; font-size: 13px; }
+  .warn-box ul { margin: 6px 0 0 16px; line-height: 2; }
+
+  .info-box { background: #eff6ff; border-radius: 10px; padding: 14px 18px; font-size: 12px; color: #1e3a8a; border-left: 4px solid #3b82f6; }
+  .info-box strong { display: block; margin-bottom: 4px; font-size: 13px; }
+  .info-box ul { margin: 6px 0 0 16px; line-height: 2; }
+
+  .badge { display:inline-block; padding:2px 7px; border-radius:99px; font-size:10px; font-weight:700; }
+  .badge-blue { background:#dbeafe; color:#1d4ed8; }
+  .badge-red { background:#fee2e2; color:#991b1b; }
+  .badge-green { background:#dcfce7; color:#166534; }
+  .section-label { font-weight: 700; font-size: 13px; color: #1e293b; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+</style>
+</head>
+<body>
+<h2>Firestore 저장 구조 + 보안 규칙</h2>
+<p class="subtitle">권한 설정 데이터가 어디에, 어떻게 저장되고 보호되는지</p>
+
+<div class="warn-box">
+  <strong>⚠️ 핵심 제약: Firebase Auth 미사용</strong>
+  현재 앱은 Firestore <code>users</code> 컬렉션으로 직접 인증합니다. Firebase Auth를 쓰지 않기 때문에
+  Firestore 보안 규칙에서 <code>request.auth</code>가 항상 <code>null</code>입니다.
+  <ul>
+    <li>→ Firestore rules에서 <strong>역할 기반 접근 제어 불가능</strong></li>
+    <li>→ 진짜 DB 레벨 보안을 위해서는 <strong>Firebase Auth 도입이 필요</strong></li>
+    <li>→ 이번 작업 범위: <strong>권한 config 저장/로드 + 규칙 만료 연장</strong></li>
+    <li>→ Firebase Auth 전환은 <strong>별도 작업</strong>으로 분리 (이번 스펙 외)</li>
+  </ul>
+</div>
+
+<div class="grid">
+  <!-- Firestore 저장 구조 -->
+  <div class="card">
+    <div class="card-header blue">💾 Firestore 저장 구조</div>
+    <div class="card-body">
+      <p style="font-size:12px; color:#64748b; margin-bottom:12px;">컬렉션: <code>config</code> · 문서 ID: <code>permissions</code></p>
+      <pre class="code"><span class="cm">// config/permissions</span>
+{
+  <span class="k">"담당자"</span>: {
+    <span class="k">"nav.report"</span>: <span class="b-true">true</span>,
+    <span class="k">"nav.settings"</span>: <span class="b-true">true</span>,
+    <span class="k">"nav.staff"</span>: <span class="b-false">false</span>,
+    <span class="k">"trx.view.all"</span>: <span class="b-true">true</span>,
+    <span class="k">"trx.create"</span>: <span class="b-true">true</span>,
+    <span class="k">"trx.edit"</span>: <span class="b-true">true</span>,
+    <span class="k">"trx.delete"</span>: <span class="b-true">true</span>,
+    <span class="k">"trx.delete.bulk"</span>: <span class="b-true">true</span>,
+    <span class="k">"trx.reorder"</span>: <span class="b-true">true</span>,
+    <span class="k">"trx.transfer"</span>: <span class="b-true">true</span>,
+    <span class="k">"trx.category.edit"</span>: <span class="b-true">true</span>,
+    <span class="k">"trx.csv"</span>: <span class="b-true">true</span>,
+    <span class="k">"excel.upload"</span>: <span class="b-true">true</span>,
+    <span class="k">"receipt.upload"</span>: <span class="b-true">true</span>,
+    <span class="k">"receipt.print"</span>: <span class="b-true">true</span>,
+    <span class="k">"bankbook.upload"</span>: <span class="b-true">true</span>,
+    <span class="k">"report.view.all"</span>: <span class="b-false">false</span>,
+    <span class="k">"report.view.own"</span>: <span class="b-true">true</span>,
+    <span class="k">"report.draft"</span>: <span class="b-true">true</span>,
+    <span class="k">"report.edit"</span>: <span class="b-true">true</span>,
+    <span class="k">"report.delete"</span>: <span class="b-true">true</span>,
+    <span class="k">"report.recall"</span>: <span class="b-true">true</span>,
+    <span class="k">"settings.staff"</span>: <span class="b-false">false</span>,
+    <span class="k">"settings.client"</span>: <span class="b-false">false</span>,
+    <span class="k">"settings.account"</span>: <span class="b-false">false</span>,
+    <span class="k">"settings.fixed"</span>: <span class="b-true">true</span>,
+    <span class="k">"settings.archive"</span>: <span class="b-false">false</span>,
+    <span class="k">"settings.reset"</span>: <span class="b-false">false</span>
+  },
+  <span class="k">"팀장"</span>: { <span class="cm">/* ... */</span> },
+  <span class="k">"센터장"</span>: { <span class="cm">/* ... */</span> },
+  <span class="k">"입력자"</span>: { <span class="cm">/* ... */</span> },
+  <span class="k">"관리자"</span>: { <span class="cm">/* ... */</span> }
+}</pre>
+    </div>
+  </div>
+
+  <!-- permissions.js 로드 흐름 -->
+  <div class="card">
+    <div class="card-header purple">⚡ permissions.js 로드 흐름</div>
+    <div class="card-body">
+      <div class="flow">
+        <div class="flow-row"><div class="flow-box">앱 시작 (app.js)</div></div>
+        <div class="flow-down">↓</div>
+        <div class="flow-row"><div class="flow-box">permissions.js · initPermissions()</div></div>
+        <div class="flow-down">↓</div>
+        <div class="flow-row"><div class="flow-box">Firestore config/permissions 조회</div></div>
+        <div class="flow-down">↓ 성공 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↓ 실패/없음</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px;">
+          <div class="flow-box action" style="font-size:11px">Firestore 값으로<br>S.permissions 설정</div>
+          <div class="flow-box warn" style="font-size:11px">DEFAULT_PERMISSIONS<br>fallback 사용</div>
+        </div>
+        <div class="flow-down">↓</div>
+        <div class="flow-row"><div class="flow-box action">can('trx.edit') 등 사용 가능</div></div>
+      </div>
+      <div style="margin-top:16px; font-size:11px; color:#64748b; line-height:1.7;">
+        • Firestore 오류 시에도 DEFAULT_PERMISSIONS로 정상 동작<br>
+        • S.permissions 는 앱 생명주기 동안 불변 (변경 시 새로고침 필요)<br>
+        • fetchBaseData() 직전에 호출 — 모든 UI 렌더링보다 먼저 완료
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Firestore Rules -->
+<div class="card" style="margin-bottom:20px;">
+  <div class="card-header red">🔒 firestore.rules — 이번 작업 범위</div>
+  <div class="card-body">
+    <p style="font-size:12px; color:#64748b; margin-bottom:14px;">
+      Firebase Auth 없이 할 수 있는 최선: <strong>만료일 연장</strong> + <strong>config/permissions 쓰기 제한 준비</strong>
+    </p>
+    <table class="rules">
+      <thead>
+        <tr><th>규칙 대상</th><th>변경 내용</th><th>비고</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>전체 (현재)</td>
+          <td>
+            <span class="allow">ALLOW</span> read, write<br>
+            if time &lt; <code>2026-04-29</code>
+            <div class="note">⚠️ 12일 후 만료</div>
+          </td>
+          <td style="font-size:11px; color:#64748b;">현재 상태</td>
+        </tr>
+        <tr>
+          <td>전체 (변경 후)</td>
+          <td>
+            <span class="allow">ALLOW</span> read, write<br>
+            if time &lt; <code>2027-12-31</code>
+            <div class="note">만료일 연장 — Firebase Auth 전환 전까지 유지</div>
+          </td>
+          <td style="font-size:11px; color:#10b981; font-weight:600;">✅ 이번 작업</td>
+        </tr>
+        <tr>
+          <td>config/permissions<br><span style="font-size:10px; color:#94a3b8;">(미래 준비)</span></td>
+          <td>
+            Firebase Auth 도입 후:<br>
+            <span class="allow">ALLOW</span> write if <code>token.role == '관리자'</code><br>
+            <span class="allow">ALLOW</span> read if authenticated
+            <div class="note">현재는 적용 불가 — 별도 작업 필요</div>
+          </td>
+          <td style="font-size:11px; color:#f59e0b; font-weight:600;">⏳ 미래 작업</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="info-box">
+  <strong>📋 이번 스펙 요약</strong>
+  <ul>
+    <li>permissions.js 모듈 신규 생성 — DEFAULT_PERMISSIONS + loadOverrides + can()</li>
+    <li>Firestore config/permissions 문서에 역할별 권한 저장/로드</li>
+    <li>기존 6개 파일의 role check → can() 으로 전면 교체</li>
+    <li>설정 탭 내 권한 관리 패널 UI 추가 (관리자 전용)</li>
+    <li>보고서 회수 기능 (담당자·팀장·센터장) 신규 구현</li>
+    <li>firestore.rules 만료일 연장 (2027-12-31)</li>
+    <li>Firebase Auth 전환 → 별도 작업으로 분리</li>
+  </ul>
+</div>
+</body>
+</html>

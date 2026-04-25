@@ -11,7 +11,7 @@
   <!-- Firebase SDK (Firestore + Auth + Functions) -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
-    import { getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+    import { getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
     import { getAuth, signInWithCustomToken, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
     import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
 
@@ -31,7 +31,7 @@
     const functions = getFunctions(app, 'asia-northeast3');
 
     // 전역 노출
-    window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy };
+    window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy };
     window._fbAuth = { auth, signInWithCustomToken, signOut };
     window._fbFunctions = { functions, httpsCallable };
 
@@ -765,6 +765,18 @@
                 </div>
                 <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">모든 거래, 계좌, 입주자, 보고서 데이터를 삭제합니다. <span style="color:#dc2626;font-weight:700;">절대 되돌릴 수 없습니다.</span></p>
                 <button id="btn-firebase-reset" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;">🗑️ 전체 초기화</button>
+              </div>
+            </div>
+            <!-- 권한 관리 (관리자 전용) -->
+            <div id="permission-section" style="display:none;margin-top:20px;">
+              <div style="border:1px solid #e2e8f0;border-radius:var(--r2);padding:20px;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                  <span style="font-size:18px;">🔐</span>
+                  <h3 style="font-size:15px;font-weight:800;color:var(--text);">역할별 권한 관리</h3>
+                  <span style="font-size:11px;font-weight:700;color:#7c3aed;border:1px solid #ddd6fe;background:#f5f3ff;padding:2px 8px;border-radius:99px;">관리자 전용</span>
+                </div>
+                <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">역할별로 기능 접근 권한을 설정합니다. 변경 후 저장하면 다음 로그인부터 적용됩니다.</p>
+                <div id="permission-panel-content"></div>
               </div>
             </div>
           </div>

@@ -1,0 +1,116 @@
+<style>
+  .matrix-wrap { overflow-x: auto; }
+  table.perm { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.perm th, table.perm td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: center; white-space: nowrap; }
+  table.perm thead th { background: #1e293b; color: #fff; font-weight: 700; font-size: 11px; }
+  table.perm thead th.group { background: #334155; }
+  table.perm tbody td.feature { text-align: left; font-weight: 600; color: #1e293b; background: #f8fafc; padding-left: 14px; }
+  table.perm tbody td.subfeature { text-align: left; color: #475569; background: #fff; padding-left: 28px; font-size: 11px; }
+  .y  { color: #10b981; font-size: 16px; }
+  .n  { color: #e2e8f0; font-size: 16px; }
+  .p  { color: #f59e0b; font-size: 14px; font-weight:700; }
+  .section-header td { background: #3b82f6 !important; color: #fff !important; font-weight: 700 !important; text-align: left !important; padding-left: 12px !important; font-size: 12px; }
+  .legend { display:flex; gap:24px; margin: 16px 0 8px; font-size:12px; align-items:center; }
+  .legend span { display:flex; align-items:center; gap:6px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:99px; font-size:10px; font-weight:700; }
+  .badge-green { background:#dcfce7; color:#166534; }
+  .badge-amber { background:#fef3c7; color:#92400e; }
+  .badge-red { background:#fee2e2; color:#991b1b; }
+  h2 { margin-bottom: 4px; }
+</style>
+
+<h2>Smart Care Ledger — 역할별 권한 현황</h2>
+<p class="subtitle">현재 시스템에 하드코딩된 권한 매트릭스 전체 분석</p>
+
+<div class="legend">
+  <span><span class="y">●</span> 허용</span>
+  <span><span class="n">●</span> 불가</span>
+  <span><span class="p">△</span> 조건부 (본인 것만 / 담당 클라이언트만)</span>
+  <span><span class="badge badge-red">UI 전용</span> Firestore 규칙 미적용</span>
+  <span><span class="badge badge-amber">잠금</span> 최종결재 완료 월은 전 역할 불가</span>
+</div>
+
+<div class="matrix-wrap">
+<table class="perm">
+  <thead>
+    <tr>
+      <th style="min-width:220px; text-align:left">기능</th>
+      <th>입력자</th>
+      <th>담당자</th>
+      <th>팀장</th>
+      <th>센터장</th>
+      <th>관리자</th>
+    </tr>
+  </thead>
+  <tbody>
+
+    <!-- NAVIGATION -->
+    <tr class="section-header"><td colspan="6">📌 내비게이션</td></tr>
+    <tr><td class="subfeature">대시보드 접근</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">거래내역 접근</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">보고서 접근</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">설정 접근</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">직원관리 패널</td><td class="n">●</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+
+    <!-- TRANSACTIONS -->
+    <tr class="section-header"><td colspan="6">💳 거래내역</td></tr>
+    <tr><td class="subfeature">거래 조회 (전체)</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">거래 조회 (본인 입력분)</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">수기 입력 (등록)</td><td class="p">△</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">수정 (전체)</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">수정 (본인 입력분만)</td><td class="p">△</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">단건 삭제 (본인)</td><td class="p">△</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">일괄 삭제</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">드래그 순서 변경</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">자산이동 입력</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">카테고리 인라인 수정</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">CSV 내보내기</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">달력 뷰</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">확정된 월 수정/삭제</td><td class="badge badge-amber" colspan="5" style="font-size:11px">⚠️ 최종결재 완료 시 전 역할 불가 (잠금)</td></tr>
+
+    <!-- EXCEL / RECEIPT -->
+    <tr class="section-header"><td colspan="6">📁 엑셀 업로드 / 증빙</td></tr>
+    <tr><td class="subfeature">엑셀 업로드</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">영수증 업로드</td><td class="p">△</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">영수증 미리보기</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">영수증 일괄 출력</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">통장 사진 업로드</td><td class="p">△</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+
+    <!-- REPORTS -->
+    <tr class="section-header"><td colspan="6">📑 보고서</td></tr>
+    <tr><td class="subfeature">보고서 열람</td><td class="n">●</td><td class="p">△</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">초안 작성</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">제출 (담당자→팀장)</td><td class="n">●</td><td class="y">●</td><td class="p">△</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">팀장 결재 (1차)</td><td class="n">●</td><td class="n">●</td><td class="p">△</td><td class="n">●</td><td class="n">●</td></tr>
+    <tr><td class="subfeature">센터장 결재 (최종)</td><td class="n">●</td><td class="n">●</td><td class="n">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">반려</td><td class="n">●</td><td class="n">●</td><td class="p">△</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">초안으로 되돌리기</td><td class="n">●</td><td class="n">●</td><td class="p">△</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">보고서 삭제</td><td class="n">●</td><td class="n">●</td><td class="p">△</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">담당자 의견 입력</td><td class="n">●</td><td class="p">△</td><td class="n">●</td><td class="n">●</td><td class="n">●</td></tr>
+    <tr><td class="subfeature">팀장 의견 입력</td><td class="n">●</td><td class="n">●</td><td class="p">△</td><td class="n">●</td><td class="n">●</td></tr>
+    <tr><td class="subfeature">센터장 의견 입력</td><td class="n">●</td><td class="n">●</td><td class="n">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">엑셀 저장</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">인쇄/PDF</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+
+    <!-- SETTINGS -->
+    <tr class="section-header"><td colspan="6">⚙️ 설정</td></tr>
+    <tr><td class="subfeature">직원 등록/수정/삭제</td><td class="n">●</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">입주자 등록/수정</td><td class="n">●</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">입주자 활성/비활성</td><td class="n">●</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">계좌 등록/수정/삭제</td><td class="n">●</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">카테고리 관리</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">자동분류 규칙 관리</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">고정항목 관리/입력</td><td class="n">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">예산 관리</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">연도 마감 (Archive)</td><td class="n">●</td><td class="n">●</td><td class="n">●</td><td class="y">●</td><td class="y">●</td></tr>
+    <tr><td class="subfeature">전체 초기화 (Reset)</td><td class="n">●</td><td class="n">●</td><td class="n">●</td><td class="n">●</td><td class="y">●</td></tr>
+
+  </tbody>
+</table>
+</div>
+
+<div style="margin-top:20px; padding:14px 16px; background:#fef3c7; border-radius:10px; border-left:4px solid #f59e0b; font-size:12px;">
+  <strong>⚠️ 현재 보안 구조의 한계</strong><br>
+  모든 권한 체크는 <strong>UI 레벨에서만</strong> 적용됩니다. Firestore 보안 규칙이 2026년 4월 29일 만료 예정이며,
+  현재는 DB 레벨 권한 강제가 없습니다. 권한 설정 기능 구현 시 이 점을 반드시 함께 고려해야 합니다.
+</div>

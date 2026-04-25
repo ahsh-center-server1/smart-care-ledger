@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>권한 설정 UI 목업</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f1f5f9; min-height: 100vh; }
+
+  /* App Shell */
+  .app { display: flex; height: 100vh; overflow: hidden; }
+  .sidebar { width: 220px; background: #1e293b; color: #fff; flex-shrink: 0; display: flex; flex-direction: column; }
+  .sidebar-logo { padding: 20px 16px 16px; font-weight: 800; font-size: 15px; border-bottom: 1px solid #334155; }
+  .sidebar-logo span { color: #60a5fa; }
+  .sidebar-nav { padding: 12px 8px; flex: 1; }
+  .nav-item { padding: 8px 12px; border-radius: 8px; font-size: 13px; color: #94a3b8; cursor: pointer; margin-bottom: 2px; display: flex; align-items: center; gap: 8px; }
+  .nav-item.active { background: #3b82f6; color: #fff; }
+  .nav-item:not(.active):hover { background: #334155; color: #e2e8f0; }
+  .nav-section { font-size: 10px; color: #475569; font-weight: 700; padding: 12px 12px 4px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+  /* Main */
+  .main { flex: 1; overflow-y: auto; }
+  .topbar { background: #fff; padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e2e8f0; position: sticky; top: 0; z-index: 10; }
+  .topbar-title { font-weight: 700; font-size: 17px; color: #0f172a; }
+  .topbar-sub { font-size: 12px; color: #94a3b8; margin-top: 1px; }
+  .save-btn { background: #3b82f6; color: #fff; border: none; border-radius: 8px; padding: 8px 20px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .save-btn:hover { background: #2563eb; }
+
+  /* Content */
+  .content { padding: 28px; }
+
+  /* Role tabs */
+  .role-tabs { display: flex; gap: 4px; background: #fff; border-radius: 12px; padding: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 20px; }
+  .role-tab { flex: 1; text-align: center; padding: 8px 4px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; color: #64748b; transition: all .15s; }
+  .role-tab.active { background: #3b82f6; color: #fff; box-shadow: 0 1px 4px rgba(59,130,246,.4); }
+  .role-tab:not(.active):hover { background: #f1f5f9; color: #334155; }
+  .role-badge { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 99px; margin-left: 4px; }
+  .badge-on { background: #dcfce7; color: #166534; }
+  .badge-off { background: #fee2e2; color: #991b1b; }
+
+  /* Section card */
+  .section-card { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.07); margin-bottom: 16px; overflow: hidden; }
+  .section-title { padding: 14px 20px; font-weight: 700; font-size: 13px; color: #fff; display: flex; align-items: center; gap: 8px; }
+  .section-title.nav-color { background: #0f172a; }
+  .section-title.trx-color { background: #0369a1; }
+  .section-title.file-color { background: #065f46; }
+  .section-title.report-color { background: #7c3aed; }
+  .section-title.settings-color { background: #c2410c; }
+  .section-title.fixed-color { background: #475569; }
+  .section-count { background: rgba(255,255,255,.2); font-size: 10px; padding: 2px 7px; border-radius: 99px; font-weight: 700; }
+
+  /* Permission rows */
+  .perm-row { display: flex; align-items: center; padding: 11px 20px; border-bottom: 1px solid #f1f5f9; gap: 12px; }
+  .perm-row:last-child { border-bottom: none; }
+  .perm-row:hover { background: #f8fafc; }
+  .perm-key { font-family: 'Courier New', monospace; font-size: 11px; color: #6366f1; width: 170px; flex-shrink: 0; }
+  .perm-label { font-size: 12px; color: #334155; flex: 1; }
+  .perm-desc { font-size: 11px; color: #94a3b8; margin-top: 1px; }
+
+  /* Toggle */
+  .toggle-wrap { display: flex; align-items: center; gap: 8px; }
+  .toggle { position: relative; width: 40px; height: 22px; cursor: pointer; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: #e2e8f0; border-radius: 99px; transition: .2s; }
+  .slider:before { content:''; position:absolute; width:16px; height:16px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.2s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  input:checked + .slider { background: #3b82f6; }
+  input:checked + .slider:before { transform: translateX(18px); }
+  .toggle-label { font-size: 11px; font-weight: 700; width: 24px; }
+  .toggle-label.on { color: #3b82f6; }
+  .toggle-label.off { color: #94a3b8; }
+
+  /* Conditional badge */
+  .cond-badge { font-size: 10px; background: #fef3c7; color: #92400e; padding: 2px 7px; border-radius: 99px; font-weight: 700; white-space: nowrap; }
+  .fixed-badge { font-size: 10px; background: #f1f5f9; color: #64748b; padding: 2px 7px; border-radius: 99px; font-weight: 600; white-space: nowrap; }
+
+  /* Fixed row */
+  .perm-row.fixed { opacity: 0.55; }
+  .perm-row.fixed .perm-key { color: #94a3b8; }
+
+  /* Info box */
+  .info-box { background: #eff6ff; border-radius: 10px; padding: 12px 16px; font-size: 12px; color: #1d4ed8; border-left: 4px solid #3b82f6; margin-bottom: 20px; }
+  .info-box strong { display: block; margin-bottom: 3px; }
+
+  /* Reset link */
+  .reset-link { font-size: 12px; color: #94a3b8; cursor: pointer; margin-left: auto; }
+  .reset-link:hover { color: #3b82f6; text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-logo">Smart Care <span>Ledger</span></div>
+    <div class="sidebar-nav">
+      <div class="nav-section">메뉴</div>
+      <div class="nav-item">🏠 대시보드</div>
+      <div class="nav-item">💳 거래내역</div>
+      <div class="nav-item">📑 보고서</div>
+      <div class="nav-section">관리</div>
+      <div class="nav-item active">⚙️ 설정</div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">역할별 권한 설정</div>
+        <div class="topbar-sub">설정 > 권한 관리 · 관리자만 접근 가능</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span class="reset-link">기본값으로 초기화</span>
+        <button class="save-btn">💾 변경사항 저장</button>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="info-box">
+        <strong>⚠️ 주의사항</strong>
+        권한 변경은 저장 후 <strong>다음 로그인 시점부터</strong> 적용됩니다. 결재 흐름(제출·결재·반려)은 변경할 수 없습니다.
+      </div>
+
+      <!-- Role Tabs -->
+      <div class="role-tabs">
+        <div class="role-tab">입력자</div>
+        <div class="role-tab active">담당자</div>
+        <div class="role-tab">팀장</div>
+        <div class="role-tab">센터장</div>
+        <div class="role-tab">관리자</div>
+      </div>
+
+      <!-- 내비게이션 -->
+      <div class="section-card">
+        <div class="section-title nav-color">📌 내비게이션 <span class="section-count">3</span></div>
+        <div class="perm-row">
+          <div class="perm-key">nav.report</div>
+          <div class="perm-label">보고서 탭 접근</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">nav.settings</div>
+          <div class="perm-label">설정 탭 접근</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">nav.staff</div>
+          <div class="perm-label">직원관리 패널</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+            <span class="toggle-label off">OFF</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 거래내역 -->
+      <div class="section-card">
+        <div class="section-title trx-color">💳 거래내역 <span class="section-count">9</span></div>
+        <div class="perm-row">
+          <div class="perm-key">trx.view.all</div>
+          <div class="perm-label">전체 거래 조회</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">trx.create</div>
+          <div class="perm-label">수기 입력</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">trx.edit</div>
+          <div class="perm-label">거래 수정</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">trx.delete</div>
+          <div class="perm-label">거래 삭제 (단건)</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">trx.delete.bulk</div>
+          <div class="perm-label">일괄 삭제</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">trx.reorder</div>
+          <div class="perm-label">드래그 순서 변경</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">trx.transfer</div>
+          <div class="perm-label">자산이동 입력</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">trx.category.edit</div>
+          <div class="perm-label">카테고리 인라인 수정</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">trx.csv</div>
+          <div class="perm-label">CSV 내보내기</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 엑셀·증빙 -->
+      <div class="section-card">
+        <div class="section-title file-color">📁 엑셀·증빙 <span class="section-count">4</span></div>
+        <div class="perm-row">
+          <div class="perm-key">excel.upload</div>
+          <div class="perm-label">엑셀 업로드</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">receipt.upload</div>
+          <div class="perm-label">영수증 업로드</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">receipt.print</div>
+          <div class="perm-label">영수증 일괄 출력</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">bankbook.upload</div>
+          <div class="perm-label">통장 사진 업로드</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 보고서 -->
+      <div class="section-card">
+        <div class="section-title report-color">📑 보고서 <span class="section-count">6 설정 가능</span></div>
+        <div class="perm-row">
+          <div class="perm-key">report.view.all</div>
+          <div class="perm-label">전체 보고서 열람</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+            <span class="toggle-label off">OFF</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">report.view.own</div>
+          <div class="perm-label">담당 보고서 열람</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">report.draft</div>
+          <div class="perm-label">초안 작성</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">report.edit</div>
+          <div class="perm-label">보고서 수정</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">report.delete</div>
+          <div class="perm-label">보고서 삭제</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">report.recall</div>
+          <div class="perm-label">보고서 회수 (→ draft 반환)</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+            <span class="toggle-label off">OFF</span>
+          </div>
+        </div>
+        <!-- Fixed rows -->
+        <div class="perm-row fixed">
+          <div class="perm-key">report.submit</div>
+          <div class="perm-label">보고서 제출</div>
+          <span class="fixed-badge">🔒 고정 (결재 흐름)</span>
+        </div>
+        <div class="perm-row fixed">
+          <div class="perm-key">report.approve.team</div>
+          <div class="perm-label">팀장 1차 결재</div>
+          <span class="fixed-badge">🔒 고정 (결재 흐름)</span>
+        </div>
+        <div class="perm-row fixed">
+          <div class="perm-key">report.approve.center</div>
+          <div class="perm-label">센터장 최종 결재</div>
+          <span class="fixed-badge">🔒 고정 (결재 흐름)</span>
+        </div>
+        <div class="perm-row fixed">
+          <div class="perm-key">report.reject</div>
+          <div class="perm-label">보고서 반려</div>
+          <span class="fixed-badge">🔒 고정 (결재 흐름)</span>
+        </div>
+      </div>
+
+      <!-- 설정 -->
+      <div class="section-card">
+        <div class="section-title settings-color">⚙️ 설정 <span class="section-count">6</span></div>
+        <div class="perm-row">
+          <div class="perm-key">settings.staff</div>
+          <div class="perm-label">직원 등록/수정/삭제</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+            <span class="toggle-label off">OFF</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">settings.client</div>
+          <div class="perm-label">입주자 관리</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+            <span class="toggle-label off">OFF</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">settings.account</div>
+          <div class="perm-label">계좌 관리</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+            <span class="toggle-label off">OFF</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">settings.fixed</div>
+          <div class="perm-label">고정항목 관리</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox" checked><span class="slider"></span></label>
+            <span class="toggle-label on">ON</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">settings.archive</div>
+          <div class="perm-label">연도 마감</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+            <span class="toggle-label off">OFF</span>
+          </div>
+        </div>
+        <div class="perm-row">
+          <div class="perm-key">settings.reset</div>
+          <div class="perm-label">전체 초기화</div>
+          <div class="toggle-wrap">
+            <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+            <span class="toggle-label off">OFF</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // Live toggle label update
+  document.querySelectorAll('.toggle input').forEach(input => {
+    input.addEventListener('change', function() {
+      const label = this.closest('.toggle-wrap').querySelector('.toggle-label');
+      if (this.checked) {
+        label.textContent = 'ON';
+        label.className = 'toggle-label on';
+      } else {
+        label.textContent = 'OFF';
+        label.className = 'toggle-label off';
+      }
+    });
+  });
+
+  // Role tab switching
+  document.querySelectorAll('.role-tab').forEach(tab => {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.role-tab').forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>

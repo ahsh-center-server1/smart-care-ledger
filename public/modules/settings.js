@@ -18,7 +18,7 @@ import { COLS } from '../constants.js';
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, loadTransactions } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
-import { can } from './permissions.js';
+import { can, savePermissions, DEFAULT_PERMISSIONS } from './permissions.js';
 
 // ─────────────────────────────────────────────
 // 직원·입주자·계좌 관리 통합 렌더
@@ -139,6 +139,10 @@ export async function loadSettings(){
       S.activeClient=cid; openModal('fixed-item');
     });
   }
+  const permSec=document.getElementById('permission-section');
+  if(permSec)permSec.style.display=isResetAdmin?'block':'none';
+  // 이미 패널이 렌더링된 경우 재호출 금지 (편집 중 draft 초기화 방지)
+  if(isResetAdmin&&!document.getElementById('btn-perm-save'))renderPermissionPanel();
   initBudgetSection();
 }
 
@@ -429,4 +433,100 @@ export async function executeFirebaseReset(){
     }catch(e){toast('초기화 오류: '+e.message,'error');}
     showLoading(false);
   },'초기화 실행');
+}
+
+// ─────────────────────────────────────────────
+// 권한 관리 패널 (관리자 전용)
+// ─────────────────────────────────────────────
+const PERM_SECTIONS=[
+  {label:'📌 내비게이션',keys:['nav.report','nav.settings','nav.staff']},
+  {label:'💳 거래내역',keys:['trx.view.all','trx.create','trx.edit','trx.delete','trx.delete.bulk','trx.reorder','trx.transfer','trx.category.edit','trx.csv']},
+  {label:'📁 엑셀·증빙',keys:['excel.upload','receipt.upload','receipt.print','bankbook.upload']},
+  {label:'📑 보고서',keys:['report.view.all','report.view.own','report.draft','report.edit','report.delete','report.recall']},
+  {label:'⚙️ 설정',keys:['settings.staff','settings.client','settings.account','settings.fixed','settings.archive','settings.reset']},
+];
+const PERM_LABELS={
+  'nav.report':'보고서 탭','nav.settings':'설정 탭','nav.staff':'직원관리 패널',
+  'trx.view.all':'전체 거래 조회','trx.create':'수기 입력','trx.edit':'거래 수정',
+  'trx.delete':'거래 삭제','trx.delete.bulk':'일괄 삭제','trx.reorder':'드래그 순서 변경',
+  'trx.transfer':'자산이동 입력','trx.category.edit':'카테고리 인라인 수정','trx.csv':'CSV 내보내기',
+  'excel.upload':'엑셀 업로드','receipt.upload':'영수증 업로드','receipt.print':'영수증 일괄 출력',
+  'bankbook.upload':'통장 사진 업로드',
+  'report.view.all':'전체 보고서 열람','report.view.own':'본인 담당 열람','report.draft':'초안 작성',
+  'report.edit':'보고서 수정','report.delete':'보고서 삭제','report.recall':'보고서 회수',
+  'settings.staff':'직원 등록/수정/삭제','settings.client':'입주자 관리','settings.account':'계좌 관리',
+  'settings.fixed':'고정항목 관리','settings.archive':'연도 마감','settings.reset':'전체 초기화',
+};
+const ROLES=['입력자','담당자','팀장','센터장','관리자'];
+
+export function renderPermissionPanel(){
+  const container=document.getElementById('permission-panel-content');
+  if(!container)return;
+  // 현재 저장된 권한 또는 기본값
+  const perms=S.permissions||DEFAULT_PERMISSIONS;
+  // 편집용 임시 복사본 (deep copy)
+  const draft=JSON.parse(JSON.stringify(perms));
+  // 역할 탭
+  let activeRole=ROLES[1]; // 기본: 담당자
+  function renderPanel(){
+    container.innerHTML=`
+      <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap;">
+        ${ROLES.map(r=>`<button onclick="window._permSetRole('${r}')" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:1.5px solid ${r===activeRole?'#7c3aed':'#e2e8f0'};background:${r===activeRole?'#f5f3ff':'#fff'};color:${r===activeRole?'#7c3aed':'#64748b'};cursor:pointer;">${r}</button>`).join('')}
+      </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr>
+            <th style="text-align:left;padding:8px 10px;background:#1e293b;color:#fff;font-size:11px;min-width:120px;">권한</th>
+            <th style="padding:8px 10px;background:#1e293b;color:#fff;font-size:11px;min-width:60px;text-align:center;">허용</th>
+          </tr></thead>
+          <tbody>
+            ${PERM_SECTIONS.map(sec=>`
+              <tr><td colspan="2" style="background:#3b82f6;color:#fff;font-weight:700;padding:6px 10px;font-size:11px;">${sec.label}</td></tr>
+              ${sec.keys.map(key=>{
+                const val=draft[activeRole]?.[key]??DEFAULT_PERMISSIONS[activeRole]?.[key]??false;
+                return `<tr style="border-bottom:1px solid #f1f5f9;">
+                  <td style="padding:7px 10px;color:#475569;">${PERM_LABELS[key]||key}</td>
+                  <td style="text-align:center;padding:7px 10px;">
+                    <input type="checkbox" data-role="${activeRole}" data-key="${key}" ${val?'checked':''} style="width:15px;height:15px;cursor:pointer;accent-color:#7c3aed;">
+                  </td>
+                </tr>`;
+              }).join('')}
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
+        <button id="btn-perm-save" style="padding:9px 20px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">💾 저장</button>
+        <button id="btn-perm-reset" style="padding:9px 20px;background:#fff;color:#64748b;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">↺ 기본값으로 초기화</button>
+      </div>
+    `;
+    // 체크박스 이벤트
+    container.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+      cb.addEventListener('change',()=>{
+        const r=cb.dataset.role;
+        const k=cb.dataset.key;
+        if(!draft[r])draft[r]={};
+        draft[r][k]=cb.checked;
+      });
+    });
+    // 저장 버튼
+    document.getElementById('btn-perm-save')?.addEventListener('click',async()=>{
+      // draft에서 누락된 역할/키는 DEFAULT_PERMISSIONS로 채움
+      const full={};
+      ROLES.forEach(r=>{full[r]={};Object.keys(DEFAULT_PERMISSIONS[r]).forEach(k=>{full[r][k]=draft[r]?.[k]??DEFAULT_PERMISSIONS[r][k];});});
+      try{
+        await savePermissions(full);
+        toast('권한이 저장되었습니다. 다음 로그인부터 적용됩니다.','success');
+      }catch(e){toast('저장 실패: '+e.message,'error');}
+    });
+    // 기본값 초기화 버튼
+    document.getElementById('btn-perm-reset')?.addEventListener('click',()=>{
+      if(!confirm('모든 역할 권한을 기본값으로 초기화하시겠습니까?'))return;
+      ROLES.forEach(r=>Object.keys(DEFAULT_PERMISSIONS[r]).forEach(k=>{if(!draft[r])draft[r]={};draft[r][k]=DEFAULT_PERMISSIONS[r][k];}));
+      renderPanel();
+      toast('기본값으로 초기화되었습니다. 저장 버튼을 눌러 적용하세요.','info');
+    });
+  }
+  window._permSetRole=(r)=>{activeRole=r;renderPanel();};
+  renderPanel();
 }

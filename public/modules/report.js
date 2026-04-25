@@ -765,6 +765,11 @@ export function renderApproval(report,curStatus){
       mkBtn('💾 임시저장','color:#64748b;border-color:#cbd5e1;',()=>doApproval('draft'));
       mkBtn('📤 제출','color:var(--amber);border-color:#fde68a;',()=>showConfirm('보고서 제출','제출 후에는 담당자가 수정할 수 없습니다.\n계속하시겠습니까?',()=>doApproval('approve'),'제출'));
     }
+    // 담당자 본인이 제출한 보고서 회수 (submitted 상태 + 팀장 이상 역할 아닌 경우)
+    if(can('report.recall')&&report?.createdBy===String(userId)&&curStatus==='submitted'&&!['팀장','센터장','관리자'].includes(role)){
+      showSb();
+      mkBtn('↩ 회수','color:#7c3aed;border-color:#ddd6fe;',()=>recallReport(report.id));
+    }
     if(isLeaderDirectSubmit&&(!curStatus||curStatus==='draft')){
       showSb();
       mkBtn('💾 임시저장','color:#64748b;border-color:#cbd5e1;',()=>doApprovalAsLeader('draft'));
@@ -777,11 +782,13 @@ export function renderApproval(report,curStatus){
       bApp.addEventListener('click',()=>showConfirm('팀장 결재','팀장 결재를 진행하시겠습니까?',()=>{openBankStatementsForApproval();doApproval('approve');},'결재'));
       sbEl.appendChild(bApp);
       mkBtn('↩️ 반려','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 반려','담당자에게 반려합니다.\n반려 사유를 팀장 의견란에 입력해 주세요.',()=>doReject(),'반려'));
+      mkBtn('↩ 회수','color:#7c3aed;border-color:#ddd6fe;',()=>recallReport(report.id));
       mkBtn('✏️ 수정(초안)','color:#64748b;border-color:#cbd5e1;',()=>doRevertToDraft('팀장'));
       mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제'));
     }
     if(isThisLeader&&curStatus==='team_approved'){
       showSb();
+      mkBtn('↩ 회수','color:#7c3aed;border-color:#ddd6fe;',()=>recallReport(report.id));
       mkBtn('↩️ 결재 취소','color:#64748b;border-color:#cbd5e1;',()=>showConfirm('결재 취소','팀장 결재를 취소하고 제출 상태로 되돌립니다.',()=>doRevertToDraft('팀장'),'취소'));
     }
     if((role==='센터장'||role==='관리자')&&curStatus==='team_approved'){
@@ -791,6 +798,7 @@ export function renderApproval(report,curStatus){
       bFinal.addEventListener('click',()=>showConfirm('최종 결재','최종 결재를 완료하시겠습니까?',()=>{openBankStatementsForApproval();doApproval('approve');},'결재'));
       sbEl.appendChild(bFinal);
       mkBtn('↩️ 반려','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 반려','반려합니다.\n반려 사유를 센터장 의견란에 입력해 주세요.',()=>doReject(),'반려'));
+      mkBtn('↩ 회수','color:#7c3aed;border-color:#ddd6fe;',()=>recallReport(report.id));
       mkBtn('✏️ 수정(초안)','color:#64748b;border-color:#cbd5e1;',()=>doRevertToDraft('센터장'));
       mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제'));
     }
@@ -883,6 +891,48 @@ export async function doDeleteReport(){
   toast('보고서가 삭제되었습니다.','success');
   document.getElementById('report-area').style.display='none';
   loadReportList();
+}
+
+// ─────────────────────────────────────────────
+// 보고서 회수 (recall)
+// ─────────────────────────────────────────────
+export async function recallReport(reportId){
+  const report=S.reportData?.report;
+  if(!report||report.id!==reportId){toast('보고서를 찾을 수 없습니다.','error');return;}
+
+  const role=S.user?.role;
+  const isTeamLead=['팀장','센터장','관리자'].includes(role);
+  const isCenter=['센터장','관리자'].includes(role);
+
+  const canRecallAsAuthor=can('report.recall')&&report.createdBy===String(S.user?.userId)&&report.status==='submitted';
+  const canRecallAsTeam=isTeamLead&&['submitted','team_approved'].includes(report.status);
+  const canRecallAsCenter=isCenter&&report.status==='team_approved';
+
+  if(!canRecallAsAuthor&&!canRecallAsTeam&&!canRecallAsCenter){
+    toast('회수 권한이 없습니다.','error');return;
+  }
+
+  showConfirm('보고서 회수','보고서를 초안 상태로 되돌립니다. 계속하시겠습니까?',async()=>{
+    showLoading(true);
+    try{
+      const{updateDoc,doc,deleteField}=fb();
+      const updateData={status:'draft'};
+      if(['submitted','team_approved'].includes(report.status)){
+        updateData.submittedAt=deleteField();
+        updateData.submittedBy=deleteField();
+        updateData.submittedByName=deleteField();
+      }
+      if(report.status==='team_approved'){
+        updateData.teamApprovedAt=deleteField();
+        updateData.teamApprovedBy=deleteField();
+        updateData.teamApprovedByName=deleteField();
+      }
+      await updateDoc(doc(fdb(),COLS.REPORTS,reportId),updateData);
+      toast('보고서가 초안으로 회수되었습니다.','success');
+      await loadReport();loadReportList();
+    }catch(e){toast('회수 실패: '+e.message,'error');}
+    finally{showLoading(false);}
+  },'회수');
 }
 
 export async function loadReportList(){

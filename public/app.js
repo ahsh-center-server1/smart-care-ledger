@@ -757,6 +757,7 @@ Object.assign(window, {
   doReject: Rpt.doReject,
   doRevertToDraft: Rpt.doRevertToDraft,
   doDeleteReport: Rpt.doDeleteReport,
+  recallReport: Rpt.recallReport,
   loadReportList: Rpt.loadReportList,
   exportReportExcel: Rpt.exportReportExcel,
   // settings
