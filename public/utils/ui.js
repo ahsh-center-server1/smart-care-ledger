@@ -5,6 +5,19 @@
 
 'use strict';
 
+/**
+ * HTML 속성값 내 특수문자를 이스케이프합니다.
+ * onclick="fn('${escAttr(id)}')" 형태로 사용하여 XSS 방지.
+ */
+export function escAttr(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 export function showConfirm(title, msg, onOk, okLabel='확인', okStyle='btn') {
   setText('c-title', title);
   setText('c-msg', msg);
