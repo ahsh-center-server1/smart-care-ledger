@@ -73,3 +73,6 @@ node_modules/
 
 # 백업 파일
 backups/
+
+# Git worktrees
+.worktrees/
