@@ -18,7 +18,8 @@ export function renderDashboard() {
     const totalBal=S.accounts.filter(a=>a.clientId===client.id).reduce((s,a)=>s+Number(a.currentBalance||0),0);
     const balColor=totalBal>=0?'#10b981':'#ef4444';
     const stats=S.monthlyStats?.[client.id]||{inc:0,exp:0};
-    card.innerHTML=`<div class="client-avatar">${client.name.charAt(0)}</div><div class="client-name">${client.name}</div><div style="font-size:12px;font-weight:700;color:${balColor};margin-top:4px;">${totalBal.toLocaleString()}원</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">당월 수입 <span style="color:#10b981;">+${stats.inc.toLocaleString()}</span> / 지출 <span style="color:#ef4444;">-${stats.exp.toLocaleString()}</span>원</div>`;
+    const statsText=stats.inc===0&&stats.exp===0?'당월 거래 없음':`당월 수입 <span style="color:#10b981;">+${stats.inc.toLocaleString()}</span> / 지출 <span style="color:#ef4444;">-${stats.exp.toLocaleString()}</span>원`;
+    card.innerHTML=`<div class="client-avatar">${client.name.charAt(0)}</div><div class="client-name">${client.name}</div><div style="font-size:12px;font-weight:700;color:${balColor};margin-top:4px;">${totalBal.toLocaleString()}원</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">${statsText}</div>`;
     card.addEventListener('click',()=>{
       S.activeClient=client.id;
       const hc=document.getElementById('h-client'); if(hc)hc.value=client.id;

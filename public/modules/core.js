@@ -20,7 +20,7 @@ import * as Settings from './settings.js';
 import { can } from './permissions.js';
 
 export async function fetchBaseData() {
-  const { getDocs, collection } = fb();
+  const { getDocs, collection, query, where } = fb();
   const db=fdb(), isAdmin=can('nav.staff');
   const [uSnap,cSnap,aSnap,catSnap,rSnap] = await Promise.all([
     getDocs(collection(db,COLS.USERS)),
@@ -41,12 +41,12 @@ export async function fetchBaseData() {
   S.confirmedMonths=new Set(rSnap.docs.map(d=>d.data()).filter(r=>r.status==='confirmed').map(r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`));
   // 당월 수입/지출 집계 (대시보드 카드 표시용)
   try {
-    const { getDocs: gd, query: q, where, collection: col } = fb();
     const now=new Date();
     const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
     const ymStart=ym+'-01';
-    const ymEnd  =ym+'-31';
-    const tSnap=await gd(q(col(db,COLS.TRANSACTIONS),where('date','>=',ymStart),where('date','<=',ymEnd)));
+    const lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+    const ymEnd=ym+'-'+String(lastDay).padStart(2,'0');
+    const tSnap=await getDocs(query(collection(db,COLS.TRANSACTIONS),where('date','>=',ymStart),where('date','<=',ymEnd)));
     const mStats={};
     S.clients.forEach(c=>{ mStats[c.id]={inc:0,exp:0}; });
     tSnap.docs.forEach(d=>{
