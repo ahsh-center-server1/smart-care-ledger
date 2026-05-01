@@ -39,6 +39,25 @@ export async function fetchBaseData() {
   S.clients  = isAdmin ? activeClients : activeClients.filter(c=>String(c.userIds||'').split(',').map(s=>s.trim()).includes(String(S.user.userId)));
   S.accounts = activeAccounts.filter(a=>S.clients.some(c=>c.id===a.clientId));
   S.confirmedMonths=new Set(rSnap.docs.map(d=>d.data()).filter(r=>r.status==='confirmed').map(r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`));
+  // 당월 수입/지출 집계 (대시보드 카드 표시용)
+  try {
+    const { getDocs: gd, query: q, where, collection: col } = fb();
+    const now=new Date();
+    const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+    const ymStart=ym+'-01';
+    const ymEnd  =ym+'-31';
+    const tSnap=await gd(q(col(db,COLS.TRANSACTIONS),where('date','>=',ymStart),where('date','<=',ymEnd)));
+    const mStats={};
+    S.clients.forEach(c=>{ mStats[c.id]={inc:0,exp:0}; });
+    tSnap.docs.forEach(d=>{
+      const t=d.data();
+      if(!mStats[t.clientId])return;
+      if(t.type==='수입')       mStats[t.clientId].inc+=Number(t.amountIn||0);
+      else if(t.type==='지출') mStats[t.clientId].exp+=Number(t.amountOut||0);
+      // 자산이동, 취소 → 집계 제외
+    });
+    S.monthlyStats=mStats;
+  } catch(e) { S.monthlyStats={}; }
   rebuildSelectors();
 }
 

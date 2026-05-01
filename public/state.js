@@ -27,4 +27,5 @@ export const S = {
   fixedItems: [],          // 고정항목
   confirmedMonths: new Set(), // 최종 결재 완료된 월 캐시
   permissions: null,       // 역할별 권한 맵 (initPermissions() 로드)
+  monthlyStats: {},        // 당월 입주자별 수입/지출 집계 { clientId: {inc, exp} }
 };
