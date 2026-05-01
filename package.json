@@ -1,0 +1,7 @@
+{
+  "name": "smart-care-ledger",
+  "private": true,
+  "scripts": {
+    "lint": "node lint.js"
+  }
+}

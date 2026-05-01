@@ -20,7 +20,7 @@ import * as Settings from './settings.js';
 import { can } from './permissions.js';
 
 export async function fetchBaseData() {
-  const { getDocs, collection } = fb();
+  const { getDocs, collection, query, where } = fb();
   const db=fdb(), isAdmin=can('nav.staff');
   const [uSnap,cSnap,aSnap,catSnap,rSnap] = await Promise.all([
     getDocs(collection(db,COLS.USERS)),
@@ -39,6 +39,25 @@ export async function fetchBaseData() {
   S.clients  = isAdmin ? activeClients : activeClients.filter(c=>String(c.userIds||'').split(',').map(s=>s.trim()).includes(String(S.user.userId)));
   S.accounts = activeAccounts.filter(a=>S.clients.some(c=>c.id===a.clientId));
   S.confirmedMonths=new Set(rSnap.docs.map(d=>d.data()).filter(r=>r.status==='confirmed').map(r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`));
+  // 당월 수입/지출 집계 (대시보드 카드 표시용)
+  try {
+    const now=new Date();
+    const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+    const ymStart=ym+'-01';
+    const lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+    const ymEnd=ym+'-'+String(lastDay).padStart(2,'0');
+    const tSnap=await getDocs(query(collection(db,COLS.TRANSACTIONS),where('date','>=',ymStart),where('date','<=',ymEnd)));
+    const mStats={};
+    S.clients.forEach(c=>{ mStats[c.id]={inc:0,exp:0}; });
+    tSnap.docs.forEach(d=>{
+      const t=d.data();
+      if(!mStats[t.clientId])return;
+      if(t.type==='수입')       mStats[t.clientId].inc+=Number(t.amountIn||0);
+      else if(t.type==='지출') mStats[t.clientId].exp+=Number(t.amountOut||0);
+      // 자산이동, 취소 → 집계 제외
+    });
+    S.monthlyStats=mStats;
+  } catch(e) { S.monthlyStats={}; }
   rebuildSelectors();
 }
 

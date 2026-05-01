@@ -7,7 +7,7 @@
 
 import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
-import { toast, showConfirm, showLoading, setText } from '../utils/ui.js';
+import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { uploadToDrive, compressImage } from '../services/drive.js';
 import { fetchBaseData, loadTransactions } from './core.js';
@@ -67,7 +67,7 @@ export function renderTrxForm(t){
       </div>
       <div>
         <label class="label">영수증 첨부 <span style="font-size:10px;color:var(--muted);">(선택)</span></label>
-        ${isEdit&&t.receiptUrl?`<div id="trx-receipt-current" style="margin-bottom:6px;"><a href="${t.receiptUrl}" target="_blank" style="font-size:12px;color:var(--blue);">📎 현재 첨부파일 보기</a> <button onclick="document.getElementById('trx-receipt-current').innerHTML='<span style=\\'font-size:12px;color:#dc2626;\\'>삭제됨</span>';window._trxReceiptClear=true;" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button></div>`:''}
+        ${isEdit&&t.receiptUrl?`<div id="trx-receipt-current" style="margin-bottom:6px;"><a href="${escAttr(t.receiptUrl)}" target="_blank" style="font-size:12px;color:var(--blue);">📎 현재 첨부파일 보기</a> <button onclick="document.getElementById('trx-receipt-current').innerHTML='<span style=\\'font-size:12px;color:#dc2626;\\'>삭제됨</span>';window._trxReceiptClear=true;" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button></div>`:''}
         <div id="trx-receipt-drop" style="border:2px dashed var(--border);border-radius:8px;background:var(--bg);padding:12px;text-align:center;cursor:pointer;font-size:13px;color:var(--muted);" onclick="document.getElementById('trx-receipt-file').click()">
           📎 영수증 클릭 또는 드래그
           <input type="file" id="trx-receipt-file" accept="image/*" style="display:none;">

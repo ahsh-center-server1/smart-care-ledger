@@ -27,7 +27,7 @@ import {
   STATUS_LABELS, STATUS_CLASSES,
   GOOGLE_OAUTH_CLIENT_ID, DRIVE_FOLDER_ID,
 } from './constants.js';
-import { toast, showConfirm, closeConfirm, setText, showLoading } from './utils/ui.js';
+import { toast, showConfirm, closeConfirm, setText, showLoading, escAttr } from './utils/ui.js';
 import { fb, fdb } from './services/firestore.js';
 import { compressImage, getDriveToken, uploadToDrive } from './services/drive.js';
 
@@ -395,7 +395,7 @@ async function renderMobileDashboard(){
   grid.innerHTML=S.clients.map(c=>{
     const accs=S.accounts.filter(a=>a.clientId===c.id);
     const totalBal=accs.reduce((s,a)=>s+Number(a.currentBalance||a.initialBalance||0),0);
-    return `<div onclick="mobileSelectClient('${c.id}')" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;transition:box-shadow .15s;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,.1)'" onmouseout="this.style.boxShadow='none'">
+    return `<div onclick="mobileSelectClient('${escAttr(c.id)}')" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;transition:box-shadow .15s;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,.1)'" onmouseout="this.style.boxShadow='none'">
       <div style="width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;font-weight:900;font-size:16px;display:flex;align-items:center;justify-content:center;margin-bottom:8px;">${(c.name||'?').charAt(0)}</div>
       <div style="font-size:14px;font-weight:700;color:var(--text);">${c.name}</div>
       <div style="font-size:11px;color:var(--muted);margin-top:4px;">${accs.length}개 계좌</div>
@@ -449,7 +449,7 @@ function renderMobileHistory(){
     const isIn=t.amountIn>0;
     const amt=isIn?'+'+Number(t.amountIn).toLocaleString():'-'+Number(t.amountOut||0).toLocaleString();
     const amtColor=isIn?'#10b981':'#ef4444';
-    const receiptBtn=t.receiptUrl?`<button onclick="event.stopPropagation();openReceiptModal('${t.receiptUrl}')" style="font-size:12px;color:#f59e0b;font-weight:700;background:none;border:none;cursor:pointer;padding:0 2px;" title="영수증 보기">📎</button>`:'';
+    const receiptBtn=t.receiptUrl?`<button onclick="event.stopPropagation();openReceiptModal('${escAttr(t.receiptUrl)}')" style="font-size:12px;color:#f59e0b;font-weight:700;background:none;border:none;cursor:pointer;padding:0 2px;" title="영수증 보기">📎</button>`:'';
     const cardId='mtrx-'+t.id;
     return `<div id="${cardId}" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:default;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">

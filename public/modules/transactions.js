@@ -7,7 +7,7 @@
 
 import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
-import { toast, showConfirm, showLoading, setText } from '../utils/ui.js';
+import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
 import { openModal } from './modals.js';
@@ -204,7 +204,7 @@ export function renderCalendarView(){
     const totalIn=dayTrx.reduce((s,t)=>s+Number(t.amountIn||0),0);
     const totalOut=dayTrx.reduce((s,t)=>s+Number(t.amountOut||0),0);
     const isToday=dateStr===new Date().toISOString().substring(0,10);
-    html+=`<div onclick="showCalendarDayDetail('${dateStr}')" style="min-height:60px;padding:4px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:${isToday?'#eff6ff':'#fff'};transition:background .15s;">
+    html+=`<div onclick="showCalendarDayDetail('${escAttr(dateStr)}')" style="min-height:60px;padding:4px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:${isToday?'#eff6ff':'#fff'};transition:background .15s;">
       <div style="font-size:11px;font-weight:700;color:${isToday?'var(--blue)':'var(--text)'};">${d}</div>
       ${dayTrx.length?`<div style="font-size:9px;color:#10b981;margin-top:2px;">+${totalIn?totalIn.toLocaleString():''}</div><div style="font-size:9px;color:#ef4444;">-${totalOut?totalOut.toLocaleString():''}</div><div style="font-size:9px;color:var(--muted);">${dayTrx.length}건</div>`:''}
     </div>`;
@@ -221,7 +221,7 @@ export function showCalendarDayDetail(dateStr){
   const allTrx=S.transactions.length?S.transactions:S.filteredTrx;
   const dayTrx=allTrx.filter(t=>t.date===dateStr);
   detail.style.display='block';
-  const addBtn=`<button onclick="openModalWithDate('${dateStr}')" style="font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--green);color:var(--green);background:#fff;cursor:pointer;">✍️ 거래 추가</button>`;
+  const addBtn=`<button onclick="openModalWithDate('${escAttr(dateStr)}')" style="font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--green);color:var(--green);background:#fff;cursor:pointer;">✍️ 거래 추가</button>`;
   detail.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
     <div style="font-weight:700;font-size:13px;color:var(--text);">${dateStr} 거래 내역 (${dayTrx.length}건)</div>
     ${addBtn}

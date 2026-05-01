@@ -12,7 +12,7 @@
 'use strict';
 
 import { S } from '../state.js';
-import { toast, showConfirm, showLoading } from '../utils/ui.js';
+import { toast, showConfirm, showLoading, escAttr } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { COLS } from '../constants.js';
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
@@ -38,23 +38,23 @@ export function renderManagement(){
   const sl=document.getElementById('staff-list'); if(sl)sl.innerHTML='';
   if(isAdmin&&sl)S.users.forEach(u=>{
     const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;';
-    d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:6px;"><button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${u.id}'))" style="color:#64748b;">✏️</button></div>`;
+    d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:6px;"><button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button></div>`;
     sl.appendChild(d);
   });
   const cl=document.getElementById('client-list'); if(cl)cl.innerHTML='';
   if(cl)S.clients.forEach(c=>{
     const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${c.active===false?'opacity:0.55;':''}`;
     const leader=S.users.find(u=>String(u.id)===String(c.teamLeader));
-    const inactiveBtn=isAdmin?`<button class="icon-btn" title="${c.active===false?'활성화':'비활성화'}" onclick="toggleClientActive('${c.id}',${c.active===false})" style="color:${c.active===false?'#10b981':'#94a3b8'};">${c.active===false?'🔓':'🔒'}</button>`:'';
-    d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${c.name}${c.active===false?' <span style="font-size:11px;color:#ef4444;">[비활성]</span>':''}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:4px;">${inactiveBtn}<button class="icon-btn" onclick="openModal('client',S.clients.find(x=>x.id==='${c.id}'))" style="color:#64748b;">✏️</button></div>`;
+    const inactiveBtn=isAdmin?`<button class="icon-btn" title="${c.active===false?'활성화':'비활성화'}" onclick="toggleClientActive('${escAttr(c.id)}',${c.active===false})" style="color:${c.active===false?'#10b981':'#94a3b8'};">${c.active===false?'🔓':'🔒'}</button>`:'';
+    d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${c.name}${c.active===false?' <span style="font-size:11px;color:#ef4444;">[비활성]</span>':''}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:4px;">${inactiveBtn}<button class="icon-btn" onclick="openModal('client',S.clients.find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">✏️</button></div>`;
     cl.appendChild(d);
   });
   const al=document.getElementById('account-list'); if(al)al.innerHTML='';
   if(al)S.accounts.forEach(a=>{
     const client=S.clients.find(c=>c.id===a.clientId);
     const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${a.active===false?'opacity:0.55;':''}`;
-    const inactiveBtn=isAdmin?`<button class="icon-btn" title="${a.active===false?'활성화':'비활성화'}" onclick="toggleAccountActive('${a.id}',${a.active===false})" style="color:${a.active===false?'#10b981':'#94a3b8'};">${a.active===false?'🔓':'🔒'}</button>`:'';
-    d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${a.label}${a.active===false?' <span style="font-size:11px;color:#ef4444;">[비활성]</span>':''}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:var(--blue);">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:4px;">${inactiveBtn}<button class="icon-btn" onclick="openModal('account',S.accounts.find(x=>x.id==='${a.id}'))" style="color:#64748b;">✏️</button></div>`;
+    const inactiveBtn=isAdmin?`<button class="icon-btn" title="${a.active===false?'활성화':'비활성화'}" onclick="toggleAccountActive('${escAttr(a.id)}',${a.active===false})" style="color:${a.active===false?'#10b981':'#94a3b8'};">${a.active===false?'🔓':'🔒'}</button>`:'';
+    d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${a.label}${a.active===false?' <span style="font-size:11px;color:#ef4444;">[비활성]</span>':''}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:var(--blue);">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:4px;">${inactiveBtn}<button class="icon-btn" onclick="openModal('account',S.accounts.find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">✏️</button></div>`;
     al.appendChild(d);
   });
 }
@@ -471,7 +471,7 @@ export function renderPermissionPanel(){
   function renderPanel(){
     container.innerHTML=`
       <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap;">
-        ${ROLES.map(r=>`<button onclick="window._permSetRole('${r}')" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:1.5px solid ${r===activeRole?'#7c3aed':'#e2e8f0'};background:${r===activeRole?'#f5f3ff':'#fff'};color:${r===activeRole?'#7c3aed':'#64748b'};cursor:pointer;">${r}</button>`).join('')}
+        ${ROLES.map(r=>`<button onclick="window._permSetRole('${escAttr(r)}')" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:1.5px solid ${r===activeRole?'#7c3aed':'#e2e8f0'};background:${r===activeRole?'#f5f3ff':'#fff'};color:${r===activeRole?'#7c3aed':'#64748b'};cursor:pointer;">${r}</button>`).join('')}
       </div>
       <div style="overflow-x:auto;">
         <table style="width:100%;border-collapse:collapse;font-size:12px;">
