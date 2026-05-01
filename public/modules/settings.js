@@ -471,7 +471,7 @@ export function renderPermissionPanel(){
   function renderPanel(){
     container.innerHTML=`
       <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap;">
-        ${ROLES.map(r=>`<button onclick="window._permSetRole('${r}')" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:1.5px solid ${r===activeRole?'#7c3aed':'#e2e8f0'};background:${r===activeRole?'#f5f3ff':'#fff'};color:${r===activeRole?'#7c3aed':'#64748b'};cursor:pointer;">${r}</button>`).join('')}
+        ${ROLES.map(r=>`<button onclick="window._permSetRole('${escAttr(r)}')" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:1.5px solid ${r===activeRole?'#7c3aed':'#e2e8f0'};background:${r===activeRole?'#f5f3ff':'#fff'};color:${r===activeRole?'#7c3aed':'#64748b'};cursor:pointer;">${r}</button>`).join('')}
       </div>
       <div style="overflow-x:auto;">
         <table style="width:100%;border-collapse:collapse;font-size:12px;">
