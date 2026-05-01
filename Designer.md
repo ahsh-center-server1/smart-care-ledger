@@ -238,6 +238,36 @@ padding: 16px 24px;  /* 보고서 섹션 */
 
 ---
 
+---
+
+## 모듈별 UI 구현 위치 가이드
+
+새 UI 컴포넌트 구현 시 아래 모듈 파일에 HTML 템플릿/렌더 함수를 추가합니다.
+
+| UI 영역 | HTML 구조 | JS 렌더 함수 위치 |
+|---|---|---|
+| 대시보드 카드 | `index.html` `#client-cards` | `modules/dashboard.js` |
+| 거래내역 테이블 행 | `index.html` `#trx-body` | `modules/transactions.js` |
+| 수기입력 폼 | `index.html` `#trx-form` | `modules/modals.js` |
+| 엑셀 업로드 미리보기 | `index.html` `#xl-preview` | `modules/modals.js` |
+| 영수증 모달 | `index.html` `#receipt-modal` | `modules/modals.js` |
+| 보고서 본문 | `index.html` `#report-content` | `modules/report.js` |
+| 보고서 목록 | `index.html` `#rpt-list-body` | `modules/report.js` |
+| 설정 탭 (직원/입주자/계좌) | `index.html` `#settings-content` | `modules/settings.js` |
+| 카테고리/규칙 목록 | `index.html` 설정 내부 | `modules/settings.js` |
+| 사이드바/네비 뱃지 | `index.html` `#sidebar` | `modules/report.js` (뱃지) |
+| 토스트/컨펌 다이얼로그 | `index.html` `#toast`, `#confirm-dialog` | `utils/ui.js` |
+
+### CSS 추가 원칙
+
+1. **컴포넌트 스코프** — 새 스타일은 `index.html` `<style>` 블록 최하단에 추가
+2. **CSS 변수 필수 사용** — `--blue`, `--card`, `--border` 등 기존 변수 사용
+3. **클래스 네이밍** — `kebab-case`, 접두사로 기능 구분 (예: `rpt-`, `trx-`, `set-`)
+4. **`!important` 금지** — 구체성(specificity) 높여서 해결
+5. **@media print** — 인쇄 불필요 요소는 `display: none` 처리
+
+---
+
 ## Designer가 하지 말아야 할 것
 
 - 기능 로직 수정 ❌

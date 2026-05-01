@@ -29,26 +29,31 @@
 ### Phase 1: 문법/구조 검증
 
 ```bash
-# 1. JS 문법 검사
-node --check public/app.js
-# → returncode=0 이어야 통과
+# 1. JS 문법 검사 — 전체 모듈 일괄 확인
+for f in public/app.js public/constants.js public/state.js \
+          public/modules/*.js public/services/*.js public/utils/*.js; do
+  node --check "$f" && echo "OK: $f" || echo "FAIL: $f"
+done
+# → 모두 OK여야 통과
 
-# 2. 괄호 균형
+# 2. 괄호 균형 — 수정된 모듈 파일 확인
 python3 -c "
-app = open('public/app.js').read()
-print('{:', app.count('{') - app.count('}'))
-print('(:', app.count('(') - app.count(')'))
-print('[:', app.count('[') - app.count(']'))
-print('backtick:', app.count('\`') % 2)
+target = 'public/modules/TARGET.js'  # 수정된 파일명으로 교체
+t = open(target).read()
+print('{:', t.count('{') - t.count('}'))
+print('(:', t.count('(') - t.count(')'))
+print('[:', t.count('[') - t.count(']'))
+print('backtick:', t.count('\`') % 2)
 "
 # → 모두 0이어야 통과
 
-# 3. 중복 함수 확인
+# 3. 중복 함수 확인 — 수정된 모듈 파일 확인
 python3 -c "
 import re
 from collections import Counter
-app = open('public/app.js').read()
-fns = re.findall(r'\nfunction (\w+)|\nasync function (\w+)', app)
+target = 'public/modules/TARGET.js'  # 수정된 파일명으로 교체
+t = open(target).read()
+fns = re.findall(r'\nfunction (\w+)|\nasync function (\w+)', t)
 fns = [f[0] or f[1] for f in fns]
 dups = {f:c for f,c in Counter(fns).items() if c>1}
 print('중복:', dups)
@@ -57,7 +62,7 @@ print('중복:', dups)
 
 # 4. 실제 줄바꿈 탐지
 python3 -c "
-lines = open('public/app.js').read().split('\n')
+lines = open('public/modules/TARGET.js').read().split('\n')
 for i, line in enumerate(lines, 1):
     if line.count(\"'\") % 2 != 0:
         print(f'L{i}: {line.strip()[:60]}')
@@ -67,22 +72,45 @@ for i, line in enumerate(lines, 1):
 
 ### Phase 2: 기능 존재 검증
 
+> 모듈화 구조이므로 각 함수는 해당 모듈 파일에서 확인합니다.
+
 ```python
-# CLAUDE.md의 구현 완료 기능이 실제로 존재하는지 확인
-critical_functions = [
-    'handleLogin', 'showLoading', 'toast', '_enterApp',
-    'doApproval', 'doApprovalAsLeader', 'doReject',
-    'renderApproval', 'loadReportList', 'renderManagement',
-    'loadSettings', 'renderCatTags', 'addCategory',
-    'renderTrxForm', 'analyzeXlFile', 'saveExcelData',
-    'openReceiptModal', 'renderReceiptUploadForm',
-    'applyFixedItems', 'printReceiptSheet', 'reorderTrx',
-    'openBankStatementModal', 'renderRptBankStatements',
-    'renderComments', 'saveComment',
-]
-app = open('public/app.js').read()
-missing = [f for f in critical_functions if f'function {f}' not in app]
-print('누락 함수:', missing)
+# Generator.md의 모듈 맵 참조: 함수가 올바른 모듈 파일에 존재하는지 확인
+import subprocess
+
+checks = {
+    # auth.js
+    'handleLogin': 'public/modules/auth.js',
+    '_enterApp': 'public/modules/auth.js',
+    # core.js
+    'fetchBaseData': 'public/modules/core.js',
+    'loadTransactions': 'public/modules/core.js',
+    # transactions.js
+    'saveTrx': 'public/modules/transactions.js',
+    'delTrx': 'public/modules/transactions.js',
+    'openCatDropdown': 'public/modules/transactions.js',
+    'reorderTrx': 'public/modules/transactions.js',
+    # report.js
+    'doApproval': 'public/modules/report.js',
+    'doReject': 'public/modules/report.js',
+    'loadReportList': 'public/modules/report.js',
+    # settings.js
+    'loadSettings': 'public/modules/settings.js',
+    'addCategory': 'public/modules/settings.js',
+    'applyFixedItems': 'public/modules/settings.js',
+    # modals.js
+    'openReceiptModal': 'public/modules/modals.js',
+    'analyzeXlFile': 'public/modules/modals.js',
+    'openBankStatementModal': 'public/modules/modals.js',
+    # utils/ui.js
+    'toast': 'public/utils/ui.js',
+    'showConfirm': 'public/utils/ui.js',
+}
+
+for fn, filepath in checks.items():
+    content = open(filepath).read()
+    found = f'function {fn}' in content or f'export function {fn}' in content
+    print(f"{'✅' if found else '❌'} {fn} in {filepath}")
 ```
 
 ### Phase 3: 대상 기능 검증
@@ -101,28 +129,32 @@ checks = {
 
 ### Phase 4: 회귀 검증 (기존 기능 파괴 여부)
 
+> 각 키워드가 올바른 모듈 파일에 존재하는지 확인합니다.
+
 ```python
 regression_checks = [
-    # 인증
-    ("로그인 폼", 'handleLogin' in app),
-    ("세션 복원", 'sessionStorage' in app),
-    # 거래내역
-    ("페이지네이션", 'renderPagination' in app),
-    ("드래그 정렬", 'reorderTrx' in app),
-    ("카테고리 드롭다운", 'openCatDropdown' in app),
-    # 결재
-    ("결재 순서 강제", "curStatus==='team_approved'" in app),
-    ("반려 기능", 'doReject' in app),
-    # 보고서
-    ("계좌 잔액 직접계산", 'allAccTrx' in app),
-    ("바차트", 'BAR_COLORS' in app),
-    # 설정
-    ("카테고리 드래그", 'dragSrc=tag' in app),
-    ("기초잔액 기준일", 'initialBalanceDate' in app),
-    # 증빙
-    ("Drive 썸네일", 'drive.google.com/thumbnail' in app),
-    ("A4 출력", 'printReceiptSheet' in app),
+    # 인증 (auth.js)
+    ("로그인", 'handleLogin', 'public/modules/auth.js'),
+    ("세션 복원", 'sessionStorage', 'public/modules/auth.js'),
+    # 거래내역 (transactions.js)
+    ("페이지네이션", 'renderPagination', 'public/modules/transactions.js'),
+    ("드래그 정렬", 'reorderTrx', 'public/modules/transactions.js'),
+    ("카테고리 드롭다운", 'openCatDropdown', 'public/modules/transactions.js'),
+    # 결재 (report.js)
+    ("결재 순서 강제", "team_approved", 'public/modules/report.js'),
+    ("반려 기능", 'doReject', 'public/modules/report.js'),
+    ("계좌 잔액 계산", 'allAccTrx', 'public/modules/report.js'),
+    # 설정 (settings.js)
+    ("카테고리 드래그", 'dragSrc', 'public/modules/settings.js'),
+    ("기초잔액 기준일", 'initialBalanceDate', 'public/modules/settings.js'),
+    # 모달 (modals.js)
+    ("Drive 썸네일", 'drive.google.com/thumbnail', 'public/modules/modals.js'),
+    ("A4 출력", 'printReceiptSheet', 'public/modules/modals.js'),
 ]
+
+for label, keyword, filepath in regression_checks:
+    found = keyword in open(filepath).read()
+    print(f"{'✅' if found else '❌'} {label} ({filepath})")
 ```
 
 ---

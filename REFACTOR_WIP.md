@@ -10,13 +10,13 @@
 
 ## 현재 상태 (LAST UPDATED)
 
-**진행 단계: STEP 6 완료 — 커밋(STEP 7) 대기 중**
-- 마지막 완료 액션: index.html `<script type="module" src="app.js">` 교체
-- 다음 액션: 사용자 승인 후 커밋 → 브라우저 검증
-- 모든 모듈 + app.js `node --check` 통과
-- HTML onclick(handleLogin/handleLogout/openModal/closeModal/closeConfirm/closeReceiptModal/changeView/mobileView/renderMobileHistory) 전역 노출 확인
-- 모듈 내 window.* 참조(fetchBaseData/openModal/renderFixedItemsList) 전부 노출됨
-- 참고: 원본 app.js는 `git show HEAD:public/app.js` 로 복구 가능
+**진행 단계: ✅ 전 단계 완료 — 아카이브됨 (2026-04-30)**
+- 모듈화 리팩토링 main 브랜치 반영 완료
+- app.js: ~4700줄 → 959줄 모듈 오케스트레이터로 축소
+- 8개 모듈(auth/core/dashboard/transactions/report/settings/modals/permissions) + services/utils 분리
+- `node --check` 전체 모듈 통과
+- index.html `<script type="module" src="app.js">` 적용됨
+- D001~D011 추가 기능이 모듈 구조 위에 구현 완료됨 (2026-04-13)
 
 ---
 
@@ -40,8 +40,8 @@
 - [x] STEP 4 — 새 app.js 문법 검증 (`node --check public/app.js`)
 - [x] STEP 5 — 모듈간 window 전역 참조 검증 (fetchBaseData, loadTransactions, openModal 등)
 - [x] STEP 6 — index.html에 `<script type="module" src="app.js">` 로 교체
-- [ ] STEP 7 — 커밋
-- [ ] STEP 8 — 브라우저 검증 (10개 항목 체크리스트)
+- [x] STEP 7 — 커밋
+- [x] STEP 8 — 브라우저 검증 (10개 항목 체크리스트)
 
 ---
 
@@ -178,16 +178,16 @@ HTML/모듈에서 참조되는 전역 함수 목록 (작업 중 업데이트):
 
 ## STEP 8 — 브라우저 검증 체크리스트
 
-- [ ] 로그인 / 로그아웃
-- [ ] 대시보드 입주자 카드
-- [ ] 거래내역 필터/정렬/페이지
-- [ ] 거래 수기 입력 + 저장 + 수정 + 삭제
-- [ ] 엑셀 업로드 미리보기 + 저장
-- [ ] 보고서 생성 + 결재 흐름
-- [ ] 설정: 카테고리/규칙 추가/삭제
-- [ ] 영수증 업로드/미리보기
-- [ ] 고정항목 입력
-- [ ] 연간 통계 차트
+- [x] 로그인 / 로그아웃
+- [x] 대시보드 입주자 카드
+- [x] 거래내역 필터/정렬/페이지
+- [x] 거래 수기 입력 + 저장 + 수정 + 삭제
+- [x] 엑셀 업로드 미리보기 + 저장
+- [x] 보고서 생성 + 결재 흐름
+- [x] 설정: 카테고리/규칙 추가/삭제
+- [x] 영수증 업로드/미리보기
+- [x] 고정항목 입력
+- [x] 연간 통계 차트
 
 ---
 

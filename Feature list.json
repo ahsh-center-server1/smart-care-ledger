@@ -1,10 +1,10 @@
 {
   "version": "2.0",
-  "last_updated": "2026-04-13 (D001~D011 구현 완료)",
+  "last_updated": "2026-04-30 (E001~E004 구현 완료)",
   "project": "Smart Care Ledger",
   "summary": {
-    "total": 86,
-    "done": 86,
+    "total": 90,
+    "done": 90,
     "pending": 0,
     "failed": 0,
     "skipped": 0
@@ -1631,6 +1631,81 @@
     {"id":"D008","category":"feature","title":"보고서 계좌 현황 전월 잔액 표시","description":"prevEnd 기준 prevBal 계산 후 계좌 현황 행에 전월 잔액 함께 표시","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
     {"id":"D009","category":"ux","title":"영수증 미리보기 + 거래정보 split 플로팅 패널","description":"openReceiptModal을 드래그 가능 플로팅 패널로 교체, trxId 파라미터 추가","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
     {"id":"D010","category":"ux","title":"결재 시 통장사진 새창으로 열기","description":"openBankStatementsForApproval 함수, 팀장/센터장 결재 버튼에 훅 추가","files_affected":["app.js"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
-    {"id":"D011","category":"ux","title":"홈 화면 퀵 액션 버튼 추가","description":"dashboard-actions에 파일업로드/거래내역/수기입력/보고서/설정 아이콘 버튼","files_affected":["index.html"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"}
+    {"id":"D011","category":"ux","title":"홈 화면 퀵 액션 버튼 추가","description":"dashboard-actions에 파일업로드/거래내역/수기입력/보고서/설정 아이콘 버튼","files_affected":["index.html"],"status":"done","created_at":"2026-04-13","completed_at":"2026-04-13"},
+    {
+      "id": "E001",
+      "category": "security",
+      "title": "HTML onclick 데이터 보간 XSS 방어",
+      "description": "changeView, mobileSelectClient 등 onclick 속성에 clientId/accountId 직접 삽입 시 따옴표·꺽쇠 이스케이프 처리. utils/ui.js에 escAttr() 유틸 함수 추가 후 app.js 및 각 모듈의 innerHTML 템플릿에 적용.",
+      "files_affected": ["public/utils/ui.js", "public/app.js", "public/modules/transactions.js", "public/modules/settings.js", "public/modules/dashboard.js"],
+      "dependencies": [],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "escAttr() 함수가 utils/ui.js에 export됨",
+        "clientId·accountId가 onclick 속성에 삽입되는 모든 위치에 escAttr() 적용",
+        "node --check 전체 모듈 통과"
+      ],
+      "notes": "client.id는 Firestore auto-ID(영숫자)라 실제 위험도는 낮지만, description 등 사용자 입력 데이터가 onclick에 들어가는 경우 대비.",
+      "created_at": "2026-04-30",
+      "status": "done",
+      "completed_at": "2026-04-30"
+    },
+    {
+      "id": "E002",
+      "category": "improvement",
+      "title": "모듈별 node --check 자동화 스크립트",
+      "description": "package.json scripts에 'lint' 명령 추가. public/ 하위 모든 .js 파일(app.js, constants.js, state.js, modules/*.js, services/*.js, utils/*.js)에 대해 node --check 일괄 실행. 실패 시 파일명과 오류 출력.",
+      "files_affected": ["package.json"],
+      "dependencies": [],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "npm run lint 실행 시 전체 .js 파일 문법 검사",
+        "오류 없을 경우 'All OK' 출력",
+        "오류 있을 경우 파일명과 오류 메시지 출력 후 exit 1"
+      ],
+      "notes": "Evaluator가 매번 수동으로 각 파일을 check하는 부담 제거. bash 루프 또는 find 파이프 방식 모두 가능.",
+      "created_at": "2026-04-30",
+      "status": "done",
+      "completed_at": "2026-04-30"
+    },
+    {
+      "id": "E003",
+      "category": "feature",
+      "title": "대시보드 입주자 카드 — 당월 수입/지출 소계 표시",
+      "description": "대시보드 카드에 이번 달 수입 합계, 지출 합계, 현재 잔액을 표시. fetchBaseData 이후 S.transactions에서 현재 월 기준 필터링해 집계. 자산이동·취소 유형 제외.",
+      "files_affected": ["public/modules/dashboard.js"],
+      "dependencies": ["A004", "A026"],
+      "priority": "medium",
+      "status": "done",
+      "success_criteria": [
+        "카드에 당월 수입/지출 금액 표시",
+        "카드에 현재 잔액(모든 계좌 합산) 표시",
+        "자산이동·취소 거래는 수입/지출 집계에서 제외"
+      ],
+      "notes": "F001(잔액 미리보기)과 유사하나 당월 소계 추가. dashboard.js의 renderDashboard 함수 수정.",
+      "created_at": "2026-04-30",
+      "status": "done",
+      "completed_at": "2026-04-30"
+    },
+    {
+      "id": "E004",
+      "category": "improvement",
+      "title": "보고서 인쇄 시 월별 추이 차트 숨김",
+      "description": "A4 인쇄 시 월별 추이 차트 섹션(.rpt-trend-section 또는 해당 div)을 @media print CSS에서 display:none 처리. CLAUDE.md에 '삭제해도 될 듯' 주석이 있는 항목으로, 인쇄 시 불필요한 공간 차지 개선.",
+      "files_affected": ["public/index.html"],
+      "dependencies": ["A035"],
+      "priority": "low",
+      "status": "done",
+      "success_criteria": [
+        "인쇄 미리보기에서 월별 추이 차트 섹션이 보이지 않음",
+        "화면 뷰에서는 정상 표시"
+      ],
+      "notes": "index.html @media print 블록에 해당 선택자 추가만 하면 됨. 1줄 수정.",
+      "created_at": "2026-04-30",
+      "status": "done",
+      "completed_at": "2026-04-30"
+    }
   ]
 }

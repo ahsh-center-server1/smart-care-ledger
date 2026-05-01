@@ -12,8 +12,33 @@
 1. CLAUDE.md 읽기 → 프로젝트 전체 구조 파악
 2. feature_list.json 읽기 → 구현할 기능 선택 (priority 순)
 3. Designer.md 읽기 → 디자인 규칙 확인
-4. 대상 파일 현재 상태 확인 → view 도구로 관련 코드 읽기
+4. 아래 모듈 맵 참조 → 수정할 파일 특정
+5. 대상 모듈 파일 현재 상태 확인 → Read 도구로 관련 코드 읽기
 ```
+
+---
+
+## 모듈 맵 (기능 영역 → 수정 파일)
+
+> 모놀리식 app.js가 아닌 해당 모듈 파일을 수정합니다.
+
+| 기능 영역 | 수정 파일 |
+|---|---|
+| 로그인/세션/역할 | `public/modules/auth.js` |
+| 권한 체크 (can()) | `public/modules/permissions.js` |
+| fetchBaseData, isConfirmedLocked, loadTransactions | `public/modules/core.js` |
+| 대시보드 카드 렌더링 | `public/modules/dashboard.js` |
+| 거래내역 CRUD, 필터, 정렬, 드래그 | `public/modules/transactions.js` |
+| 보고서 생성, 결재, 엑셀/인쇄 | `public/modules/report.js` |
+| 설정 (직원/입주자/계좌/카테고리/규칙/고정항목/예산/아카이브) | `public/modules/settings.js` |
+| 모달 (영수증/은행명세/수기입력/엑셀업로드) | `public/modules/modals.js` |
+| Firestore 초기화 (fb, fdb) | `public/services/firestore.js` |
+| Google Drive 업로드/압축 | `public/services/drive.js` |
+| toast, showConfirm, setText, showLoading | `public/utils/ui.js` |
+| 상수 (COLS, CAT_COLORS, STATUS_*) | `public/constants.js` |
+| 전역 상태 (S 객체) | `public/state.js` |
+| ExcelParser, 이벤트 바인딩, window 전역 노출 | `public/app.js` |
+| HTML 구조/CSS | `public/index.html` |
 
 ---
 
@@ -36,24 +61,32 @@ Step 8: 결과 보고
 
 구현 후 반드시 아래를 확인합니다:
 
-```python
-# 1. 문법 검사
-node --check public/app.js  # returncode=0 이어야 함
+```bash
+# 1. 문법 검사 — 수정한 모듈 파일 전체 확인
+for f in public/app.js public/constants.js public/state.js \
+          public/modules/*.js public/services/*.js public/utils/*.js; do
+  node --check "$f" && echo "OK: $f" || echo "FAIL: $f"
+done
+# → 모두 OK여야 통과
 
-# 2. 괄호 균형
-{ 개수 == } 개수
-( 개수 == ) 개수
-[ 개수 == ] 개수
-` 개수가 짝수
+# 2. 괄호 균형 (수정한 파일만)
+python3 -c "
+t = open('public/modules/TARGET.js').read()
+print('{:', t.count('{') - t.count('}'))
+print('(:', t.count('(') - t.count(')'))
+print('[:', t.count('[') - t.count(']'))
+print('backtick:', t.count('\`') % 2)
+"
+# → 모두 0이어야 통과
 
-# 3. 중복 함수 없음
-grep -c "function 함수명" app.js  # 1이어야 함
+# 3. 중복 함수 없음 (수정한 파일 내)
+grep -c "function 함수명" public/modules/TARGET.js  # 1이어야 함
 
 # 4. 실제 줄바꿈 문자 없음
 # 단일따옴표 문자열 내 실제 \n 없음
 
 # 5. 기존 기능 키워드 유지
-# 이전에 구현된 함수명들이 여전히 존재하는지 확인
+# 이전에 구현된 주요 함수명이 여전히 존재하는지 확인
 ```
 
 ---
