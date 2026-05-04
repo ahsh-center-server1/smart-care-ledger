@@ -90,22 +90,23 @@ service cloud.firestore {
     }
 
     // ─────────────────────────────────────────────
-    // config: 관리자만 읽기/쓰기
+    // config, budgets, excelUploads: 관리자만 관리
     // ─────────────────────────────────────────────
     match /config/{document=**} {
       allow read, write: if isAdmin();
     }
 
-    // ─────────────────────────────────────────────
-    // archive_YYYY: 센터장 이상이 읽기, 관리자만 쓰기
-    // ─────────────────────────────────────────────
-    match /{archiveYear=archive_*}/{document=**} {
-      allow read: if isCenterOrAbove();
-      allow write: if isAdmin();
+    match /budgets/{document=**} {
+      allow read, write: if isTeamLeadOrAbove();
+    }
+
+    match /excelUploads/{document=**} {
+      allow read, write: if isTeamLeadOrAbove();
     }
 
     // ─────────────────────────────────────────────
     // 기타 컬렉션: 인증된 사용자 읽기, 팀장 이상 쓰기
+    // archive_YYYY도 여기에 포함됨 (센터장 이상 읽기, 관리자 쓰기)
     // ─────────────────────────────────────────────
     match /{document=**} {
       allow read: if request.auth != null;
