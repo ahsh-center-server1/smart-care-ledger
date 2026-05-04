@@ -3,18 +3,113 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // This rule allows anyone with your Firestore database reference to view, edit,
-    // and delete all data in your Firestore database. It is useful for getting
-    // started, but it is configured to expire after 30 days because it
-    // leaves your app open to attackers. At that time, all client
-    // requests to your Firestore database will be denied.
-    //
-    // Make sure to write security rules for your app before that time, or else
-    // all client requests to your Firestore database will be denied until you Update
-    // your rules
+    // Helper: 현재 사용자의 role 조회 (기본: null)
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    // Helper: 현재 사용자가 관리자인지 확인
+    function isAdmin() {
+      return getUserRole() == '관리자';
+    }
+
+    // Helper: 현재 사용자가 팀장 이상인지 확인
+    function isTeamLeadOrAbove() {
+      let role = getUserRole();
+      return role in ['팀장', '센터장', '관리자'];
+    }
+
+    // Helper: 현재 사용자가 센터장 이상인지 확인
+    function isCenterOrAbove() {
+      let role = getUserRole();
+      return role in ['센터장', '관리자'];
+    }
+
+    // ─────────────────────────────────────────────
+    // users 컬렉션: 자신의 정보만 수정 가능, 관리자는 전체 관리
+    // ─────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow create: if isAdmin() && request.auth != null;
+      allow update: if isAdmin() || (request.auth.uid == userId);
+      allow delete: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────
+    // clients, accounts: 팀장 이상만 수정/삭제
+    // ─────────────────────────────────────────────
+    match /clients/{clientId} {
+      allow read: if request.auth != null;
+      allow create: if isTeamLeadOrAbove();
+      allow update: if isTeamLeadOrAbove();
+      allow delete: if isTeamLeadOrAbove();
+    }
+
+    match /accounts/{accountId} {
+      allow read: if request.auth != null;
+      allow create: if isTeamLeadOrAbove();
+      allow update: if isTeamLeadOrAbove();
+      allow delete: if isTeamLeadOrAbove();
+    }
+
+    // ─────────────────────────────────────────────
+    // transactions: 생성자 또는 팀장 이상이 수정/삭제
+    // ─────────────────────────────────────────────
+    match /transactions/{trxId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update: if isTeamLeadOrAbove() || (request.auth.uid == resource.data.createdBy);
+      allow delete: if isTeamLeadOrAbove() || (request.auth.uid == resource.data.createdBy);
+    }
+
+    // ─────────────────────────────────────────────
+    // categories: 팀장 이상이 수정
+    // ─────────────────────────────────────────────
+    match /categories/{categoryId} {
+      allow read: if request.auth != null;
+      allow create: if isTeamLeadOrAbove();
+      allow update: if isTeamLeadOrAbove();
+      allow delete: if isTeamLeadOrAbove();
+    }
+
+    // ─────────────────────────────────────────────
+    // reports: 역할별 접근 제어
+    // 생성(담당자+), 수정(담당자+), 팀장/센터장만 결재
+    // ─────────────────────────────────────────────
+    match /reports/{reportId} {
+      allow read: if request.auth != null && (
+        isTeamLeadOrAbove() ||
+        request.auth.uid in resource.data.get('allowedUsers', [])
+      );
+      allow create: if request.auth != null && !isAdmin();
+      allow update: if request.auth != null && (
+        isTeamLeadOrAbove() ||
+        (request.auth.uid == resource.data.createdBy && resource.data.status in ['draft', 'rejected'])
+      );
+      allow delete: if isTeamLeadOrAbove();
+    }
+
+    // ─────────────────────────────────────────────
+    // config: 관리자만 읽기/쓰기
+    // ─────────────────────────────────────────────
+    match /config/{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────
+    // archive_YYYY: 센터장 이상이 읽기, 관리자만 쓰기
+    // ─────────────────────────────────────────────
+    match /archive_{year}/{document=**} {
+      allow read: if isCenterOrAbove();
+      allow write: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────
+    // 기타 컬렉션: 인증된 사용자 읽기, 팀장 이상 쓰기
+    // ─────────────────────────────────────────────
     match /{document=**} {
-      // 만료일 연장: Firebase Auth 전환 전까지 유지 (2027-12-31)
-      allow read, write: if request.time < timestamp.date(2027, 12, 31);
+      allow read: if request.auth != null;
+      allow write: if isTeamLeadOrAbove();
     }
   }
 }

@@ -41,22 +41,34 @@ export function renderManagement(){
     d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:6px;"><button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button></div>`;
     sl.appendChild(d);
   });
+
+  // 입주자 목록: 활성/비활성 분리
   const cl=document.getElementById('client-list'); if(cl)cl.innerHTML='';
-  if(cl)S.clients.forEach(c=>{
-    const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${c.active===false?'opacity:0.55;':''}`;
-    const leader=S.users.find(u=>String(u.id)===String(c.teamLeader));
-    const inactiveBtn=isAdmin?`<button class="icon-btn" title="${c.active===false?'활성화':'비활성화'}" onclick="toggleClientActive('${escAttr(c.id)}',${c.active===false})" style="color:${c.active===false?'#10b981':'#94a3b8'};">${c.active===false?'🔓':'🔒'}</button>`:'';
-    d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${c.name}${c.active===false?' <span style="font-size:11px;color:#ef4444;">[비활성]</span>':''}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:4px;">${inactiveBtn}<button class="icon-btn" onclick="openModal('client',S.clients.find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">✏️</button></div>`;
-    cl.appendChild(d);
-  });
+  if(cl){
+    const active=S.clients.filter(c=>c.active!==false);
+    const inactive=S.clients.filter(c=>c.active===false);
+    [...active,...inactive].forEach(c=>{
+      const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${c.active===false?'opacity:0.6;background:#f8f4f0;':''}`;
+      const leader=S.users.find(u=>String(u.id)===String(c.teamLeader));
+      const toggleSwitch=isAdmin?`<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" ${c.active!==false?'checked':''} onchange="toggleClientActive('${escAttr(c.id)}',this.checked)" style="width:40px;height:20px;accent-color:#10b981;cursor:pointer;appearance:none;-webkit-appearance:none;background:${c.active!==false?'#10b981':'#cbd5e1'};border-radius:10px;position:relative;transition:all 0.3s;"/><span style="font-size:10px;color:#64748b;font-weight:700;white-space:nowrap;">${c.active!==false?'활성':'비활성'}</span></label>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${c.name}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('client',S.clients.find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      cl.appendChild(d);
+    });
+  }
+
+  // 계좌 목록: 활성/비활성 분리
   const al=document.getElementById('account-list'); if(al)al.innerHTML='';
-  if(al)S.accounts.forEach(a=>{
-    const client=S.clients.find(c=>c.id===a.clientId);
-    const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${a.active===false?'opacity:0.55;':''}`;
-    const inactiveBtn=isAdmin?`<button class="icon-btn" title="${a.active===false?'활성화':'비활성화'}" onclick="toggleAccountActive('${escAttr(a.id)}',${a.active===false})" style="color:${a.active===false?'#10b981':'#94a3b8'};">${a.active===false?'🔓':'🔒'}</button>`:'';
-    d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${a.label}${a.active===false?' <span style="font-size:11px;color:#ef4444;">[비활성]</span>':''}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:var(--blue);">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:4px;">${inactiveBtn}<button class="icon-btn" onclick="openModal('account',S.accounts.find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">✏️</button></div>`;
-    al.appendChild(d);
-  });
+  if(al){
+    const active=S.accounts.filter(a=>a.active!==false);
+    const inactive=S.accounts.filter(a=>a.active===false);
+    [...active,...inactive].forEach(a=>{
+      const client=S.clients.find(c=>c.id===a.clientId);
+      const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${a.active===false?'opacity:0.6;background:#f8f4f0;':''}`;
+      const toggleSwitch=isAdmin?`<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" ${a.active!==false?'checked':''} onchange="toggleAccountActive('${escAttr(a.id)}',this.checked)" style="width:40px;height:20px;accent-color:#10b981;cursor:pointer;appearance:none;-webkit-appearance:none;background:${a.active!==false?'#10b981':'#cbd5e1'};border-radius:10px;position:relative;transition:all 0.3s;"/><span style="font-size:10px;color:#64748b;font-weight:700;white-space:nowrap;">${a.active!==false?'활성':'비활성'}</span></label>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${a.label}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:var(--blue);">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('account',S.accounts.find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      al.appendChild(d);
+    });
+  }
 }
 
 // 별칭 (HTML inline 이벤트에서 참조)
@@ -442,7 +454,7 @@ const PERM_SECTIONS=[
   {label:'📌 내비게이션',keys:['nav.report','nav.settings','nav.staff']},
   {label:'💳 거래내역',keys:['trx.view.all','trx.create','trx.edit','trx.delete','trx.delete.bulk','trx.reorder','trx.transfer','trx.category.edit','trx.csv']},
   {label:'📁 엑셀·증빙',keys:['excel.upload','receipt.upload','receipt.print','bankbook.upload']},
-  {label:'📑 보고서',keys:['report.view.all','report.view.own','report.draft','report.edit','report.delete','report.recall']},
+  {label:'📑 보고서',keys:['report.view.all','report.view.own','report.draft','report.edit','report.delete','report.recall','report.submit','report.approve.team','report.approve.center','report.reject']},
   {label:'⚙️ 설정',keys:['settings.staff','settings.client','settings.account','settings.fixed','settings.archive','settings.reset']},
 ];
 const PERM_LABELS={
@@ -454,6 +466,7 @@ const PERM_LABELS={
   'bankbook.upload':'통장 사진 업로드',
   'report.view.all':'전체 보고서 열람','report.view.own':'본인 담당 열람','report.draft':'초안 작성',
   'report.edit':'보고서 수정','report.delete':'보고서 삭제','report.recall':'보고서 회수',
+  'report.submit':'보고서 제출','report.approve.team':'팀장 결재','report.approve.center':'센터장 결재','report.reject':'보고서 반려',
   'settings.staff':'직원 등록/수정/삭제','settings.client':'입주자 관리','settings.account':'계좌 관리',
   'settings.fixed':'고정항목 관리','settings.archive':'연도 마감','settings.reset':'전체 초기화',
 };
@@ -516,12 +529,14 @@ export function renderPermissionPanel(){
       ROLES.forEach(r=>{full[r]={};Object.keys(DEFAULT_PERMISSIONS[r]).forEach(k=>{full[r][k]=draft[r]?.[k]??DEFAULT_PERMISSIONS[r][k];});});
       try{
         await savePermissions(full);
-        toast('권한이 저장되었습니다. 다음 로그인부터 적용됩니다.','success');
+        toast('권한이 저장되었습니다. 5초 후 페이지가 새로고침됩니다.','success');
+        setTimeout(()=>location.reload(),5000);
       }catch(e){toast('저장 실패: '+e.message,'error');}
     });
     // 기본값 초기화 버튼
     document.getElementById('btn-perm-reset')?.addEventListener('click',()=>{
-      if(!confirm('모든 역할 권한을 기본값으로 초기화하시겠습니까?'))return;
+      const code=prompt('모든 역할 권한을 기본값으로 초기화합니다.\\n확인을 위해 "초기화"를 입력하세요:');
+      if(code!=='초기화')return;
       ROLES.forEach(r=>Object.keys(DEFAULT_PERMISSIONS[r]).forEach(k=>{if(!draft[r])draft[r]={};draft[r][k]=DEFAULT_PERMISSIONS[r][k];}));
       renderPanel();
       toast('기본값으로 초기화되었습니다. 저장 버튼을 눌러 적용하세요.','info');
