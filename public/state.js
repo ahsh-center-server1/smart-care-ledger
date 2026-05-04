@@ -9,6 +9,7 @@
 export const S = {
   user: null,
   users: [], clients: [], accounts: [], categories: [],
+  allClients: [], allAccounts: [],   // 비활성 포함 전체 목록 (설정 화면용)
   transactions: [], filteredTrx: [],
   activeClient: null,
   sortKey: 'date', sortDir: 'asc',       // 기본 오름차순(과거→최신)

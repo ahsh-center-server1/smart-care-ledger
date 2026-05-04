@@ -42,30 +42,46 @@ export function renderManagement(){
     sl.appendChild(d);
   });
 
-  // 입주자 목록: 활성/비활성 분리
+  // 입주자 목록: 비활성 포함 전체 목록 사용, 활성→비활성 순 배치
   const cl=document.getElementById('client-list'); if(cl)cl.innerHTML='';
   if(cl){
-    const active=S.clients.filter(c=>c.active!==false);
-    const inactive=S.clients.filter(c=>c.active===false);
+    const allC=S.allClients?.length?S.allClients:S.clients;
+    const active=allC.filter(c=>c.active!==false);
+    const inactive=allC.filter(c=>c.active===false);
     [...active,...inactive].forEach(c=>{
-      const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${c.active===false?'opacity:0.6;background:#f8f4f0;':''}`;
+      const isActive=c.active!==false;
+      const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
       const leader=S.users.find(u=>String(u.id)===String(c.teamLeader));
-      const toggleSwitch=isAdmin?`<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" ${c.active!==false?'checked':''} onchange="toggleClientActive('${escAttr(c.id)}',this.checked)" style="width:40px;height:20px;accent-color:#10b981;cursor:pointer;appearance:none;-webkit-appearance:none;background:${c.active!==false?'#10b981':'#cbd5e1'};border-radius:10px;position:relative;transition:all 0.3s;"/><span style="font-size:10px;color:#64748b;font-weight:700;white-space:nowrap;">${c.active!==false?'활성':'비활성'}</span></label>`:'';
-      d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${c.name}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('client',S.clients.find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      const toggleSwitch=isAdmin?`<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;position:relative;">
+        <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;">
+          <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
+        </span>
+        <input type="checkbox" ${isActive?'checked':''} onchange="toggleClientActive('${escAttr(c.id)}',this.checked)" style="position:absolute;opacity:0;width:0;height:0;"/>
+        <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'활성':'비활성'}</span>
+      </label>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${c.name}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('client',(S.allClients||S.clients).find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">✏️</button></div>`;
       cl.appendChild(d);
     });
   }
 
-  // 계좌 목록: 활성/비활성 분리
+  // 계좌 목록: 비활성 포함 전체 목록 사용, 활성→비활성 순 배치
   const al=document.getElementById('account-list'); if(al)al.innerHTML='';
   if(al){
-    const active=S.accounts.filter(a=>a.active!==false);
-    const inactive=S.accounts.filter(a=>a.active===false);
+    const allA=S.allAccounts?.length?S.allAccounts:S.accounts;
+    const active=allA.filter(a=>a.active!==false);
+    const inactive=allA.filter(a=>a.active===false);
     [...active,...inactive].forEach(a=>{
-      const client=S.clients.find(c=>c.id===a.clientId);
-      const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${a.active===false?'opacity:0.6;background:#f8f4f0;':''}`;
-      const toggleSwitch=isAdmin?`<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" ${a.active!==false?'checked':''} onchange="toggleAccountActive('${escAttr(a.id)}',this.checked)" style="width:40px;height:20px;accent-color:#10b981;cursor:pointer;appearance:none;-webkit-appearance:none;background:${a.active!==false?'#10b981':'#cbd5e1'};border-radius:10px;position:relative;transition:all 0.3s;"/><span style="font-size:10px;color:#64748b;font-weight:700;white-space:nowrap;">${a.active!==false?'활성':'비활성'}</span></label>`:'';
-      d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${a.label}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:var(--blue);">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('account',S.accounts.find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      const isActive=a.active!==false;
+      const client=(S.allClients||S.clients).find(c=>c.id===a.clientId);
+      const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
+      const toggleSwitch=isAdmin?`<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;position:relative;">
+        <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;">
+          <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
+        </span>
+        <input type="checkbox" ${isActive?'checked':''} onchange="toggleAccountActive('${escAttr(a.id)}',this.checked)" style="position:absolute;opacity:0;width:0;height:0;"/>
+        <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'활성':'비활성'}</span>
+      </label>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${a.label}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:${isActive?'var(--blue)':'#94a3b8'};">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('account',(S.allAccounts||S.accounts).find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">✏️</button></div>`;
       al.appendChild(d);
     });
   }

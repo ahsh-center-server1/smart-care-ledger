@@ -33,6 +33,8 @@ export async function fetchBaseData() {
   S.categories = catSnap.docs.map(d=>({id:d.id,...d.data()}));
   const allClients  = cSnap.docs.map(d=>({id:d.id,...d.data()}));
   const allAccounts = aSnap.docs.map(d=>({id:d.id,...d.data()}));
+  S.allClients  = allClients;   // 비활성 포함 전체 목록 (설정 화면용)
+  S.allAccounts = allAccounts;  // 비활성 포함 전체 목록 (설정 화면용)
   const showInactive=S.settings?.showInactive||false;
   const activeClients=showInactive?allClients:allClients.filter(c=>c.active!==false);
   const activeAccounts=showInactive?allAccounts:allAccounts.filter(a=>a.active!==false);
