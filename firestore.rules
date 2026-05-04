@@ -3,114 +3,21 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: 현재 사용자의 role 조회 (기본: null)
-    function getUserRole() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
-    }
-
-    // Helper: 현재 사용자가 관리자인지 확인
-    function isAdmin() {
-      return getUserRole() == '관리자';
-    }
-
-    // Helper: 현재 사용자가 팀장 이상인지 확인
-    function isTeamLeadOrAbove() {
-      let role = getUserRole();
-      return role in ['팀장', '센터장', '관리자'];
-    }
-
-    // Helper: 현재 사용자가 센터장 이상인지 확인
-    function isCenterOrAbove() {
-      let role = getUserRole();
-      return role in ['센터장', '관리자'];
-    }
-
     // ─────────────────────────────────────────────
-    // users 컬렉션: 자신의 정보만 수정 가능, 관리자는 전체 관리
+    // users: 로그인을 위해 누구나 읽기 가능
     // ─────────────────────────────────────────────
     match /users/{userId} {
-      allow read: if request.auth != null;
-      allow create: if isAdmin() && request.auth != null;
-      allow update: if isAdmin() || (request.auth.uid == userId);
-      allow delete: if isAdmin();
+      allow read;
+      allow create, update, delete: if request.auth != null;
     }
 
     // ─────────────────────────────────────────────
-    // clients, accounts: 팀장 이상만 수정/삭제
-    // ─────────────────────────────────────────────
-    match /clients/{clientId} {
-      allow read: if request.auth != null;
-      allow create: if isTeamLeadOrAbove();
-      allow update: if isTeamLeadOrAbove();
-      allow delete: if isTeamLeadOrAbove();
-    }
-
-    match /accounts/{accountId} {
-      allow read: if request.auth != null;
-      allow create: if isTeamLeadOrAbove();
-      allow update: if isTeamLeadOrAbove();
-      allow delete: if isTeamLeadOrAbove();
-    }
-
-    // ─────────────────────────────────────────────
-    // transactions: 생성자 또는 팀장 이상이 수정/삭제
-    // ─────────────────────────────────────────────
-    match /transactions/{trxId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow update: if isTeamLeadOrAbove() || (request.auth.uid == resource.data.createdBy);
-      allow delete: if isTeamLeadOrAbove() || (request.auth.uid == resource.data.createdBy);
-    }
-
-    // ─────────────────────────────────────────────
-    // categories: 팀장 이상이 수정
-    // ─────────────────────────────────────────────
-    match /categories/{categoryId} {
-      allow read: if request.auth != null;
-      allow create: if isTeamLeadOrAbove();
-      allow update: if isTeamLeadOrAbove();
-      allow delete: if isTeamLeadOrAbove();
-    }
-
-    // ─────────────────────────────────────────────
-    // reports: 역할별 접근 제어
-    // 생성(담당자+), 수정(담당자+), 팀장/센터장만 결재
-    // ─────────────────────────────────────────────
-    match /reports/{reportId} {
-      allow read: if request.auth != null && (
-        isTeamLeadOrAbove() ||
-        request.auth.uid in resource.data.get('allowedUsers', [])
-      );
-      allow create: if request.auth != null && !isAdmin();
-      allow update: if request.auth != null && (
-        isTeamLeadOrAbove() ||
-        (request.auth.uid == resource.data.createdBy && resource.data.status in ['draft', 'rejected'])
-      );
-      allow delete: if isTeamLeadOrAbove();
-    }
-
-    // ─────────────────────────────────────────────
-    // config, budgets, excelUploads: 관리자만 관리
-    // ─────────────────────────────────────────────
-    match /config/{document=**} {
-      allow read, write: if isAdmin();
-    }
-
-    match /budgets/{document=**} {
-      allow read, write: if isTeamLeadOrAbove();
-    }
-
-    match /excelUploads/{document=**} {
-      allow read, write: if isTeamLeadOrAbove();
-    }
-
-    // ─────────────────────────────────────────────
-    // 기타 컬렉션: 인증된 사용자 읽기, 팀장 이상 쓰기
-    // archive_YYYY도 여기에 포함됨 (센터장 이상 읽기, 관리자 쓰기)
+    // 모든 데이터: 로그인한 사용자는 읽기/쓰기 가능
+    // (향후 세밀한 권한 제어는 app.js의 can() 함수로 처리)
     // ─────────────────────────────────────────────
     match /{document=**} {
       allow read: if request.auth != null;
-      allow write: if isTeamLeadOrAbove();
+      allow write: if request.auth != null;
     }
   }
 }
