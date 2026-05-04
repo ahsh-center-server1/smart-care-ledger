@@ -99,7 +99,7 @@ service cloud.firestore {
     // ─────────────────────────────────────────────
     // archive_YYYY: 센터장 이상이 읽기, 관리자만 쓰기
     // ─────────────────────────────────────────────
-    match /archive_{year}/{document=**} {
+    match /{archiveYear=archive_*}/{document=**} {
       allow read: if isCenterOrAbove();
       allow write: if isAdmin();
     }
