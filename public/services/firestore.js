@@ -145,3 +145,99 @@ export async function updateUser(id, data) {
 export async function removeUser(id) {
   return deleteDoc_(COLS.USERS, id);
 }
+
+// ─────────────────────────────────────────────
+// 배치 작업 (Phase 1 최적화)
+// ─────────────────────────────────────────────
+
+/** 다중 문서 업데이트 (배치, 500개 단위 자동 분할) */
+export async function batchUpdateDocs(updates) {
+  if(!updates.length)return;
+  const { writeBatch, doc } = fb();
+  // 500개씩 분할 처리
+  for(let i=0;i<updates.length;i+=500){
+    const chunk=updates.slice(i,i+500);
+    const batch = writeBatch(fdb());
+    chunk.forEach(({col, docId, data}) => {
+      batch.update(doc(fdb(), col, docId), data);
+    });
+    await batch.commit();
+  }
+}
+
+/** 다중 문서 삭제 (배치, 500개 단위 자동 분할) */
+export async function batchDeleteDocs(deletes) {
+  if(!deletes.length)return;
+  const { writeBatch, doc } = fb();
+  // 500개씩 분할 처리
+  for(let i=0;i<deletes.length;i+=500){
+    const chunk=deletes.slice(i,i+500);
+    const batch = writeBatch(fdb());
+    chunk.forEach(({col, docId}) => {
+      batch.delete(doc(fdb(), col, docId));
+    });
+    await batch.commit();
+  }
+}
+
+/** 다중 문서 추가 (배치, 500개 단위 자동 분할) */
+export async function batchAddDocs(adds) {
+  if(!adds.length)return [];
+  const { writeBatch, collection, doc, serverTimestamp } = fb();
+  const addedIds = [];
+  // 500개씩 분할 처리
+  for(let i=0;i<adds.length;i+=500){
+    const chunk=adds.slice(i,i+500);
+    const batch = writeBatch(fdb());
+    chunk.forEach(({col, data}) => {
+      const ref = doc(collection(fdb(), col));
+      addedIds.push(ref.id);
+      batch.set(ref, {
+        ...data,
+        createdAt: serverTimestamp ? serverTimestamp() : Date.now(),
+      });
+    });
+    await batch.commit();
+  }
+  return addedIds;
+}
+
+/** 복합 배치 작업 (추가/수정/삭제 동시, 500개 단위 자동 분할) */
+export async function batchMixedOps(operations) {
+  const { writeBatch, doc, collection, serverTimestamp } = fb();
+  const addedIds = [];
+  const updates = operations.updates || [];
+  const deletes = operations.deletes || [];
+  const adds = operations.adds || [];
+  const totalOps = updates.length + deletes.length + adds.length;
+
+  if(!totalOps)return addedIds;
+
+  // 총 작업이 500개 이하면 한 번에 처리
+  if(totalOps<=500){
+    const batch = writeBatch(fdb());
+    updates.forEach(({col, docId, data}) => {
+      batch.update(doc(fdb(), col, docId), data);
+    });
+    deletes.forEach(({col, docId}) => {
+      batch.delete(doc(fdb(), col, docId));
+    });
+    adds.forEach(({col, data}) => {
+      const ref = doc(collection(fdb(), col));
+      addedIds.push(ref.id);
+      batch.set(ref, {
+        ...data,
+        createdAt: serverTimestamp ? serverTimestamp() : Date.now(),
+      });
+    });
+    await batch.commit();
+    return addedIds;
+  }
+
+  // 500개 초과: 각 유형별로 분할 처리
+  await batchUpdateDocs(updates);
+  await batchDeleteDocs(deletes);
+  const results=await batchAddDocs(adds);
+  addedIds.push(...results);
+  return addedIds;
+}

@@ -13,7 +13,7 @@
 
 import { S } from '../state.js';
 import { toast, showConfirm, showLoading, escAttr } from '../utils/ui.js';
-import { fb, fdb } from '../services/firestore.js';
+import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchMixedOps } from '../services/firestore.js';
 import { COLS } from '../constants.js';
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, loadTransactions } from './core.js';
@@ -42,45 +42,51 @@ export function renderManagement(){
     sl.appendChild(d);
   });
 
-  // 입주자 목록: 비활성 포함 전체 목록 사용, 활성→비활성 순 배치
+  // 관리자: 전체 목록 / 비관리자: 담당 입주자만 (비활성 포함) — 입주자·계좌 공통 기준
+  const myUserId=String(S.user?.userId||'');
+  const visibleClients=(S.allClients?.length?S.allClients:S.clients).filter(c=>
+    isAdmin||String(c.userIds||'').split(',').map(s=>s.trim()).includes(myUserId)
+  );
+  const visibleClientIds=new Set(visibleClients.map(c=>c.id));
+
+  // 입주자 목록: 활성→비활성 순 배치
   const cl=document.getElementById('client-list'); if(cl)cl.innerHTML='';
   if(cl){
-    const allC=S.allClients?.length?S.allClients:S.clients;
-    const active=allC.filter(c=>c.active!==false);
-    const inactive=allC.filter(c=>c.active===false);
+    const active=visibleClients.filter(c=>c.active!==false);
+    const inactive=visibleClients.filter(c=>c.active===false);
     [...active,...inactive].forEach(c=>{
       const isActive=c.active!==false;
       const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
       const leader=S.users.find(u=>String(u.id)===String(c.teamLeader));
-      const toggleSwitch=isAdmin?`<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;position:relative;">
-        <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;">
+      const toggleSwitch=isAdmin?`<div onclick="toggleClientActive('${escAttr(c.id)}',${!isActive})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+        <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;flex-shrink:0;">
           <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
         </span>
-        <input type="checkbox" ${isActive?'checked':''} onchange="toggleClientActive('${escAttr(c.id)}',this.checked)" style="position:absolute;opacity:0;width:0;height:0;"/>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'활성':'비활성'}</span>
-      </label>`:'';
+      </div>`:'';
       d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${c.name}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('client',(S.allClients||S.clients).find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">✏️</button></div>`;
       cl.appendChild(d);
     });
   }
 
-  // 계좌 목록: 비활성 포함 전체 목록 사용, 활성→비활성 순 배치
+  // 계좌 목록: 담당 입주자의 계좌만 (비활성 포함), 활성→비활성 순 배치
   const al=document.getElementById('account-list'); if(al)al.innerHTML='';
   if(al){
-    const allA=S.allAccounts?.length?S.allAccounts:S.accounts;
+    const allA=(S.allAccounts?.length?S.allAccounts:S.accounts).filter(a=>
+      isAdmin||visibleClientIds.has(a.clientId)
+    );
     const active=allA.filter(a=>a.active!==false);
     const inactive=allA.filter(a=>a.active===false);
     [...active,...inactive].forEach(a=>{
       const isActive=a.active!==false;
       const client=(S.allClients||S.clients).find(c=>c.id===a.clientId);
       const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
-      const toggleSwitch=isAdmin?`<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;position:relative;">
-        <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;">
+      const toggleSwitch=isAdmin?`<div onclick="toggleAccountActive('${escAttr(a.id)}',${!isActive})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+        <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;flex-shrink:0;">
           <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
         </span>
-        <input type="checkbox" ${isActive?'checked':''} onchange="toggleAccountActive('${escAttr(a.id)}',this.checked)" style="position:absolute;opacity:0;width:0;height:0;"/>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'활성':'비활성'}</span>
-      </label>`:'';
+      </div>`:'';
       d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${a.label}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:${isActive?'var(--blue)':'#94a3b8'};">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('account',(S.allAccounts||S.accounts).find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">✏️</button></div>`;
       al.appendChild(d);
     });
@@ -93,16 +99,20 @@ export const renderClientManagement  = renderManagement;
 export const renderAccountManagement = renderManagement;
 
 export async function toggleClientActive(id,makeActive){
-  const{doc,updateDoc}=fb();
-  await updateDoc(doc(fdb(),COLS.CLIENTS,id),{active:makeActive});
-  toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
-  await fetchBaseData(); renderManagement();
+  try{
+    const{doc,updateDoc}=fb();
+    await updateDoc(doc(fdb(),COLS.CLIENTS,id),{active:makeActive});
+    toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
+    await fetchBaseData(); renderManagement();
+  }catch(e){ toast('저장 오류: '+e.message,'error'); }
 }
 export async function toggleAccountActive(id,makeActive){
-  const{doc,updateDoc}=fb();
-  await updateDoc(doc(fdb(),COLS.ACCOUNTS,id),{active:makeActive});
-  toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
-  await fetchBaseData(); renderManagement();
+  try{
+    const{doc,updateDoc}=fb();
+    await updateDoc(doc(fdb(),COLS.ACCOUNTS,id),{active:makeActive});
+    toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
+    await fetchBaseData(); renderManagement();
+  }catch(e){ toast('저장 오류: '+e.message,'error'); }
 }
 
 export function confirmDelete(type,id){
@@ -209,12 +219,18 @@ export function renderCatTags(type){
       const fromIdx=tags.indexOf(dragSrc), toIdx=tags.indexOf(tag);
       if(fromIdx<0||toIdx<0)return;
       if(fromIdx<toIdx)el.insertBefore(dragSrc,tag.nextSibling); else el.insertBefore(dragSrc,tag);
-      const{doc,updateDoc}=fb();
+      // Phase 2 최적화: 배치 업데이트
       const newTags=[...el.querySelectorAll('.cat-tag')];
+      const toUpdate=[];
       for(let k=0;k<newTags.length;k++){
         const docId=newTags[k].dataset.docId;
-        if(docId){await updateDoc(doc(fdb(),COLS.CATEGORIES,docId),{sortOrder:k});const cat=S.categories.find(c=>c.id===docId);if(cat)cat.sortOrder=k;}
+        if(docId){
+          toUpdate.push({col:COLS.CATEGORIES,docId,data:{sortOrder:k}});
+          const cat=S.categories.find(c=>c.id===docId);
+          if(cat)cat.sortOrder=k;
+        }
       }
+      if(toUpdate.length)await batchUpdateDocs(toUpdate);
       toast('순서 저장됨','success',1500);
     });
     if(cat!=='확인필요')tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${cat}" 카테고리를 삭제하시겠습니까?`,()=>deleteCategory(type,cat,catDoc.clientId||''),'삭제'));
@@ -291,11 +307,15 @@ export async function deleteRule(docId){
   await deleteDoc(doc(fdb(),COLS.CATEGORIES,docId));
   await fetchBaseData(); loadSettings(); toast('규칙 삭제됨','success');
 }
+// Phase 2 최적화: 배치 삭제 + 배치 추가
 export async function resetCategories(){
   showConfirm('기본값 초기화','기존 카테고리와 규칙을 모두 삭제하고 기본값으로 초기화합니다.',async()=>{
-    const{getDocs,collection,doc,deleteDoc,addDoc}=fb();
+    const{getDocs,collection}=fb();
     const snap=await getDocs(collection(fdb(),COLS.CATEGORIES));
-    for(const d of snap.docs)await deleteDoc(doc(fdb(),COLS.CATEGORIES,d.id));
+    // 배치 삭제
+    const toDelete=snap.docs.map(d=>({col:COLS.CATEGORIES,docId:d.id}));
+    if(toDelete.length)await batchDeleteDocs(toDelete);
+    // 기본값 준비
     const defaults=[
       {keyword:'',type:'지출',category:'식비',subcategory:'',sortOrder:0},
       {keyword:'',type:'지출',category:'교통비',subcategory:'',sortOrder:1},
@@ -307,7 +327,9 @@ export async function resetCategories(){
       {keyword:'',type:'수입',category:'수입',subcategory:'',sortOrder:0},
       {keyword:'',type:'수입',category:'확인필요',subcategory:'',sortOrder:1},
     ];
-    for(const d of defaults)await addDoc(collection(fdb(),COLS.CATEGORIES),d);
+    // 배치 추가
+    const toAdd=defaults.map(d=>({col:COLS.CATEGORIES,data:d}));
+    if(toAdd.length)await batchAddDocs(toAdd);
     await fetchBaseData(); loadSettings(); toast('기본값으로 초기화됨','success');
   },'초기화');
 }
@@ -335,21 +357,29 @@ export async function confirmArchive(){
   if(!year){toast('연도를 선택하세요.','error');return;}
   showConfirm(`${year}년 데이터 마감`,`${year}년 거래 데이터를 보관하고 계좌 기초잔액을 업데이트합니다.\n이 작업은 되돌릴 수 없습니다.`,()=>executeArchive(year),'마감 실행');
 }
+// Phase 3 최적화: 배치 처리 + 500개 단위 자동 분할
 export async function executeArchive(year){
   showLoading(true);
   try{
-    const{getDocs,collection,query,where,addDoc,doc,updateDoc,deleteDoc}=fb();
+    const{getDocs,collection,query,where,addDoc,doc}=fb();
     const db=fdb();
     const snap=await getDocs(query(collection(db,COLS.TRANSACTIONS),where('date','>=',year+'-01-01'),where('date','<=',year+'-12-31')));
     const trxList=snap.docs.map(d=>({id:d.id,...d.data()}));
     if(!trxList.length){showLoading(false);toast(`${year}년 거래 데이터가 없습니다.`,'error');return;}
-    for(const t of trxList)await addDoc(collection(db,'archive_'+year),t);
-    for(const acc of S.accounts){
+    // 1. 배치 추가: archive_YYYY 테이블에 거래 복제 (500개씩 자동 분할)
+    const archiveData=trxList.map(t=>({col:'archive_'+year,data:t}));
+    await batchAddDocs(archiveData);
+    // 2. 배치 업데이트: 계좌별 기초잔액 업데이트 (500개 제한 자동 처리)
+    const accUpdates=S.accounts.map(acc=>{
       const net=trxList.filter(t=>t.accountId===acc.id&&t.type!=='취소').reduce((s,t)=>s+(Number(t.amountIn||0)-Number(t.amountOut||0)),0);
       const newBal=(Number(acc.initialBalance||0))+net;
-      await updateDoc(doc(db,COLS.ACCOUNTS,acc.id),{initialBalance:newBal,initialBalanceDate:(year+1)+'-01-01',currentBalance:newBal});
-    }
-    for(const t of trxList)await deleteDoc(doc(db,COLS.TRANSACTIONS,t.id));
+      return {col:COLS.ACCOUNTS,docId:acc.id,data:{initialBalance:newBal,initialBalanceDate:(year+1)+'-01-01',currentBalance:newBal}};
+    });
+    if(accUpdates.length)await batchUpdateDocs(accUpdates);
+    // 3. 배치 삭제: 원본 거래 제거 (500개씩 자동 분할)
+    const trxDeletes=trxList.map(t=>({col:COLS.TRANSACTIONS,docId:t.id}));
+    await batchDeleteDocs(trxDeletes);
+    // 4. 아카이브 기록 추가 (1건, 배치 불필요)
     await addDoc(collection(db,COLS.CONFIG),{type:'archive',year,archivedAt:new Date().toISOString(),count:trxList.length});
     await fetchBaseData(); loadSettings();
     toast(`${year}년 마감 완료! ${trxList.length}건 보관.`,'success',5000);
@@ -418,21 +448,28 @@ export async function loadBudgetForm(){
   document.getElementById('budget-form').style.display='block';
 }
 
+// Phase 2 최적화: 배치 혼합 작업 사용
 export async function saveBudget(){
   const clientId=document.getElementById('budget-client-sel')?.value;
   const year=Number(document.getElementById('budget-year-sel')?.value);
   if(!clientId||!year)return;
   showLoading(true);
   try{
-    const{getDocs,collection,query,where,doc,deleteDoc,addDoc}=fb();
+    const{getDocs,collection,query,where}=fb();
     const db=fdb();
     const snap=await getDocs(query(collection(db,COLS.BUDGETS),where('clientId','==',clientId),where('year','==',year)));
-    for(const d of snap.docs)await deleteDoc(doc(db,COLS.BUDGETS,d.id));
+    // 배치 작업: 기존 삭제 + 새 추가
+    const ops={
+      deletes:snap.docs.map(d=>({col:COLS.BUDGETS,docId:d.id})),
+      adds:[]
+    };
     const inputs=document.querySelectorAll('.budget-amt');
-    for(const inp of inputs){
+    inputs.forEach(inp=>{
       const amount=Number(inp.value)||0;
-      if(amount>0)await addDoc(collection(db,COLS.BUDGETS),{clientId,year,category:inp.dataset.cat,amount});
-    }
+      if(amount>0)ops.adds.push({col:COLS.BUDGETS,data:{clientId,year,category:inp.dataset.cat,amount}});
+    });
+    // 배치 혼합 작업 (delete + add)
+    if(ops.deletes.length||ops.adds.length)await batchMixedOps(ops);
     toast('예산이 저장되었습니다.','success');
   }catch(e){toast('저장 오류: '+e.message,'error');}
   showLoading(false);

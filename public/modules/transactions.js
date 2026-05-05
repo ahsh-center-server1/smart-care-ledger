@@ -8,7 +8,7 @@
 import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.js';
-import { fb, fdb } from '../services/firestore.js';
+import { fb, fdb, batchDeleteDocs, batchUpdateDocs } from '../services/firestore.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
 import { openModal } from './modals.js';
 import { can } from './permissions.js';
@@ -355,6 +355,7 @@ export function exportFilteredCSV(){
 }
 
 // ★ 버그4 수정 — 일괄 삭제 후 check-all 체크박스 초기화
+// Phase 1 최적화: 배치 삭제 + 로컬 캐시 업데이트
 export async function confirmBulkDelete(){
   const checked=Array.from(document.querySelectorAll('.row-check:checked'));
   if(!checked.length){toast('삭제할 항목을 선택하세요.','info');return;}
@@ -362,20 +363,27 @@ export async function confirmBulkDelete(){
   const lockedChecked=checked.filter(cb=>{const t=S.transactions.find(x=>x.id===cb.value);return t&&isConfirmedLocked(t.clientId,t.date);});
   if(lockedChecked.length){toast(`최종 결재 완료된 월의 거래 ${lockedChecked.length}건이 포함되어 있습니다. 해당 거래는 삭제할 수 없습니다.`,'error');return;}
   showConfirm('일괄 삭제',`선택한 ${checked.length}건을 삭제하시겠습니까?`,async()=>{
-    const{doc,deleteDoc}=fb();
     const checkedIds=new Set(checked.map(c=>c.value));
-    const linkedToDelete=[]; const linkedAccIds=new Set();
+    const toDelete=[]; // 배치 삭제 목록
+    const linkedToDelete=[]; // 연결 거래 배치 삭제
+    const linkedAccIds=new Set();
+    // 삭제할 거래와 연결된 거래 수집
     for(const cb of checked){
-      await deleteDoc(doc(fdb(),COLS.TRANSACTIONS,cb.value));
+      toDelete.push({col:COLS.TRANSACTIONS,docId:cb.value});
       // B001: 자산이동 연결 거래 수집
       const trx=S.transactions.find(x=>x.id===cb.value);
       if(trx?.type==='자산이동'&&trx.linkedTrxId&&!checkedIds.has(trx.linkedTrxId)){
-        linkedToDelete.push(trx.linkedTrxId);
+        linkedToDelete.push({col:COLS.TRANSACTIONS,docId:trx.linkedTrxId});
         if(trx.linkedAccountId)linkedAccIds.add(trx.linkedAccountId);
       }
     }
-    // 연결 거래 삭제
-    for(const lid of linkedToDelete)await deleteDoc(doc(fdb(),COLS.TRANSACTIONS,lid));
+    // 배치 삭제: 선택 거래 + 연결 거래
+    await batchDeleteDocs(toDelete);
+    if(linkedToDelete.length)await batchDeleteDocs(linkedToDelete);
+    // 로컬 캐시 업데이트 (모든 삭제 거래 제거)
+    const allDeletedIds=new Set([...checkedIds,...linkedToDelete.map(d=>d.docId)]);
+    S.transactions=S.transactions.filter(t=>!allDeletedIds.has(t.id));
+    // 캐시 업데이트된 상태로 계좌 잔액 계산
     const accIds=[...new Set([...checked.map(c=>c.dataset.acc),...linkedAccIds])];
     for(const a of accIds) await updateAccBalance(a);
     // ★ 체크박스 전체 초기화
@@ -390,17 +398,17 @@ export function editTrx(id){const t=S.transactions.find(x=>x.id===id);if(!t)retu
 
 export async function updateAccBalance(accId){
   if(!accId)return;
-  const{getDocs,collection,query,where,doc,getDoc,updateDoc}=fb();
+  const{doc,getDoc,updateDoc}=fb();
   const accRef=doc(fdb(),COLS.ACCOUNTS,accId);
   const accSnap=await getDoc(accRef); if(!accSnap.exists())return;
   const acc=accSnap.data();
-  const snap=await getDocs(query(collection(fdb(),COLS.TRANSACTIONS),where('accountId','==',accId)));
+  // Phase 1 최적화: Firestore 쿼리 대신 S.transactions 캐시 사용
+  const accTrx=S.transactions.filter(t=>t.accountId===accId);
   let bal=Number(acc.initialBalance||0);
   // ⑫ initialBalanceDate 기준: 해당 날짜 이후 거래만 합산
   const baseDate=acc.initialBalanceDate||'';
   // 자산이동/취소는 수입/지출 합계에서 제외하지만 잔액에는 반영
-  snap.docs.forEach(d=>{
-    const t=d.data();
+  accTrx.forEach(t=>{
     if(baseDate&&(t.date||'')<baseDate)return; // 기준일 이전 거래 제외
     if(t.type==='취소')return; // 취소 거래는 잔액에 영향 없음
     // 2. 음수 amountOut(환불/취소성 지출)도 잔액에 정확히 반영
@@ -413,6 +421,7 @@ export async function updateAccBalance(accId){
 // ─────────────────────────────────────────────
 // 거래내역 정렬/순서
 // ─────────────────────────────────────────────
+// Phase 2 최적화: 배치 업데이트 사용
 export async function reorderTrx(fromId,toId){
   if(fromId===toId)return;
   const fromIdx=S.filteredTrx.findIndex(x=>x.id===fromId);
@@ -421,19 +430,22 @@ export async function reorderTrx(fromId,toId){
   const arr=[...S.filteredTrx];
   const [moved]=arr.splice(fromIdx,1);
   arr.splice(toIdx,0,moved);
-  const{doc,updateDoc}=fb();
   const base=(S.page-1)*S.pageSize;
   const pageItems=arr.slice(base,base+S.pageSize);
+  // 배치 업데이트할 항목 수집
+  const toUpdate=[];
   for(let i=0;i<pageItems.length;i++){
     const t=pageItems[i];
     const newOrder=base+i;
     if(t.sortOrder!==newOrder){
       t.sortOrder=newOrder;
-      await updateDoc(doc(fdb(),COLS.TRANSACTIONS,t.id),{sortOrder:newOrder});
+      toUpdate.push({col:COLS.TRANSACTIONS,docId:t.id,data:{sortOrder:newOrder}});
       const orig=S.transactions.find(x=>x.id===t.id);
       if(orig)orig.sortOrder=newOrder;
     }
   }
+  // 배치 업데이트 실행 (순차 호출 대신 1회 배치)
+  if(toUpdate.length)await batchUpdateDocs(toUpdate);
   S.filteredTrx=arr;
   renderHistoryTable(); renderPagination();
   toast('순서가 저장되었습니다.','success',1500);
