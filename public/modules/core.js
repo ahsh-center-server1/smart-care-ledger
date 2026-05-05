@@ -128,7 +128,10 @@ export function changeView(view) {
   const [t,s]=titles[view]||['',''];
   setText('view-title',t); setText('view-sub',s);
   if (view==='dashboard') Dash.renderDashboard();
-  if (view==='settings')  { Settings.renderManagement(); Settings.loadSettings(); }
+  if (view==='settings')  {
+    Settings.renderManagement(); Settings.loadSettings();
+    fetchBaseData().then(()=>{ Settings.renderManagement(); Settings.loadSettings(); }).catch(()=>{});
+  }
   if (view==='report')    { Rpt.loadReportList(); switchRptSubtab('monthly'); }
 }
 

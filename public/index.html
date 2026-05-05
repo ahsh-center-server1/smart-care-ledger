@@ -8,12 +8,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 
-  <!-- Firebase SDK (Firestore + Auth + Functions) -->
+  <!-- Firebase SDK (Firestore + Auth) -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
     import { getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
     import { getAuth, signInWithCustomToken, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
-    import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
 
     // ★ 본인 Firebase 설정으로 변경하세요
     const firebaseConfig = {
@@ -28,12 +27,10 @@
     const app = initializeApp(firebaseConfig);
     const db  = getFirestore(app);
     const auth = getAuth(app);
-    const functions = getFunctions(app, 'asia-northeast3');
 
     // 전역 노출
     window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy };
     window._fbAuth = { auth, signInWithCustomToken, signOut };
-    window._fbFunctions = { functions, httpsCallable };
 
     // Firestore 준비 완료 → 앱 초기화 트리거
     window._fbReady = true;

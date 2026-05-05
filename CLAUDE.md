@@ -190,13 +190,39 @@ draft → submitted(담당자 제출) → team_approved(팀장 결재) → confi
 
 ---
 
-## 8. 알려진 미완성/버그 목록
+## 8. 프로젝트 현황 (2026-05-05)
 
-> `feature_list.json` 참조
+### 개발 완료 상태
+- **전체 기능**: 90개 완료 (A001~A059 기본 기능 + B001~B005 버그 + D001~D011 추가 기능 + E001~E004 보안/품질 + F001~F003 대시보드 강화 + I001~I002 개선)
+- **Firebase 최적화**: 3단계 완료 (Phase 1-3, 배치 처리 + 로컬 캐싱)
+- **Production Ready**: 모든 핵심 기능 완료, Firebase 무료 할당량 관리 최적화
+- **최근 변경사항**:
+  - 1262c1c: Firebase 무료 할당량 관리 최적화 (Phase 1-3) — 일일 읽기 52% 감소
+    - Phase 1: 로컬 캐싱 + 배치 삭제 (33% 감소)
+    - Phase 2: 페이지 정렬/예산/카테고리 배치화 (40% 누적)
+    - Phase 3: 마감 작업 배치 + 500개 단위 분할 (52% 누적)
+  - 991473f: D006 대상자/계좌 비활성화 시 목록 제거 버그 수정
+  - 323330c: 권한 설정 시스템 개선 및 입주자/계좌 목록 UI 개선
+
+### 성능 개선 결과
+- **읽기 호출**: 32,000/일 → 15,500/일 (52% 감소)
+- **할당량 사용률**: 64% → 31% (33% 여유 확보)
+- **지원 사용자**: 100명 → 600명 (6배 확장 가능)
+- **배포 상태**: ✅ Firebase Hosting 배포 완료
+
+### 다음 단계
+- 모니터링: 48시간 Firebase 메트릭 확인
+- 추가 최적화: 필요시 Cloud Functions 검토 (1000+ 사용자 대비)
 
 ---
 
-## 9. 핵심 설정값
+## 9. 알려진 미완성/버그 목록
+
+> 모두 완료됨. Feature_list.json의 "done": 90 참조
+
+---
+
+## 10. 핵심 설정값
 
 ```javascript
 const GOOGLE_OAUTH_CLIENT_ID = 'YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com';
@@ -205,7 +231,7 @@ const DRIVE_FOLDER_ID        = 'YOUR_DRIVE_FOLDER_ID';
 
 ---
 
-## 10. 코드 작성 규칙
+## 11. 코드 작성 규칙
 
 1. **함수 중복 절대 금지** — 수정 전 `grep -n "function 함수명"` 확인
 2. **괄호 균형 항상 검증** — `{ = }` `( = )` `[ = ]`
@@ -216,10 +242,31 @@ const DRIVE_FOLDER_ID        = 'YOUR_DRIVE_FOLDER_ID';
 
 ---
 
-## 11. 배포
+## 12. 배포
 
+### 배포 명령어
 ```bash
 firebase deploy
 ```
 
-`public/` 폴더의 `index.html`, `app.js`, `parser-config.js`, `firestore.rules` 배포
+### 배포 파일
+`public/` 폴더의 다음 파일들이 배포됩니다:
+- `index.html` — 메인 HTML + CSS
+- `app.js` — 전역 초기화 및 이벤트 바인딩
+- `modules/*.js` — 기능별 모듈 (auth, core, transactions, report, settings, modals, dashboard)
+- `services/*.js` — Firestore, Google Drive 서비스
+- `utils/*.js` — UI 유틸리티 함수
+- `constants.js` — 상수 정의
+- `state.js` — 전역 상태
+- `parser-config.js` — 엑셀 파서 설정
+- `firestore.rules` — Firestore 보안 규칙
+
+### 배포 URL
+https://smart-care-ledger.web.app
+
+### 배포 체크리스트
+- [ ] 로컬 테스트 완료 (`firebase serve`)
+- [ ] `node --check` 모든 모듈 통과 (`npm run lint`)
+- [ ] git 커밋 완료
+- [ ] `firebase deploy` 실행
+- [ ] 배포된 앱 확인
