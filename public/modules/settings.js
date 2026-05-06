@@ -177,14 +177,6 @@ export async function loadSettings(){
     const btn=document.getElementById('btn-firebase-reset');
     if(btn){btn.dataset.bound='1';btn.addEventListener('click',executeFirebaseReset);}
   }
-  const cSel=document.getElementById('settings-client-sel');
-  if(cSel){
-    const prev=cSel.value;
-    cSel.innerHTML='<option value="">공통 (전체 입주자)</option>';
-    S.clients.forEach(c=>cSel.add(new Option(c.name,c.id)));
-    if(S.clients.some(c=>c.id===prev))cSel.value=prev;
-    if(!cSel.dataset.bound){cSel.dataset.bound='1';cSel.addEventListener('change',loadSettings);}
-  }
   const settingsClientId=document.getElementById('settings-client-sel')?.value||'';
   const expCats=[...new Set(S.categories.filter(c=>c.keyword===''&&c.type==='지출'&&(!c.clientId||c.clientId===settingsClientId)).map(c=>c.category))];
   const incCats=[...new Set(S.categories.filter(c=>c.keyword===''&&c.type==='수입'&&(!c.clientId||c.clientId===settingsClientId)).map(c=>c.category))];
@@ -214,16 +206,50 @@ export async function loadSettings(){
   // 이미 패널이 렌더링된 경우 재호출 금지 (편집 중 draft 초기화 방지)
   if(isResetAdmin&&!document.getElementById('btn-perm-save'))renderPermissionPanel();
   initBudgetSection();
+  // 탭 초기화
+  renderCategoryTarget();
+  initSettingsTabs();
 }
 
 // ─────────────────────────────────────────────
 // 카테고리 관리
 // ─────────────────────────────────────────────
+export function renderCategoryTarget(){
+  const el=document.getElementById('category-target-content');
+  if(!el)return;
+  const isAdmin=can('settings.reset');
+  const cSel=document.getElementById('settings-client-sel');
+  const clientId=cSel?.value||'';
+  const isCommon=clientId==='';
+  let html=`<div class="card" style="padding:20px;">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <span style="font-size:13px;font-weight:700;color:var(--sub);">📋 카테고리 관리 대상:</span>
+      <select id="settings-client-sel" class="input" style="width:180px;padding:7px 10px;">
+        <option value="">공통 (전체 입주자)</option>`;
+  S.clients.forEach(c=>html+=`<option value="${c.id}">${c.name}</option>`);
+  html+=`</select>
+      <span style="font-size:12px;color:var(--muted);">특정 입주자 선택 시 해당 입주자 전용 카테고리가 표시됩니다.</span>
+    </div>`;
+  if(isCommon&&!isAdmin){
+    html+=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:12px;margin-top:10px;font-size:13px;color:#dc2626;">
+      <strong>⚠️ 읽기 전용</strong><br/>공통 카테고리는 관리자만 추가, 수정, 삭제할 수 있습니다.
+    </div>`;
+  }
+  html+=`</div>`;
+  el.innerHTML=html;
+  const newSel=document.getElementById('settings-client-sel');
+  if(newSel&&!newSel.dataset.bound){
+    newSel.dataset.bound='1';
+    newSel.addEventListener('change',loadSettings);
+  }
+}
+
 export function renderCatTags(type){
   const id=type==='지출'?'exp-cat-tags':'inc-cat-tags';
   const el=document.getElementById(id); if(!el)return;
   const settingsClientId=S.settings.settingsClientId||'';
   const clientName=settingsClientId?S.clients.find(c=>c.id===settingsClientId)?.name||'':'';
+  const isAdmin=can('settings.reset');
   const allCats=S.categories
     .filter(c=>c.keyword===''&&c.type===type&&(!c.clientId||c.clientId===settingsClientId))
     .sort((a,b)=>(a.sortOrder??999)-(b.sortOrder??999));
@@ -235,37 +261,45 @@ export function renderCatTags(type){
     const cat=catDoc.category; if(seen.has(cat+(catDoc.clientId||'')))return; seen.add(cat+(catDoc.clientId||''));
     const color=colors[i%colors.length], tag=document.createElement('span');
     const isPersonal=!!catDoc.clientId;
+    const isCommon=!catDoc.clientId;
+    const isCommonReadOnly=isCommon&&!isAdmin;
     tag.className='cat-tag'; tag.style.borderColor=color+'44'; tag.style.backgroundColor=color+'15';
-    tag.style.cursor='grab'; tag.draggable=true; tag.dataset.docId=catDoc.id; tag.dataset.order=String(catDoc.sortOrder??i);
+    if(isCommonReadOnly)tag.style.opacity='0.6';
+    tag.style.cursor=isCommonReadOnly?'default':'grab';
+    tag.draggable=!isCommonReadOnly;
+    tag.dataset.docId=catDoc.id;
+    tag.dataset.order=String(catDoc.sortOrder??i);
     tag.innerHTML=`<span style="font-size:11px;color:#94a3b8;margin-right:2px;">⠿</span><span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-size:13px;font-weight:700;color:${color};">${cat}</span>`
       +(isPersonal?`<span style="font-size:10px;background:${color}22;color:${color};padding:1px 5px;border-radius:4px;margin-left:2px;">${clientName}</span>`:'')
-      +(cat==='확인필요'?'':`<button class="cat-del">×</button>`);
-    tag.addEventListener('dragstart',e=>{dragSrc=tag;tag.style.opacity='0.5';e.dataTransfer.effectAllowed='move';});
-    tag.addEventListener('dragend',()=>{tag.style.opacity='1';dragSrc=null;});
-    tag.addEventListener('dragover',e=>{e.preventDefault();tag.style.outline='2px solid var(--blue)';});
-    tag.addEventListener('dragleave',()=>tag.style.outline='');
-    tag.addEventListener('drop',async e=>{
-      e.preventDefault(); tag.style.outline='';
-      if(!dragSrc||dragSrc===tag)return;
-      const tags=[...el.querySelectorAll('.cat-tag')];
-      const fromIdx=tags.indexOf(dragSrc), toIdx=tags.indexOf(tag);
-      if(fromIdx<0||toIdx<0)return;
-      if(fromIdx<toIdx)el.insertBefore(dragSrc,tag.nextSibling); else el.insertBefore(dragSrc,tag);
-      // Phase 2 최적화: 배치 업데이트
-      const newTags=[...el.querySelectorAll('.cat-tag')];
-      const toUpdate=[];
-      for(let k=0;k<newTags.length;k++){
-        const docId=newTags[k].dataset.docId;
-        if(docId){
-          toUpdate.push({col:COLS.CATEGORIES,docId,data:{sortOrder:k}});
-          const cat=S.categories.find(c=>c.id===docId);
-          if(cat)cat.sortOrder=k;
+      +(cat==='확인필요'||isCommonReadOnly?'':`<button class="cat-del">×</button>`);
+    if(!isCommonReadOnly){
+      tag.addEventListener('dragstart',e=>{dragSrc=tag;tag.style.opacity='0.5';e.dataTransfer.effectAllowed='move';});
+      tag.addEventListener('dragend',()=>{tag.style.opacity='1';dragSrc=null;});
+      tag.addEventListener('dragover',e=>{e.preventDefault();tag.style.outline='2px solid var(--blue)';});
+      tag.addEventListener('dragleave',()=>tag.style.outline='');
+      tag.addEventListener('drop',async e=>{
+        e.preventDefault(); tag.style.outline='';
+        if(!dragSrc||dragSrc===tag)return;
+        const tags=[...el.querySelectorAll('.cat-tag')];
+        const fromIdx=tags.indexOf(dragSrc), toIdx=tags.indexOf(tag);
+        if(fromIdx<0||toIdx<0)return;
+        if(fromIdx<toIdx)el.insertBefore(dragSrc,tag.nextSibling); else el.insertBefore(dragSrc,tag);
+        // Phase 2 최적화: 배치 업데이트
+        const newTags=[...el.querySelectorAll('.cat-tag')];
+        const toUpdate=[];
+        for(let k=0;k<newTags.length;k++){
+          const docId=newTags[k].dataset.docId;
+          if(docId){
+            toUpdate.push({col:COLS.CATEGORIES,docId,data:{sortOrder:k}});
+            const cat=S.categories.find(c=>c.id===docId);
+            if(cat)cat.sortOrder=k;
+          }
         }
-      }
-      if(toUpdate.length)await batchUpdateDocs(toUpdate);
-      toast('순서 저장됨','success',1500);
-    });
-    if(cat!=='확인필요')tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${cat}" 카테고리를 삭제하시겠습니까?`,()=>deleteCategory(type,cat,catDoc.clientId||''),'삭제'));
+        if(toUpdate.length)await batchUpdateDocs(toUpdate);
+        toast('순서 저장됨','success',1500);
+      });
+    }
+    if(cat!=='확인필요'&&!isCommonReadOnly)tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${cat}" 카테고리를 삭제하시겠습니까?`,()=>deleteCategory(type,cat,catDoc.clientId||''),'삭제'));
     el.appendChild(tag);
   });
 }
@@ -293,6 +327,10 @@ export function updateRuleCatSel(){
   cats.forEach(c=>sel.add(new Option(c,c)));
 }
 export async function addCategory(type,clientId=''){
+  if(!clientId&&!can('settings.reset')){
+    toast('공통 카테고리는 관리자만 추가할 수 있습니다.','error');
+    return;
+  }
   const inputId=type==='지출'?'new-exp-cat':'new-inc-cat';
   const input=document.getElementById(inputId);
   const name=(input?.value||'').trim();
@@ -309,6 +347,10 @@ export async function addCategory(type,clientId=''){
   toast(`"${name}" 추가됨`,'success');
 }
 export async function deleteCategory(type,name,clientId=''){
+  if(!clientId&&!can('settings.reset')){
+    toast('공통 카테고리는 관리자만 삭제할 수 있습니다.','error');
+    return;
+  }
   const{getDocs,collection,query,where,doc,deleteDoc}=fb();
   const snap=await getDocs(query(collection(fdb(),COLS.CATEGORIES),where('keyword','==',''),where('type','==',type),where('category','==',name)));
   for(const d of snap.docs){
@@ -629,6 +671,42 @@ export function renderPermissionPanel(){
   }
   window._permSetRole=(r)=>{activeRole=r;renderPanel();};
   renderPanel();
+}
+
+// ─────────────────────────────────────────────
+// 탭 전환 함수
+// ─────────────────────────────────────────────
+export function initSettingsTabs(){
+  document.querySelectorAll('.settings-tab-btn').forEach(btn=>{
+    btn.addEventListener('click',e=>{
+      const tab=e.target.dataset.tab;
+      switchSettingsTab(tab);
+    });
+  });
+  document.querySelectorAll('.category-subtab-btn').forEach(btn=>{
+    btn.addEventListener('click',e=>{
+      const subtab=e.target.dataset.subtab;
+      switchCategorySubtab(subtab);
+    });
+  });
+}
+
+export function switchSettingsTab(tab){
+  if(['archive','permissions'].includes(tab)&&!can('settings.reset')){
+    alert('관리자만 접근 가능합니다.');
+    return;
+  }
+  document.querySelectorAll('.settings-tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`[data-tab="${tab}"]`)?.classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+  document.getElementById(`${tab}-tab-content`)?.classList.add('active');
+}
+
+export function switchCategorySubtab(subtab){
+  document.querySelectorAll('.category-subtab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`[data-subtab="${subtab}"]`)?.classList.add('active');
+  document.querySelectorAll('.subtab-content').forEach(c=>c.classList.remove('active'));
+  document.getElementById(`category-${subtab}-content`)?.classList.add('active');
 }
 
 // ─────────────────────────────────────────────

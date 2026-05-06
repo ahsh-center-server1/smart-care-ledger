@@ -244,6 +244,26 @@
       #dashboard-actions{flex-wrap:wrap;}
       .dash-action-btn{flex:1 1 calc(33% - 8px);min-width:70px;padding:12px 4px;}
     }
+    /* 설정 탭 스타일 */
+    .settings-tab-buttons{display:flex;gap:10px;border-bottom:1px solid var(--border);margin-bottom:20px;overflow-x:auto;padding-bottom:10px;}
+    .settings-tab-btn{padding:10px 20px;background:none;border:none;border-bottom:3px solid transparent;cursor:pointer;font-weight:600;color:#6b7280;transition:0.3s;font-size:14px;white-space:nowrap;}
+    .settings-tab-btn.active{color:var(--blue);border-bottom-color:var(--blue);}
+    .settings-tab-btn:hover{color:#374151;}
+    .settings-tab-btn.admin-only{color:#dc2626;}
+    .tab-content{display:none;}
+    .tab-content.active{display:block;}
+    /* 목록 탭 그리드 */
+    .list-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;}
+    @media(max-width:1024px){
+      .list-grid{grid-template-columns:1fr;}
+    }
+    .list-column{border:1px solid var(--border);border-radius:8px;padding:20px;}
+    /* 카테고리 서브탭 */
+    .category-subtabs{display:flex;gap:10px;border-bottom:1px solid var(--border);margin-bottom:20px;padding-bottom:10px;}
+    .category-subtab-btn{padding:8px 16px;background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;color:#6b7280;transition:0.3s;font-weight:600;font-size:14px;}
+    .category-subtab-btn.active{color:var(--blue);border-bottom-color:var(--blue);}
+    .subtab-content{display:none;}
+    .subtab-content.active{display:block;}
   </style>
 </head>
 <body>
@@ -647,161 +667,194 @@
 
         <!-- 설정 (관리 통합) -->
         <div id="view-settings" style="display:none;" class="animate-in">
+          <!-- 설정 탭 래퍼 -->
           <div style="display:flex;flex-direction:column;gap:14px;">
-
-            <!-- 직원 관리 (관리자/팀장/센터장만) -->
-            <div id="admin-staff" style="display:none;" class="card" style="padding:20px;">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">👤</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">직원 관리</h3></div>
-                <div style="display:flex;gap:8px;">
-                  <button class="btn-sub" id="btn-bulk-staff" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄 등록</button>
-                  <button class="btn" id="btn-add-staff" style="font-size:13px;padding:7px 14px;">+ 직원 등록</button>
-                </div>
-              </div>
-              <div id="staff-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;"></div>
+            <!-- 탭 버튼 -->
+            <div class="settings-tab-buttons">
+              <button class="settings-tab-btn active" data-tab="list">목록</button>
+              <button class="settings-tab-btn" data-tab="category">카테고리</button>
+              <button class="settings-tab-btn" data-tab="fixed">고정 수입/지출</button>
+              <button class="settings-tab-btn" data-tab="budget">예산 관리</button>
+              <button class="settings-tab-btn admin-only" data-tab="archive">데이터 초기화/마감</button>
+              <button class="settings-tab-btn admin-only" data-tab="permissions">권한</button>
             </div>
 
-            <!-- 입주자/계좌 관리 -->
-            <div class="card" style="padding:20px;">
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
-                <div>
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                    <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏠</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">입주자 목록</h3></div>
-                    <div style="display:flex;gap:8px;">
-                      <button class="btn-sub" id="btn-bulk-client" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄 등록</button>
-                      <button class="btn" id="btn-add-client" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+            <!-- 탭 콘텐츠 -->
+            <div class="settings-tab-content">
+              <!-- 목록 탭 (3열 그리드) -->
+              <div id="list-tab-content" class="tab-content active">
+                <div class="list-grid">
+                  <!-- 직원 목록 -->
+                  <div class="list-column">
+                    <div id="admin-staff" style="display:none;">
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">👤</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">직원 목록</h3></div>
+                        <div style="display:flex;gap:8px;">
+                          <button class="btn-sub" id="btn-bulk-staff" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄</button>
+                          <button class="btn" id="btn-add-staff" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+                        </div>
+                      </div>
+                      <div id="staff-list" style="display:flex;flex-direction:column;gap:8px;"></div>
                     </div>
                   </div>
-                  <div id="client-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+                  <!-- 입주자 목록 -->
+                  <div class="list-column">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                      <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏠</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">입주자 목록</h3></div>
+                      <div style="display:flex;gap:8px;">
+                        <button class="btn-sub" id="btn-bulk-client" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄</button>
+                        <button class="btn" id="btn-add-client" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+                      </div>
+                    </div>
+                    <div id="client-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+                  </div>
+                  <!-- 계좌 관리 -->
+                  <div class="list-column">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                      <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏦</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">계좌 관리</h3></div>
+                      <div style="display:flex;gap:8px;">
+                        <button class="btn-sub" id="btn-bulk-account" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄</button>
+                        <button class="btn" id="btn-add-account" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+                      </div>
+                    </div>
+                    <div id="account-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+                  </div>
                 </div>
-                <div>
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                    <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏦</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">계좌 목록</h3></div>
-                    <div style="display:flex;gap:8px;">
-                      <button class="btn-sub" id="btn-bulk-account" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄 등록</button>
-                      <button class="btn" id="btn-add-account" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+              </div>
+
+              <!-- 카테고리 탭 (서브탭) -->
+              <div id="category-tab-content" class="tab-content">
+                <div class="category-subtabs">
+                  <button class="category-subtab-btn active" data-subtab="target">관리 대상</button>
+                  <button class="category-subtab-btn" data-subtab="expense">지출</button>
+                  <button class="category-subtab-btn" data-subtab="income">수입</button>
+                  <button class="category-subtab-btn" data-subtab="rules">규칙</button>
+                </div>
+                <div class="category-subtab-contents">
+                  <!-- 카테고리 관리 대상 -->
+                  <div id="category-target-content" class="subtab-content active"></div>
+                  <!-- 지출 카테고리 -->
+                  <div id="category-expense-content" class="subtab-content">
+                    <div class="card" style="padding:20px;">
+                      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><span style="font-size:18px;">🗂️</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">지출 카테고리</h3></div>
+                      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">지출 카테고리를 추가/삭제합니다.</p>
+                      <div style="display:flex;gap:8px;margin-bottom:12px;">
+                        <input id="new-exp-cat" class="input" placeholder="새 카테고리 이름" maxlength="20" style="flex:1;">
+                        <button class="btn" id="btn-add-exp-cat" style="padding:9px 16px;font-size:13px;">추가</button>
+                      </div>
+                      <div id="exp-cat-tags" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
                     </div>
                   </div>
-                  <div id="account-list" style="display:flex;flex-direction:column;gap:8px;"></div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 입주자별 카테고리 선택 -->
-            <div class="card" style="padding:16px 20px;">
-              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                <span style="font-size:13px;font-weight:700;color:var(--sub);">📋 카테고리 관리 대상:</span>
-                <select id="settings-client-sel" class="input" style="width:180px;padding:7px 10px;">
-                  <option value="">공통 (전체 입주자)</option>
-                </select>
-                <span style="font-size:12px;color:var(--muted);">특정 입주자 선택 시 해당 입주자 전용 카테고리가 표시됩니다.</span>
-              </div>
-            </div>
-            <div class="card" style="padding:20px;">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><span style="font-size:18px;">🗂️</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">지출 카테고리</h3></div>
-              <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">지출 카테고리를 추가/삭제합니다. 입주자를 선택하면 해당 입주자 전용 카테고리를 추가할 수 있습니다.</p>
-              <div style="display:flex;gap:8px;margin-bottom:12px;">
-                <input id="new-exp-cat" class="input" placeholder="새 카테고리 이름" maxlength="20" style="flex:1;">
-                <button class="btn" id="btn-add-exp-cat" style="padding:9px 16px;font-size:13px;">추가</button>
-              </div>
-              <div id="exp-cat-tags" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
-            </div>
-            <div class="card" style="padding:20px;">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><span style="font-size:18px;">💰</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">수입 카테고리</h3></div>
-              <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">수입 카테고리를 추가/삭제합니다.</p>
-              <div style="display:flex;gap:8px;margin-bottom:12px;">
-                <input id="new-inc-cat" class="input" placeholder="새 카테고리 이름" maxlength="20" style="flex:1;">
-                <button class="btn" id="btn-add-inc-cat" style="padding:9px 16px;font-size:13px;">추가</button>
-              </div>
-              <div id="inc-cat-tags" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
-            </div>
-            <div class="card" style="padding:20px;">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">🏷️</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">자동 분류 규칙</h3></div>
-                <button id="btn-reset-cats" style="font-size:12px;font-weight:700;color:var(--muted);border:1px solid var(--border);padding:5px 10px;border-radius:7px;background:transparent;cursor:pointer;">기본값 초기화</button>
-              </div>
-              <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">키워드 포함 시 자동 카테고리 분류됩니다.</p>
-              <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-                <input id="new-rule-kw" class="input" placeholder="키워드" maxlength="20" style="flex:1;min-width:100px;">
-                <select id="new-rule-type" class="input" style="width:90px;padding:8px 10px;"><option value="지출">지출</option><option value="수입">수입</option></select>
-                <select id="new-rule-cat" class="input" style="width:120px;padding:8px 10px;"></select>
-                <button class="btn" id="btn-add-rule" style="padding:9px 16px;font-size:13px;">추가</button>
-              </div>
-              <div id="rule-tags" style="display:flex;flex-wrap:wrap;gap:8px;max-height:200px;overflow-y:auto;"></div>
-            </div>
-            <!-- ⑩ 고정 수입/지출 관리 -->
-            <div class="card" style="padding:20px;">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">📌</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">고정 수입/지출</h3></div>
-                <button class="btn" id="btn-add-fixed-item" style="font-size:13px;padding:7px 14px;">+ 항목 추가</button>
-              </div>
-              <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">입주자별 매월 고정으로 발생하는 수입/지출을 등록합니다. 거래내역에서 "고정항목 입력" 버튼으로 일괄 입력할 수 있습니다.</p>
-              <div style="margin-bottom:8px;"><label class="label">관리 대상 입주자</label><select id="fixed-client-sel" class="input" style="width:200px;padding:7px 10px;"><option value="">입주자를 선택하세요</option></select></div>
-              <div id="fixed-items-list" style="display:flex;flex-direction:column;gap:8px;"></div>
-            </div>
-
-            <!-- 예산 관리 -->
-            <div id="budget-section" class="card" style="padding:20px;">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-                <span style="font-size:18px;">💰</span>
-                <h3 style="font-size:15px;font-weight:800;color:var(--text);">연간 예산 관리</h3>
-              </div>
-              <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">입주자별 연간 지출 예산을 카테고리별로 설정합니다. 연간 통계에서 예산 대비 실적을 확인할 수 있습니다.</p>
-              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
-                <div><label class="label">입주자</label><select id="budget-client-sel" class="input" style="width:160px;padding:7px 10px;"><option value="">선택</option></select></div>
-                <div><label class="label">연도</label><select id="budget-year-sel" class="input" style="width:110px;padding:7px 10px;"></select></div>
-                <button id="btn-budget-load" class="btn-sub" style="color:var(--blue);border-color:#bfdbfe;">불러오기</button>
-              </div>
-              <div id="budget-form" style="display:none;">
-                <div id="budget-cat-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;"></div>
-                <button id="btn-budget-save" class="btn" style="padding:10px 24px;">💾 예산 저장</button>
-              </div>
-            </div>
-
-            <!-- 데이터 마감 -->
-            <div id="archive-section" style="display:none;" class="card" style="padding:20px;border:1px solid #fecaca;">
-              <div style="border:1px solid #fecaca;border-radius:var(--r2);padding:20px;">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-                  <span style="font-size:18px;">📦</span>
-                  <h3 style="font-size:15px;font-weight:800;color:var(--text);">연도별 데이터 마감</h3>
-                  <span style="font-size:11px;font-weight:700;color:var(--red);border:1px solid #fecaca;background:#fff1f2;padding:2px 8px;border-radius:99px;">관리자 전용</span>
-                </div>
-                <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">마감 연도 거래를 Archive_YYYY 컬렉션에 백업하고 계좌 기초잔액을 업데이트합니다. <span style="color:var(--red);font-weight:700;">되돌릴 수 없습니다.</span></p>
-                <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:16px;">
-                  <div><label class="label">마감할 연도</label><select id="archive-year" class="input" style="width:130px;padding:8px 12px;"></select></div>
-                  <button id="btn-archive" style="font-size:13px;font-weight:700;color:var(--red);border:1px solid #fecaca;padding:9px 16px;border-radius:9px;background:transparent;cursor:pointer;">📦 마감 실행</button>
-                </div>
-                <div>
-                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                    <span style="font-size:13px;font-weight:700;color:var(--sub);">마감 이력</span>
-                    <button id="btn-archive-refresh" style="font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;">↺</button>
+                  <!-- 수입 카테고리 -->
+                  <div id="category-income-content" class="subtab-content">
+                    <div class="card" style="padding:20px;">
+                      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><span style="font-size:18px;">💰</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">수입 카테고리</h3></div>
+                      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">수입 카테고리를 추가/삭제합니다.</p>
+                      <div style="display:flex;gap:8px;margin-bottom:12px;">
+                        <input id="new-inc-cat" class="input" placeholder="새 카테고리 이름" maxlength="20" style="flex:1;">
+                        <button class="btn" id="btn-add-inc-cat" style="padding:9px 16px;font-size:13px;">추가</button>
+                      </div>
+                      <div id="inc-cat-tags" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+                    </div>
                   </div>
-                  <div id="archive-history"></div>
+                  <!-- 자동 분류 규칙 -->
+                  <div id="category-rules-content" class="subtab-content">
+                    <div class="card" style="padding:20px;">
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">🏷️</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">자동 분류 규칙</h3></div>
+                        <button id="btn-reset-cats" style="font-size:12px;font-weight:700;color:var(--muted);border:1px solid var(--border);padding:5px 10px;border-radius:7px;background:transparent;cursor:pointer;">기본값 초기화</button>
+                      </div>
+                      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">키워드 포함 시 자동 카테고리 분류됩니다.</p>
+                      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                        <input id="new-rule-kw" class="input" placeholder="키워드" maxlength="20" style="flex:1;min-width:100px;">
+                        <select id="new-rule-type" class="input" style="width:90px;padding:8px 10px;"><option value="지출">지출</option><option value="수입">수입</option></select>
+                        <select id="new-rule-cat" class="input" style="width:120px;padding:8px 10px;"></select>
+                        <button class="btn" id="btn-add-rule" style="padding:9px 16px;font-size:13px;">추가</button>
+                      </div>
+                      <div id="rule-tags" style="display:flex;flex-wrap:wrap;gap:8px;max-height:200px;overflow-y:auto;"></div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-            <!-- Firebase 초기화 (관리자 전용) -->
-            <div id="reset-section" style="display:none;margin-top:20px;">
-              <div style="border:2px solid #dc2626;border-radius:var(--r2);padding:20px;">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-                  <span style="font-size:18px;">🗑️</span>
-                  <h3 style="font-size:15px;font-weight:800;color:#dc2626;">Firebase 전체 초기화</h3>
-                  <span style="font-size:11px;font-weight:700;color:var(--red);border:1px solid #fecaca;background:#fff1f2;padding:2px 8px;border-radius:99px;">관리자 전용</span>
+
+              <!-- 고정 수입/지출 탭 -->
+              <div id="fixed-tab-content" class="tab-content">
+                <div class="card" style="padding:20px;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">📌</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">고정 수입/지출</h3></div>
+                    <button class="btn" id="btn-add-fixed-item" style="font-size:13px;padding:7px 14px;">+ 항목 추가</button>
+                  </div>
+                  <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">입주자별 매월 고정으로 발생하는 수입/지출을 등록합니다. 거래내역에서 "고정항목 입력" 버튼으로 일괄 입력할 수 있습니다.</p>
+                  <div style="margin-bottom:8px;"><label class="label">관리 대상 입주자</label><select id="fixed-client-sel" class="input" style="width:200px;padding:7px 10px;"><option value="">입주자를 선택하세요</option></select></div>
+                  <div id="fixed-items-list" style="display:flex;flex-direction:column;gap:8px;"></div>
                 </div>
-                <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">모든 거래, 계좌, 입주자, 보고서 데이터를 삭제합니다. <span style="color:#dc2626;font-weight:700;">절대 되돌릴 수 없습니다.</span></p>
-                <button id="btn-firebase-reset" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;">🗑️ 전체 초기화</button>
               </div>
-            </div>
-            <!-- 권한 관리 (관리자 전용) -->
-            <div id="permission-section" style="display:none;margin-top:20px;">
-              <div style="border:1px solid #e2e8f0;border-radius:var(--r2);padding:20px;">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-                  <span style="font-size:18px;">🔐</span>
-                  <h3 style="font-size:15px;font-weight:800;color:var(--text);">역할별 권한 관리</h3>
-                  <span style="font-size:11px;font-weight:700;color:#7c3aed;border:1px solid #ddd6fe;background:#f5f3ff;padding:2px 8px;border-radius:99px;">관리자 전용</span>
+
+              <!-- 예산 관리 탭 -->
+              <div id="budget-tab-content" class="tab-content">
+                <div id="budget-section" class="card" style="padding:20px;">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                    <span style="font-size:18px;">💰</span>
+                    <h3 style="font-size:15px;font-weight:800;color:var(--text);">연간 예산 관리</h3>
+                  </div>
+                  <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">입주자별 연간 지출 예산을 카테고리별로 설정합니다. 연간 통계에서 예산 대비 실적을 확인할 수 있습니다.</p>
+                  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+                    <div><label class="label">입주자</label><select id="budget-client-sel" class="input" style="width:160px;padding:7px 10px;"><option value="">선택</option></select></div>
+                    <div><label class="label">연도</label><select id="budget-year-sel" class="input" style="width:110px;padding:7px 10px;"></select></div>
+                    <button id="btn-budget-load" class="btn-sub" style="color:var(--blue);border-color:#bfdbfe;">불러오기</button>
+                  </div>
+                  <div id="budget-form" style="display:none;">
+                    <div id="budget-cat-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;"></div>
+                    <button id="btn-budget-save" class="btn" style="padding:10px 24px;">💾 예산 저장</button>
+                  </div>
                 </div>
-                <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">역할별로 기능 접근 권한을 설정합니다. 변경 후 저장하면 다음 로그인부터 적용됩니다.</p>
-                <div id="permission-panel-content"></div>
+              </div>
+
+              <!-- 데이터 초기화/마감 탭 -->
+              <div id="archive-tab-content" class="tab-content">
+                <!-- 데이터 마감 -->
+                <div style="background:#fef2f2;border:2px solid #dc2626;border-radius:8px;padding:20px;margin:0 0 20px 0;">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                    <span style="font-size:20px;">📦</span>
+                    <h3 style="margin:0;color:#dc2626;font-size:15px;font-weight:800;">연도별 데이터 마감</h3>
+                    <span style="font-size:11px;font-weight:700;color:#fff;background:#dc2626;padding:3px 8px;border-radius:99px;margin-left:auto;">관리자 전용</span>
+                  </div>
+                  <p style="margin:0 0 15px 0;color:#7f1d1d;font-size:14px;">마감 연도 거래를 Archive_YYYY 컬렉션에 백업하고 계좌 기초잔액을 업데이트합니다. <span style="color:#dc2626;font-weight:700;">되돌릴 수 없습니다.</span></p>
+                  <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:16px;">
+                    <div><label class="label">마감할 연도</label><select id="archive-year" class="input" style="width:130px;padding:8px 12px;"></select></div>
+                    <button id="btn-archive" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;">📦 마감 실행</button>
+                  </div>
+                  <div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                      <span style="font-size:13px;font-weight:700;color:var(--sub);">마감 이력</span>
+                      <button id="btn-archive-refresh" style="font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;">↺</button>
+                    </div>
+                    <div id="archive-history"></div>
+                  </div>
+                </div>
+                <!-- Firebase 초기화 -->
+                <div style="background:#fef2f2;border:2px solid #dc2626;border-radius:8px;padding:20px;margin:0 0 20px 0;">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                    <span style="font-size:20px;">🗑️</span>
+                    <h3 style="margin:0;color:#dc2626;font-size:15px;font-weight:800;">Firebase 전체 초기화</h3>
+                    <span style="font-size:11px;font-weight:700;color:#fff;background:#dc2626;padding:3px 8px;border-radius:99px;margin-left:auto;">관리자 전용</span>
+                  </div>
+                  <p style="margin:0 0 15px 0;color:#7f1d1d;font-size:14px;">모든 거래, 계좌, 입주자, 보고서 데이터를 삭제합니다. <span style="color:#dc2626;font-weight:700;">절대 되돌릴 수 없습니다.</span></p>
+                  <button id="btn-firebase-reset" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;">🗑️ 전체 초기화</button>
+                </div>
+              </div>
+
+              <!-- 권한 탭 -->
+              <div id="permissions-tab-content" class="tab-content">
+                <div style="background:#fef2f2;border:2px solid #dc2626;border-radius:8px;padding:20px;">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                    <span style="font-size:20px;">👥</span>
+                    <h3 style="margin:0;color:#dc2626;font-size:15px;font-weight:800;">역할별 권한 관리</h3>
+                    <span style="font-size:11px;font-weight:700;color:#fff;background:#dc2626;padding:3px 8px;border-radius:99px;margin-left:auto;">관리자 전용</span>
+                  </div>
+                  <p style="margin:0 0 15px 0;color:#7f1d1d;font-size:14px;">역할별로 기능 접근 권한을 설정합니다. 변경 후 저장하면 다음 로그인부터 적용됩니다.</p>
+                  <div id="permission-panel-content"></div>
+                </div>
               </div>
             </div>
           </div>
