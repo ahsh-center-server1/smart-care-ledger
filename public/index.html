@@ -736,7 +736,7 @@
                   <!-- 지출 카테고리 -->
                   <div id="category-expense-content" class="subtab-content">
                     <div class="card" style="padding:20px;">
-                      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><span style="font-size:18px;">🗂️</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">지출 카테고리</h3></div>
+                      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><span style="font-size:18px;">🗂️</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">지출 카테고리</h3><span id="exp-cat-target" style="font-size:12px;font-weight:700;color:#fff;background:#2563eb;padding:2px 10px;border-radius:99px;"></span></div>
                       <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">지출 카테고리를 추가/삭제합니다.</p>
                       <div style="display:flex;gap:8px;margin-bottom:12px;">
                         <input id="new-exp-cat" class="input" placeholder="새 카테고리 이름" maxlength="20" style="flex:1;">
@@ -748,7 +748,7 @@
                   <!-- 수입 카테고리 -->
                   <div id="category-income-content" class="subtab-content">
                     <div class="card" style="padding:20px;">
-                      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><span style="font-size:18px;">💰</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">수입 카테고리</h3></div>
+                      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;"><span style="font-size:18px;">💰</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">수입 카테고리</h3><span id="inc-cat-target" style="font-size:12px;font-weight:700;color:#fff;background:#059669;padding:2px 10px;border-radius:99px;"></span></div>
                       <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">수입 카테고리를 추가/삭제합니다.</p>
                       <div style="display:flex;gap:8px;margin-bottom:12px;">
                         <input id="new-inc-cat" class="input" placeholder="새 카테고리 이름" maxlength="20" style="flex:1;">
@@ -761,7 +761,7 @@
                   <div id="category-rules-content" class="subtab-content">
                     <div class="card" style="padding:20px;">
                       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                        <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">🏷️</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">자동 분류 규칙</h3></div>
+                        <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">🏷️</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">자동 분류 규칙</h3><span id="rule-target" style="font-size:12px;font-weight:700;color:#fff;background:#7c3aed;padding:2px 10px;border-radius:99px;"></span></div>
                         <button id="btn-reset-cats" style="font-size:12px;font-weight:700;color:var(--muted);border:1px solid var(--border);padding:5px 10px;border-radius:7px;background:transparent;cursor:pointer;">기본값 초기화</button>
                       </div>
                       <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">키워드 포함 시 자동 카테고리 분류됩니다.</p>
