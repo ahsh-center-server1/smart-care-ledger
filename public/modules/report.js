@@ -447,7 +447,12 @@ export async function renderRptBankStatements(clientId,year,month){
     gallery.appendChild(cell);
   });
   if(uploadBtn){
-    uploadBtn.onclick=()=>openBankStatementFromReport(clientId,year,month);
+    if(can('bankbook.upload')){
+      uploadBtn.style.display='';
+      uploadBtn.onclick=()=>openBankStatementFromReport(clientId,year,month);
+    } else {
+      uploadBtn.style.display='none';
+    }
   }
   const viewBtn=document.getElementById('btn-view-bank-stmts');
   if(viewBtn){

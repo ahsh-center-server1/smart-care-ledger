@@ -35,17 +35,49 @@ export function renderManagement(){
   const btnAddAccount=document.getElementById('btn-add-account');
   if(btnAddClient)btnAddClient.style.display=isAdmin?'':'none';
   if(btnAddAccount)btnAddAccount.style.display=isAdmin?'':'none';
-  const sl=document.getElementById('staff-list'); if(sl)sl.innerHTML='';
-  if(isAdmin&&sl)S.users.forEach(u=>{
-    const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;';
-    d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:6px;"><button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button></div>`;
-    sl.appendChild(d);
+  // 일괄 등록 버튼 표시 및 이벤트 바인딩 (관리자 전용)
+  ['bulk-staff','bulk-client','bulk-account'].forEach(key=>{
+    const btn=document.getElementById('btn-'+key);
+    if(btn){
+      btn.style.display=isAdmin?'':'none';
+      if(!btn.dataset.bound){
+        btn.dataset.bound='1';
+        btn.addEventListener('click',()=>openModal(key));
+      }
+    }
   });
+  const sl=document.getElementById('staff-list'); if(sl)sl.innerHTML='';
+  if(isAdmin&&sl){
+    // 승인 대기 직원 (노란 카드)
+    const pendingUsers=S.users.filter(u=>u.approved===false);
+    if(pendingUsers.length){
+      const header=document.createElement('div');
+      header.style.cssText='font-size:12px;font-weight:700;color:#92400e;margin-bottom:6px;padding:6px 10px;background:#fef3c7;border-radius:8px;border:1px solid #fde68a;';
+      header.textContent=`⏳ 승인 대기 ${pendingUsers.length}명`;
+      sl.appendChild(header);
+      pendingUsers.forEach(u=>{
+        const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;background:#fffbeb;border-color:#fde68a;';
+        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${u.role||'입력자'} ${u.team?'· '+u.team:''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div><div style="display:flex;gap:6px;"><button class="btn" onclick="approveStaff('${escAttr(u.id)}')" style="font-size:12px;padding:5px 12px;background:#10b981;border:none;">✓ 승인</button></div>`;
+        sl.appendChild(d);
+      });
+      const divider=document.createElement('div'); divider.style.cssText='height:1px;background:var(--border);margin:8px 0;'; sl.appendChild(divider);
+    }
+    // 승인된 직원
+    S.users.filter(u=>u.approved!==false).forEach(u=>{
+      const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;';
+      d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:6px;"><button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      sl.appendChild(d);
+    });
+  }
 
   // 관리자: 전체 목록 / 비관리자: 담당 입주자만 (비활성 포함) — 입주자·계좌 공통 기준
   const myUserId=String(S.user?.userId||'');
   const visibleClients=(S.allClients?.length?S.allClients:S.clients).filter(c=>
-    isAdmin||String(c.userIds||'').split(',').map(s=>s.trim()).includes(myUserId)
+    isAdmin||(()=>{
+      const ids=String(c.userIds||'').split(',').map(s=>s.trim());
+      const myDocId=String(S.users.find(u=>String(u.userId)===myUserId)?.id||'');
+      return ids.includes(myUserId)||(myDocId&&ids.includes(myDocId));
+    })()
   );
   const visibleClientIds=new Set(visibleClients.map(c=>c.id));
 
@@ -598,3 +630,15 @@ export function renderPermissionPanel(){
   window._permSetRole=(r)=>{activeRole=r;renderPanel();};
   renderPanel();
 }
+
+// ─────────────────────────────────────────────
+// 회원가입 승인 (inline onclick에서 호출)
+// ─────────────────────────────────────────────
+window.approveStaff = async (docId) => {
+  const { doc, updateDoc } = fb();
+  try {
+    await updateDoc(doc(fdb(), COLS.USERS, docId), { approved: true });
+    toast('승인 완료. 해당 직원이 로그인 가능합니다.', 'success');
+    await fetchBaseData(); renderManagement();
+  } catch(e) { toast('승인 오류: '+e.message, 'error'); }
+};

@@ -38,6 +38,9 @@ export async function handleLogin() {
     if (userData.password !== pw) {
       throw new Error('아이디 또는 비밀번호가 올바르지 않습니다.');
     }
+    if (userData.approved === false) {
+      throw new Error('관리자 승인 대기 중입니다. 담당자에게 문의하세요.');
+    }
 
     // 세션에 사용자 정보 저장
     S.user = { userId: id, name: userData.name, role: userData.role, team: userData.team };
@@ -67,7 +70,11 @@ export async function _enterApp() {
     document.querySelectorAll('.nav-item[data-view="report"],.nav-item[data-view="settings"]').forEach(el=>{
       el.style.display=isInputOnly?'none':'';
     });
-    ['btn-h-excel','btn-h-receipt-print','btn-trx-view-toggle','btn-bulk-del','btn-h-fixed'].forEach(id=>{
+    // 파일 업로드는 excel.upload 권한으로 직접 제어
+    const elExcel=document.getElementById('btn-h-excel');
+    if(elExcel)elExcel.style.display=can('excel.upload')?'':'none';
+    // 나머지 입력자 제한 버튼
+    ['btn-h-receipt-print','btn-trx-view-toggle','btn-bulk-del','btn-h-fixed'].forEach(id=>{
       const el=document.getElementById(id);
       if(el)el.style.display=isInputOnly?'none':'';
     });
@@ -97,6 +104,49 @@ export function handleLogout() {
   document.getElementById('login-pw').value='';
   document.getElementById('login-err').style.display='none';
   document.getElementById('admin-staff').style.display='none';
+}
+
+// ─────────────────────────────────────────────
+// 회원가입
+// ─────────────────────────────────────────────
+export async function handleSignup() {
+  const name = (document.getElementById('signup-name').value||'').trim();
+  const id   = (document.getElementById('signup-id').value||'').trim();
+  const pw   = (document.getElementById('signup-pw').value||'').trim();
+  const team = (document.getElementById('signup-team').value||'').trim();
+  const errEl = document.getElementById('login-err');
+  errEl.style.display='none';
+
+  if (!name) { errEl.textContent='이름을 입력하세요.'; errEl.style.display='block'; return; }
+  if (!id)   { errEl.textContent='아이디를 입력하세요.'; errEl.style.display='block'; return; }
+  if (!/^[a-zA-Z0-9_]+$/.test(id)) { errEl.textContent='아이디는 영문·숫자·밑줄(_)만 사용 가능합니다.'; errEl.style.display='block'; return; }
+  if (!pw)   { errEl.textContent='비밀번호를 입력하세요.'; errEl.style.display='block'; return; }
+
+  const btn = document.getElementById('signup-btn');
+  btn.disabled=true; btn.textContent='처리 중...';
+  try {
+    const { getDocs, collection, query, where, addDoc } = fb();
+    // 아이디 중복 체크
+    const dup = await getDocs(query(collection(fdb(), COLS.USERS), where('userId','==',id)));
+    if (!dup.empty) throw new Error('이미 사용 중인 아이디입니다.');
+
+    await addDoc(collection(fdb(), COLS.USERS), {
+      userId: id, name, password: pw, role: '입력자', team, approved: false
+    });
+
+    // 로그인 폼으로 전환 + 안내 메시지
+    document.getElementById('signup-form').style.display='none';
+    document.getElementById('login-form').style.display='flex';
+    errEl.style.color='#10b981';
+    errEl.textContent='가입 신청이 완료되었습니다. 관리자 승인 후 로그인하세요.';
+    errEl.style.display='block';
+    document.getElementById('login-id').value=id;
+  } catch(e) {
+    errEl.textContent=e.message||'가입 오류. 다시 시도하세요.';
+    errEl.style.display='block';
+  } finally {
+    btn.disabled=false; btn.textContent='가입 신청';
+  }
 }
 
 // 로그인 이벤트 바인딩은 app.js bindEvents()에서 처리

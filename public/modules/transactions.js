@@ -112,7 +112,7 @@ export function renderHistoryTable() {
       <td style="text-align:center;">
         ${t.receiptUrl
           ?`<button class="icon-btn receipt-view" data-url="${t.receiptUrl}" title="증빙 보기">📎</button>`
-          :`<button class="icon-btn receipt-add" data-id="${t.id}" title="증빙 추가" style="color:#94a3b8;">＋</button>`}
+          :can('receipt.upload')?`<button class="icon-btn receipt-add" data-id="${t.id}" title="증빙 추가" style="color:#94a3b8;">＋</button>`:''}
       </td>
       <td style="text-align:center;"><div style="display:flex;justify-content:center;gap:4px;">${(()=>{
         const canEdit=can('trx.edit')&&(!isInputOnly||(t.createdBy===S.user?.userId));

@@ -38,7 +38,12 @@ export async function fetchBaseData() {
   const showInactive=S.settings?.showInactive||false;
   const activeClients=showInactive?allClients:allClients.filter(c=>c.active!==false);
   const activeAccounts=showInactive?allAccounts:allAccounts.filter(a=>a.active!==false);
-  S.clients  = isAdmin ? activeClients : activeClients.filter(c=>String(c.userIds||'').split(',').map(s=>s.trim()).includes(String(S.user.userId)));
+  S.clients  = isAdmin ? activeClients : activeClients.filter(c=>{
+    const ids=String(c.userIds||'').split(',').map(s=>s.trim());
+    const myUserId=String(S.user.userId);
+    const myDocId=String(S.users.find(u=>String(u.userId)===myUserId)?.id||'');
+    return ids.includes(myUserId)||(myDocId&&ids.includes(myDocId));
+  });
   S.accounts = activeAccounts.filter(a=>S.clients.some(c=>c.id===a.clientId));
   S.confirmedMonths=new Set(rSnap.docs.map(d=>d.data()).filter(r=>r.status==='confirmed').map(r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`));
   // 당월 수입/지출 집계 (대시보드 카드 표시용)

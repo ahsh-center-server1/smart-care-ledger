@@ -8,7 +8,7 @@
 import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.js';
-import { fb, fdb } from '../services/firestore.js';
+import { fb, fdb, batchAddDocs } from '../services/firestore.js';
 import { uploadToDrive, compressImage } from '../services/drive.js';
 import { fetchBaseData, loadTransactions } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
@@ -27,6 +27,9 @@ export function openModal(type,data){
   if(type==='account')       renderAccountForm(data);
   if(type==='staff')         renderStaffForm(data);
   if(type==='fixed-item')    renderFixedItemForm(data);
+  if(type==='bulk-staff')    renderBulkStaffForm();
+  if(type==='bulk-client')   renderBulkClientForm();
+  if(type==='bulk-account')  renderBulkAccountForm();
 }
 export function closeModal(){
   document.getElementById('modal-wrap').classList.remove('show');
@@ -202,6 +205,7 @@ export function updateTrxCatSel(){
 // 엑셀 파일 업로드 폼
 // ─────────────────────────────────────────────
 export function renderExcelForm(){
+  if(!can('excel.upload')){ toast('접근 권한이 없습니다.','error'); closeModal(); return; }
   document.getElementById('modal-body').innerHTML=`
     <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">📂 엑셀 파일 업로드</h3>
     <div style="display:flex;flex-direction:column;gap:12px;">
@@ -749,7 +753,7 @@ export function renderClientForm(c){
     <input type="hidden" id="fc-id" value="${isEdit?c.id:'cli_'+Date.now()}">
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div><label class="label">성명</label><input type="text" id="fc-name" class="input" value="${isEdit?c.name:''}"></div>
-      ${isAdmin?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div><div><label class="label">담당 직원</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:140px;overflow-y:auto;padding:4px;">${S.users.map(u=>{const ex=isEdit?String(c.userIds||'').split(',').map(s=>s.trim()):[];const ch=ex.includes(String(u.id));return`<label style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${ch?'#eff6ff':'#f8fafc'};border:1px solid ${ch?'#bfdbfe':'var(--border)'};border-radius:8px;cursor:pointer;font-size:13px;"><input type="checkbox" name="fc-staff" value="${u.id}" ${ch?'checked':''} style="accent-color:var(--blue);"> ${u.name}</label>`;}).join('')}</div></div>`:''}
+      ${isAdmin?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div><div><label class="label">담당 직원</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:140px;overflow-y:auto;padding:4px;">${S.users.map(u=>{const ex=isEdit?String(c.userIds||'').split(',').map(s=>s.trim()):[];const ch=ex.includes(String(u.userId));return`<label style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${ch?'#eff6ff':'#f8fafc'};border:1px solid ${ch?'#bfdbfe':'var(--border)'};border-radius:8px;cursor:pointer;font-size:13px;"><input type="checkbox" name="fc-staff" value="${u.userId}" ${ch?'checked':''} style="accent-color:var(--blue);"> ${u.name}</label>`;}).join('')}</div></div>`:''}
       <div><label class="label">메모</label><textarea id="fc-memo" class="input" style="height:64px;resize:none;">${isEdit?c.memo||'':''}</textarea></div>
       <button id="fc-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
     </div>`;
@@ -822,4 +826,306 @@ export function renderStaffForm(u){
     await setDoc(doc(fdb(),COLS.USERS,id),data);
     toast('저장됨','success'); closeModal(); await fetchBaseData(); renderManagement();
   });
+}
+
+// ═══════════════════════════════════════════════
+// 엑셀 일괄 등록 공통 헬퍼
+// ═══════════════════════════════════════════════
+
+/** SheetJS로 단일 시트 엑셀 양식 다운로드 */
+function downloadBulkTemplate(headers, exampleRows, filename){
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([headers,...exampleRows]);
+  // 헤더 행 너비 자동 조정
+  ws['!cols']=headers.map(h=>({wch:Math.max(h.length*2,12)}));
+  XLSX.utils.book_append_sheet(wb,ws,'데이터');
+  XLSX.writeFile(wb,filename);
+  toast('양식 다운로드 완료. 작성 후 업로드하세요.','success');
+}
+
+/** 엑셀 날짜 시리얼 → 'YYYY-MM-DD' 변환 */
+function xlDateToStr(raw){
+  if(typeof raw==='number'){
+    const d=new Date(Math.round((raw-25569)*86400*1000));
+    return d.toISOString().split('T')[0];
+  }
+  return String(raw||'').trim();
+}
+
+/** 파일을 파싱하여 행 배열 반환 (Promise) */
+function parseXlFile(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=e=>{
+      try{
+        const wb=XLSX.read(e.target.result,{type:'array',cellDates:false});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        resolve(XLSX.utils.sheet_to_json(ws,{header:1,defval:''}));
+      }catch(err){reject(err);}
+    };
+    reader.onerror=()=>reject(new Error('파일 읽기 오류'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/** 미리보기 테이블 렌더링 */
+function renderBulkTable(container,rows,cols){
+  if(!rows.length){container.innerHTML='<div style="padding:16px;font-size:13px;color:var(--muted);text-align:center;">데이터 없음</div>';return;}
+  const thead=cols.map(c=>`<th style="padding:6px 10px;font-size:11px;font-weight:700;color:var(--muted);text-align:left;white-space:nowrap;">${c.label}</th>`).join('');
+  const tbody=rows.map(row=>{
+    const hasErr=row._errors.length>0;
+    const cells=cols.map(c=>`<td style="padding:6px 10px;font-size:12px;color:${hasErr?'#dc2626':'var(--text)'};">${c.mask?'••••':escAttr(String(row[c.key]||''))}</td>`).join('');
+    const errCell=hasErr?`<td style="padding:6px 10px;font-size:11px;color:#dc2626;">${row._errors.join(', ')}</td>`:'<td></td>';
+    return`<tr style="${hasErr?'background:#fef2f2;':''}border-top:1px solid var(--border);">${cells}${errCell}</tr>`;
+  }).join('');
+  container.innerHTML=`<table style="width:100%;border-collapse:collapse;"><thead style="background:#f8fafc;position:sticky;top:0;"><tr>${thead}<th style="padding:6px 10px;font-size:11px;font-weight:700;color:#dc2626;">오류</th></tr></thead><tbody>${tbody}</tbody></table>`;
+}
+
+/** 일괄 등록 모달 공통 외형 렌더링 */
+function renderBulkModal(title,desc,templateBtn,previewId){
+  document.getElementById('modal-body').innerHTML=`
+    <h3 style="font-size:17px;font-weight:900;color:var(--text);margin-bottom:14px;">${title}</h3>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:13px;color:#1e40af;">
+        💡 ${desc}<br><button id="bulk-tpl-btn" class="btn-sub" style="margin-top:8px;font-size:12px;padding:5px 12px;color:#2563eb;border-color:#bfdbfe;">📥 양식 다운로드</button>
+      </div>
+      <div id="bulk-drop" style="border:2px dashed #cbd5e1;border-radius:12px;padding:28px;text-align:center;cursor:pointer;background:#f8fafc;">
+        <input type="file" id="bulk-file" accept=".xlsx,.xls" style="display:none;">
+        <div style="font-size:24px;margin-bottom:8px;">📊</div>
+        <div style="font-size:13px;color:var(--text);font-weight:700;">클릭하거나 파일을 끌어다 놓으세요</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">xlsx · xls</div>
+      </div>
+      <div id="${previewId}" style="display:none;flex-direction:column;gap:10px;"></div>
+    </div>`;
+  // 드롭존 이벤트
+  const drop=document.getElementById('bulk-drop');
+  const fileInput=document.getElementById('bulk-file');
+  drop.addEventListener('click',()=>fileInput.click());
+  drop.addEventListener('dragover',e=>{e.preventDefault();drop.style.background='#eff6ff';});
+  drop.addEventListener('dragleave',()=>{drop.style.background='#f8fafc';});
+  drop.addEventListener('drop',e=>{e.preventDefault();drop.style.background='#f8fafc';const f=e.dataTransfer.files[0];if(f){try{const dt=new DataTransfer();dt.items.add(f);fileInput.files=dt.files;}catch(_){}fileInput.dispatchEvent(new Event('change'));}});
+  // 양식 다운로드
+  document.getElementById('bulk-tpl-btn').addEventListener('click',templateBtn);
+}
+
+// ═══════════════════════════════════════════════
+// 직원 일괄 등록
+// ═══════════════════════════════════════════════
+export function renderBulkStaffForm(){
+  renderBulkModal(
+    '👤 직원 일괄 등록',
+    '양식을 다운로드하여 직원 정보를 작성한 후 업로드하세요.',
+    ()=>downloadBulkTemplate(
+      ['이름','아이디','비밀번호','역할','팀'],
+      [['홍길동','hong','pass123','담당자','1팀'],['이순신','lee','pass456','입력자','2팀']],
+      '직원_일괄등록_양식.xlsx'
+    ),
+    'bulk-staff-preview'
+  );
+  document.getElementById('bulk-file').addEventListener('change',async e=>{
+    const f=e.target.files[0]; if(!f)return;
+    try{
+      const rows=await parseXlFile(f);
+      const parsed=parseStaffRows(rows);
+      renderBulkStaffPreview(parsed);
+    }catch(err){toast('파일 파싱 오류: '+err.message,'error');}
+  });
+}
+
+function parseStaffRows(rows){
+  if(rows.length<2)return[];
+  const h=rows[0].map(v=>String(v).trim());
+  const idx={name:h.findIndex(v=>v.includes('이름')),userId:h.findIndex(v=>v.includes('아이디')),password:h.findIndex(v=>v.includes('비밀번호')||v.includes('패스워드')),role:h.findIndex(v=>v.includes('역할')),team:h.findIndex(v=>v.includes('팀'))};
+  const validRoles=['담당자','팀장','센터장','관리자','입력자'];
+  const existIds=new Set(S.users.map(u=>u.userId));
+  const seenIds=new Set();
+  return rows.slice(1).map((row,i)=>{
+    const name=String(row[idx.name]||'').trim();
+    const userId=String(row[idx.userId]||'').trim();
+    const password=String(row[idx.password]||'').trim();
+    const role=String(row[idx.role]||'').trim();
+    const team=String(row[idx.team]||'').trim();
+    const errs=[];
+    if(!name)errs.push('이름 필수');
+    if(!userId)errs.push('아이디 필수');
+    else if(existIds.has(userId))errs.push('이미 존재하는 아이디');
+    else if(seenIds.has(userId))errs.push('중복 아이디');
+    if(userId)seenIds.add(userId);
+    if(!password)errs.push('비밀번호 필수');
+    if(!role)errs.push('역할 필수');
+    else if(!validRoles.includes(role))errs.push(`역할 오류(${validRoles.join('/')})`);
+    return{_row:i+2,name,userId,password,role,team,_errors:errs};
+  }).filter(r=>r.name||r.userId);
+}
+
+function renderBulkStaffPreview(parsed){
+  const pv=document.getElementById('bulk-staff-preview');
+  pv.style.display='flex';
+  const validCount=parsed.filter(r=>r._errors.length===0).length;
+  const errCount=parsed.filter(r=>r._errors.length>0).length;
+  pv.innerHTML=`
+    <div style="font-size:13px;font-weight:700;color:var(--text);">미리보기 — 총 ${parsed.length}행 (유효 ${validCount}건 / 오류 ${errCount}건)</div>
+    ${errCount?`<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;">⚠️ 오류 행은 저장에서 제외됩니다. 빨간 행을 확인하세요.</div>`:''}
+    <div id="bulk-staff-table" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
+    <button id="bulk-staff-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>✅ ${validCount}명 일괄 저장</button>`;
+  renderBulkTable(document.getElementById('bulk-staff-table'),parsed,[
+    {key:'name',label:'이름'},{key:'userId',label:'아이디'},{key:'password',label:'비밀번호',mask:true},{key:'role',label:'역할'},{key:'team',label:'팀'},
+  ]);
+  document.getElementById('bulk-staff-save').addEventListener('click',()=>saveBulkStaff(parsed));
+}
+
+async function saveBulkStaff(parsed){
+  const btn=document.getElementById('bulk-staff-save');
+  btn.disabled=true; btn.textContent='저장 중...';
+  try{
+    const valid=parsed.filter(r=>r._errors.length===0);
+    const adds=valid.map(s=>({col:COLS.USERS,data:{userId:s.userId,name:s.name,password:s.password,role:s.role,team:s.team||'',approved:true}}));
+    await batchAddDocs(adds);
+    toast(`직원 ${valid.length}명 등록 완료`,'success',4000);
+    closeModal(); await fetchBaseData(); renderManagement();
+  }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
+}
+
+// ═══════════════════════════════════════════════
+// 입주자 일괄 등록
+// ═══════════════════════════════════════════════
+export function renderBulkClientForm(){
+  renderBulkModal(
+    '🏠 입주자 일괄 등록',
+    '양식을 다운로드하여 입주자 정보를 작성한 후 업로드하세요.',
+    ()=>downloadBulkTemplate(
+      ['이름','담당직원아이디','담당팀장아이디','메모'],
+      [['김입주','hong,lee','leader1','특이사항 없음'],['이입주','hong','','']],
+      '입주자_일괄등록_양식.xlsx'
+    ),
+    'bulk-client-preview'
+  );
+  document.getElementById('bulk-file').addEventListener('change',async e=>{
+    const f=e.target.files[0]; if(!f)return;
+    try{
+      const rows=await parseXlFile(f);
+      const parsed=parseClientRows(rows);
+      renderBulkClientPreview(parsed);
+    }catch(err){toast('파일 파싱 오류: '+err.message,'error');}
+  });
+}
+
+function parseClientRows(rows){
+  if(rows.length<2)return[];
+  const h=rows[0].map(v=>String(v).trim());
+  const idx={name:h.findIndex(v=>v.includes('이름')),userIds:h.findIndex(v=>v.includes('담당직원')),teamLeader:h.findIndex(v=>v.includes('팀장')),memo:h.findIndex(v=>v.includes('메모'))};
+  const existNames=new Set((S.allClients||S.clients).map(c=>c.name));
+  const seenNames=new Set();
+  return rows.slice(1).map((row,i)=>{
+    const name=String(row[idx.name]||'').trim();
+    const userIds=String(row[idx.userIds]||'').trim();
+    const teamLeader=String(row[idx.teamLeader]||'').trim();
+    const memo=String(row[idx.memo]||'').trim();
+    const errs=[];
+    if(!name)errs.push('이름 필수');
+    else if(existNames.has(name))errs.push('이미 존재하는 입주자');
+    else if(seenNames.has(name))errs.push('중복 이름');
+    if(name)seenNames.add(name);
+    return{_row:i+2,name,userIds,teamLeader,memo,_errors:errs};
+  }).filter(r=>r.name);
+}
+
+function renderBulkClientPreview(parsed){
+  const pv=document.getElementById('bulk-client-preview');
+  pv.style.display='flex';
+  const validCount=parsed.filter(r=>r._errors.length===0).length;
+  const errCount=parsed.filter(r=>r._errors.length>0).length;
+  pv.innerHTML=`
+    <div style="font-size:13px;font-weight:700;color:var(--text);">미리보기 — 총 ${parsed.length}행 (유효 ${validCount}건 / 오류 ${errCount}건)</div>
+    ${errCount?`<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;">⚠️ 오류 행은 저장에서 제외됩니다.</div>`:''}
+    <div id="bulk-client-table" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
+    <button id="bulk-client-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>✅ ${validCount}명 일괄 저장</button>`;
+  renderBulkTable(document.getElementById('bulk-client-table'),parsed,[
+    {key:'name',label:'이름'},{key:'userIds',label:'담당직원아이디'},{key:'teamLeader',label:'담당팀장아이디'},{key:'memo',label:'메모'},
+  ]);
+  document.getElementById('bulk-client-save').addEventListener('click',()=>saveBulkClients(parsed));
+}
+
+async function saveBulkClients(parsed){
+  const btn=document.getElementById('bulk-client-save');
+  btn.disabled=true; btn.textContent='저장 중...';
+  try{
+    const valid=parsed.filter(r=>r._errors.length===0);
+    const adds=valid.map(c=>({col:COLS.CLIENTS,data:{name:c.name,userIds:c.userIds||'',teamLeader:c.teamLeader||'',memo:c.memo||'',contact:'',active:true}}));
+    await batchAddDocs(adds);
+    toast(`입주자 ${valid.length}명 등록 완료`,'success',4000);
+    closeModal(); await fetchBaseData(); renderManagement();
+  }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
+}
+
+// ═══════════════════════════════════════════════
+// 계좌 일괄 등록
+// ═══════════════════════════════════════════════
+export function renderBulkAccountForm(){
+  renderBulkModal(
+    '🏦 계좌 일괄 등록',
+    '입주자이름은 시스템에 등록된 이름과 정확히 일치해야 합니다.',
+    ()=>downloadBulkTemplate(
+      ['입주자이름','계좌명','초기잔액','기준일'],
+      [['김입주','생활비통장','500000','2025-01-01'],['이입주','용돈계좌','200000','2025-01-01']],
+      '계좌_일괄등록_양식.xlsx'
+    ),
+    'bulk-account-preview'
+  );
+  document.getElementById('bulk-file').addEventListener('change',async e=>{
+    const f=e.target.files[0]; if(!f)return;
+    try{
+      const rows=await parseXlFile(f);
+      const parsed=parseAccountRows(rows);
+      renderBulkAccountPreview(parsed);
+    }catch(err){toast('파일 파싱 오류: '+err.message,'error');}
+  });
+}
+
+function parseAccountRows(rows){
+  if(rows.length<2)return[];
+  const h=rows[0].map(v=>String(v).trim());
+  const idx={clientName:h.findIndex(v=>v.includes('입주자')),label:h.findIndex(v=>v.includes('계좌명')),balance:h.findIndex(v=>v.includes('잔액')),date:h.findIndex(v=>v.includes('기준일'))};
+  const clientMap=Object.fromEntries((S.allClients||S.clients).map(c=>[c.name,c.id]));
+  return rows.slice(1).map((row,i)=>{
+    const clientName=String(row[idx.clientName]||'').trim();
+    const label=String(row[idx.label]||'').trim();
+    const balance=Number(String(row[idx.balance]||'0').replace(/,/g,''))||0;
+    const date=xlDateToStr(row[idx.date]);
+    const errs=[];
+    if(!clientName)errs.push('입주자이름 필수');
+    else if(!clientMap[clientName])errs.push('등록된 입주자 없음');
+    if(!label)errs.push('계좌명 필수');
+    if(!date)errs.push('기준일 필수');
+    else if(!/^\d{4}-\d{2}-\d{2}$/.test(date))errs.push('기준일 형식 오류(YYYY-MM-DD)');
+    return{_row:i+2,clientName,label,balance,date,clientId:clientMap[clientName]||'',_errors:errs};
+  }).filter(r=>r.clientName||r.label);
+}
+
+function renderBulkAccountPreview(parsed){
+  const pv=document.getElementById('bulk-account-preview');
+  pv.style.display='flex';
+  const validCount=parsed.filter(r=>r._errors.length===0).length;
+  const errCount=parsed.filter(r=>r._errors.length>0).length;
+  pv.innerHTML=`
+    <div style="font-size:13px;font-weight:700;color:var(--text);">미리보기 — 총 ${parsed.length}행 (유효 ${validCount}건 / 오류 ${errCount}건)</div>
+    ${errCount?`<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;">⚠️ 오류 행은 저장에서 제외됩니다.</div>`:''}
+    <div id="bulk-account-table" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
+    <button id="bulk-account-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>✅ ${validCount}개 일괄 저장</button>`;
+  renderBulkTable(document.getElementById('bulk-account-table'),parsed,[
+    {key:'clientName',label:'입주자이름'},{key:'label',label:'계좌명'},{key:'balance',label:'초기잔액'},{key:'date',label:'기준일'},
+  ]);
+  document.getElementById('bulk-account-save').addEventListener('click',()=>saveBulkAccounts(parsed));
+}
+
+async function saveBulkAccounts(parsed){
+  const btn=document.getElementById('bulk-account-save');
+  btn.disabled=true; btn.textContent='저장 중...';
+  try{
+    const valid=parsed.filter(r=>r._errors.length===0&&r.clientId);
+    const adds=valid.map(a=>({col:COLS.ACCOUNTS,data:{clientId:a.clientId,label:a.label,accountNumber:'',initialBalance:a.balance,initialBalanceDate:a.date,currentBalance:a.balance,active:true}}));
+    await batchAddDocs(adds);
+    toast(`계좌 ${valid.length}개 등록 완료`,'success',4000);
+    closeModal(); await fetchBaseData(); renderManagement();
+  }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
 }

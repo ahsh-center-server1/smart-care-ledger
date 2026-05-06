@@ -281,10 +281,29 @@
       <h1 style="font-size:22px;font-weight:900;color:var(--text);">CARE LEDGER</h1>
       <p style="color:var(--muted);font-size:13px;margin-top:4px;">사회복지사 전용 금전관리 시스템</p>
     </div>
-    <div style="display:flex;flex-direction:column;gap:10px;">
+    <!-- 로그인 폼 -->
+    <div id="login-form" style="display:flex;flex-direction:column;gap:10px;">
       <input id="login-id" class="input" placeholder="아이디" type="text" style="font-size:15px;padding:12px;">
       <input id="login-pw" class="input" placeholder="비밀번호" type="password" style="font-size:15px;padding:12px;">
       <button id="login-btn" class="btn" style="width:100%;padding:13px;font-size:15px;margin-top:4px;" onclick="handleLogin()">시스템 접속</button>
+      <div style="text-align:center;margin-top:4px;">
+        <a href="#" id="goto-signup" style="font-size:13px;color:var(--blue);text-decoration:none;">처음 사용하신가요? 회원가입 신청</a>
+      </div>
+    </div>
+    <!-- 회원가입 폼 -->
+    <div id="signup-form" style="display:none;flex-direction:column;gap:10px;">
+      <div style="text-align:center;margin-bottom:8px;">
+        <span style="font-size:15px;font-weight:800;color:var(--text);">회원가입 신청</span>
+        <p style="font-size:12px;color:var(--muted);margin-top:4px;">관리자 승인 후 로그인이 가능합니다.</p>
+      </div>
+      <input id="signup-name" class="input" placeholder="이름 (필수)" type="text" style="font-size:15px;padding:12px;">
+      <input id="signup-id" class="input" placeholder="아이디 — 영문·숫자 (필수)" type="text" style="font-size:15px;padding:12px;">
+      <input id="signup-pw" class="input" placeholder="비밀번호 (필수)" type="password" style="font-size:15px;padding:12px;">
+      <input id="signup-team" class="input" placeholder="소속 팀 (예: 1팀, 선택)" type="text" style="font-size:15px;padding:12px;">
+      <button id="signup-btn" class="btn" style="width:100%;padding:13px;font-size:15px;margin-top:4px;" onclick="handleSignup()">가입 신청</button>
+      <div style="text-align:center;margin-top:4px;">
+        <a href="#" id="goto-login" style="font-size:13px;color:var(--blue);text-decoration:none;">로그인으로 돌아가기</a>
+      </div>
     </div>
     <p id="login-err" style="color:var(--red);font-size:13px;text-align:center;margin-top:10px;display:none;"></p>
   </div>
@@ -634,7 +653,10 @@
             <div id="admin-staff" style="display:none;" class="card" style="padding:20px;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">👤</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">직원 관리</h3></div>
-                <button class="btn" id="btn-add-staff" style="font-size:13px;padding:7px 14px;">+ 직원 등록</button>
+                <div style="display:flex;gap:8px;">
+                  <button class="btn-sub" id="btn-bulk-staff" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄 등록</button>
+                  <button class="btn" id="btn-add-staff" style="font-size:13px;padding:7px 14px;">+ 직원 등록</button>
+                </div>
               </div>
               <div id="staff-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;"></div>
             </div>
@@ -645,14 +667,20 @@
                 <div>
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                     <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏠</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">입주자 목록</h3></div>
-                    <button class="btn" id="btn-add-client" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+                    <div style="display:flex;gap:8px;">
+                      <button class="btn-sub" id="btn-bulk-client" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄 등록</button>
+                      <button class="btn" id="btn-add-client" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+                    </div>
                   </div>
                   <div id="client-list" style="display:flex;flex-direction:column;gap:8px;"></div>
                 </div>
                 <div>
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                     <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏦</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">계좌 목록</h3></div>
-                    <button class="btn" id="btn-add-account" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+                    <div style="display:flex;gap:8px;">
+                      <button class="btn-sub" id="btn-bulk-account" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄 등록</button>
+                      <button class="btn" id="btn-add-account" style="font-size:13px;padding:7px 14px;">+ 등록</button>
+                    </div>
                   </div>
                   <div id="account-list" style="display:flex;flex-direction:column;gap:8px;"></div>
                 </div>
