@@ -709,7 +709,7 @@ Object.assign(window, {
   renderMobileReportList, renderMobileReportDetail, updateReport: updateReportDoc,
   M,
   // auth
-  handleLogin: Auth.handleLogin, handleLogout: Auth.handleLogout,
+  handleLogin: Auth.handleLogin, handleLogout: Auth.handleLogout, handleSignup: Auth.handleSignup,
   // dashboard
   renderDashboard: Dash.renderDashboard, renderClientCards: Dash.renderDashboard,
   // transactions
@@ -829,6 +829,23 @@ function bindEvents(){
   document.getElementById('login-id')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleLogin();});
   document.getElementById('login-pw')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleLogin();});
   document.getElementById('login-btn')?.addEventListener('click',Auth.handleLogin);
+  // 회원가입 폼 전환
+  document.getElementById('goto-signup')?.addEventListener('click',e=>{
+    e.preventDefault();
+    document.getElementById('login-form').style.display='none';
+    document.getElementById('signup-form').style.display='flex';
+    document.getElementById('login-err').style.display='none';
+    document.getElementById('login-err').style.color='var(--red)';
+  });
+  document.getElementById('goto-login')?.addEventListener('click',e=>{
+    e.preventDefault();
+    document.getElementById('signup-form').style.display='none';
+    document.getElementById('login-form').style.display='flex';
+    document.getElementById('login-err').style.display='none';
+    document.getElementById('login-err').style.color='var(--red)';
+  });
+  document.getElementById('signup-id')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleSignup();});
+  document.getElementById('signup-pw')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleSignup();});
 
   // 네비게이션
   document.querySelectorAll('.nav-item[data-view]').forEach(btn=>btn.addEventListener('click',()=>Core.changeView(btn.dataset.view)));
