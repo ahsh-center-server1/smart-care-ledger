@@ -254,7 +254,8 @@ export function renderCatTags(type){
     .filter(c=>c.keyword===''&&c.type===type&&(!c.clientId||c.clientId===settingsClientId))
     .sort((a,b)=>(a.sortOrder??999)-(b.sortOrder??999));
   const colors=type==='지출'?['#dc2626','#ea580c','#d97706','#16a34a','#2563eb','#9333ea','#c026d3']:['#059669','#0891b2','#1d4ed8'];
-  el.innerHTML='<p style="font-size:11px;color:var(--muted);margin-bottom:8px;">⠿ 드래그로 순서 변경 | 자주 쓰는 카테고리를 앞으로</p>';
+  const targetDisplay=settingsClientId?`— ${clientName}`:'— 공통';
+  el.innerHTML=`<p style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;">${type} 카테고리 ${targetDisplay}</p><p style="font-size:11px;color:var(--muted);margin-bottom:8px;">⠿ 드래그로 순서 변경 | 자주 쓰는 카테고리를 앞으로</p>`;
   let dragSrc=null;
   const seen=new Set();
   allCats.forEach((catDoc,i)=>{
@@ -305,8 +306,11 @@ export function renderCatTags(type){
 }
 export function renderRuleTags(){
   const el=document.getElementById('rule-tags'); if(!el)return;
-  if(!S.settings.rules.length){el.innerHTML='<div class="empty-state" style="padding:20px;"><div class="icon">🏷️</div>등록된 규칙 없음</div>';return;}
-  el.innerHTML='';
+  const settingsClientId=S.settings.settingsClientId||'';
+  const clientName=settingsClientId?S.clients.find(c=>c.id===settingsClientId)?.name||'':'';
+  const targetDisplay=settingsClientId?`— ${clientName}`:'— 공통';
+  if(!S.settings.rules.length){el.innerHTML=`<p style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;">자동 분류 규칙 ${targetDisplay}</p><div class="empty-state" style="padding:20px;"><div class="icon">🏷️</div>등록된 규칙 없음</div>`;return;}
+  let html=`<p style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;">자동 분류 규칙 ${targetDisplay}</p>`; el.innerHTML=html;
   const settingsClientName=S.settings.settingsClientId?S.clients.find(c=>c.id===S.settings.settingsClientId)?.name||'':'';
   S.settings.rules.forEach(r=>{
     const tc=r.type==='지출'?'#dc2626':'#16a34a', tag=document.createElement('span');
