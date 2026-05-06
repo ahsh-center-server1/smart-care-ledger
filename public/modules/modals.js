@@ -77,7 +77,10 @@ export function renderTrxForm(t){
         </div>
         <div id="trx-receipt-preview" style="display:none;margin-top:6px;font-size:12px;color:var(--green);"></div>
       </div>
-      <button id="f-save-btn" class="btn" style="width:100%;padding:11px;">💾 저장하기</button>
+      <div style="display:flex;gap:8px;">
+        <button id="f-copy-btn" class="btn" style="flex:1;padding:11px;">📋 복사하기</button>
+        <button id="f-save-btn" class="btn" style="flex:1;padding:11px;">💾 저장하기</button>
+      </div>
     </div>`;
   window._trxReceiptClear=false;
   const accSel=document.getElementById('f-acc');
@@ -152,6 +155,39 @@ export function renderTrxForm(t){
         receiptUrl};
       if(existId)trxData.id=existId;
       closeModal(); await saveTrx(trxData);
+    }
+  });
+  document.getElementById('f-copy-btn').addEventListener('click',async()=>{
+    if(!isEdit){toast('수정 중인 거래가 없습니다.','error');return;}
+    const accId=document.getElementById('f-acc').value;
+    const amount=Number(document.getElementById('f-amount').value);
+    if(!accId){toast('계좌를 선택하세요.','error');return;}
+    if(!amount){toast('금액을 입력하세요.','error');return;}
+    const acc=S.accounts.find(a=>a.id===accId);
+    const type=document.getElementById('f-type').value;
+    const today=new Date().toISOString().split('T')[0];
+    const time=document.getElementById('f-time')?.value||'';
+    const cat=document.getElementById('f-cat').value;
+    const desc=document.getElementById('f-desc').value;
+    if(type==='자산이동'){
+      const toAccId=document.getElementById('f-to-acc').value;
+      if(!toAccId){toast('입금 계좌를 선택하세요.','error');return;}
+      if(toAccId===accId){toast('출금 계좌와 입금 계좌가 같습니다.','error');return;}
+      const toAcc=S.accounts.find(a=>a.id===toAccId);
+      const{addDoc,collection,updateDoc,doc}=fb();
+      const outRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:acc.clientId,accountId:accId,date:today,time,type:'자산이동',category:'자산이동',description:desc,amountIn:0,amountOut:amount,receiptUrl:'',linkedAccountId:toAccId});
+      const inRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:toAcc.clientId,accountId:toAccId,date:today,time,type:'자산이동',category:'자산이동',description:desc,amountIn:amount,amountOut:0,receiptUrl:'',linkedAccountId:accId,linkedTrxId:outRef.id});
+      await updateDoc(doc(fdb(),COLS.TRANSACTIONS,outRef.id),{linkedTrxId:inRef.id});
+      await updateAccBalance(accId); await updateAccBalance(toAccId);
+      if(S.activeClient===acc.clientId||S.activeClient===toAcc?.clientId)await loadTransactions(S.activeClient);
+      toast('✅ 거래가 복사되었습니다.','success');
+    } else {
+      const trxData={clientId:acc.clientId,accountId:accId,date:today,time,type,category:cat,description:desc,
+        amountIn:type==='수입'?amount:0,
+        amountOut:(type==='지출'||type==='취소')?amount:0,
+        receiptUrl:''};
+      await saveTrx(trxData);
+      toast('✅ 거래가 복사되었습니다.','success');
     }
   });
   // 파일 선택 미리보기
