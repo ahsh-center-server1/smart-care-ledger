@@ -494,7 +494,8 @@ export function openReceiptModal(url, trxId){
   const driveMatch=url.match(/\/d\/([^/?]+)/);
   const isDrive=!!driveMatch;
   const isStorage=url.includes('firebasestorage.googleapis.com');
-  const isLocalImg=(/\.(jpg|jpeg|png|gif|webp|bmp)/i.test(url)||isStorage)&&!isDrive;
+  const isPdf=/\.pdf/i.test(decodeURIComponent(url));
+  const isLocalImg=(/\.(jpg|jpeg|png|gif|webp|bmp)/i.test(url)||(isStorage&&!isPdf))&&!isDrive;
   // 기존 플로팅 패널 제거
   const existing=document.getElementById('receipt-float-panel');
   if(existing)existing.remove();
@@ -516,6 +517,8 @@ export function openReceiptModal(url, trxId){
   let imgHtml='';
   if(isDrive){
     imgHtml=`<div id="rfp-loading" style="text-align:center;padding:30px 0;"><div class="spinner" style="margin:0 auto 8px;"></div><p style="font-size:12px;color:var(--muted);">불러오는 중...</p></div><img id="rfp-img" src="${getImageUrl(url,'w600')}" alt="영수증" style="display:none;max-width:100%;border-radius:8px;">`;
+  } else if(isPdf){
+    imgHtml=`<iframe src="${url}" style="width:100%;height:380px;border:none;border-radius:8px;background:#f8fafc;" title="PDF 미리보기"></iframe><p style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center;"><a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);">새 탭에서 열기</a></p>`;
   } else if(isLocalImg){
     imgHtml=`<img src="${url}" alt="영수증" style="max-width:100%;border-radius:8px;">`;
   } else {
