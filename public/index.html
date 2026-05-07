@@ -48,40 +48,43 @@
 
   <style>
     :root {
-      --bg:      #f1f5f9;
-      --surface: #ffffff;
-      --green:   #10b981;
-      --card:    #ffffff;
-      --sidebar: #1e293b;
-      --border:  #e2e8f0;
-      --bm:      #cbd5e1;
-      --text:    #1e293b;
-      --sub:     #475569;
-      --muted:   #94a3b8;
-      --blue:    #3b82f6;
-      --blue2:   #1d4ed8;
-      --green:   #10b981;
-      --red:     #f43f5e;
-      --amber:   #f59e0b;
-      --shadow:  0 1px 3px rgba(0,0,0,0.08),0 1px 2px rgba(0,0,0,0.04);
-      --shadow2: 0 4px 12px rgba(0,0,0,0.08);
-      --r:       12px;
-      --r2:      18px;
-      --tr:      all 0.15s ease;
+      --bg:             #f8fafc;
+      --surface:        #ffffff;
+      --green:          #10b981;
+      --card:           #ffffff;
+      --sidebar:        #1e293b;
+      --sidebar-border: #334155;
+      --nav-text:       #94a3b8;
+      --navy:           #0f172a;
+      --border:         #e2e8f0;
+      --bm:             #cbd5e1;
+      --text:           #1e293b;
+      --sub:            #475569;
+      --muted:          #94a3b8;
+      --blue:           #0ea5e9;
+      --blue2:          #0284c7;
+      --green:          #10b981;
+      --red:            #f43f5e;
+      --amber:          #f59e0b;
+      --shadow:         0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);
+      --shadow2:        0 4px 12px rgba(0,0,0,0.08);
+      --r:              12px;
+      --r2:             18px;
+      --tr:             all 0.15s ease;
     }
     *{box-sizing:border-box;margin:0;padding:0;}
     body{font-family:'Noto Sans KR',-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:14px;-webkit-font-smoothing:antialiased;}
     .spinner{width:32px;height:32px;border:3px solid #e2e8f0;border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;}
     @keyframes spin{to{transform:rotate(360deg);}}
-    .nav-item{width:100%;text-align:left;padding:10px 14px;border-radius:10px;font-size:14px;font-weight:600;color:#94a3b8;transition:var(--tr);display:flex;align-items:center;gap:10px;margin-bottom:2px;border:1px solid transparent;background:none;cursor:pointer;}
+    .nav-item{width:100%;text-align:left;padding:10px 14px;border-radius:10px;font-size:14px;font-weight:600;color:var(--nav-text);transition:var(--tr);display:flex;align-items:center;gap:10px;margin-bottom:2px;border:1px solid transparent;background:none;cursor:pointer;}
     .nav-item:hover{background:rgba(255,255,255,.08);color:#f1f5f9;}
-    .nav-item.active{background:rgba(59,130,246,.18);color:#93c5fd;border-color:rgba(59,130,246,.25);}
+    .nav-item.active{background:rgba(14,165,233,0.18);color:#7dd3fc;border-color:rgba(14,165,233,0.25);}
     .nav-sub{width:100%;text-align:left;padding:8px 14px;border-radius:8px;font-size:13px;color:#64748b;transition:var(--tr);display:block;background:none;cursor:pointer;}
-    .nav-sub:hover{color:#93c5fd;background:rgba(59,130,246,.08);}
+    .nav-sub:hover{color:#7dd3fc;background:rgba(14,165,233,0.08);}
     .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);box-shadow:var(--shadow);transition:var(--tr);}
     .card:hover{box-shadow:var(--shadow2);}
     .client-card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--r2);box-shadow:var(--shadow);padding:28px 20px;cursor:pointer;transition:var(--tr);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;min-height:130px;}
-    .client-card:hover{border-color:var(--blue);box-shadow:0 8px 24px rgba(59,130,246,.15);transform:translateY(-2px);}
+    .client-card:hover{border-color:var(--blue);box-shadow:0 8px 24px rgba(14,165,233,.15);transform:translateY(-2px);}
     .client-avatar{width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#dbeafe,#ede9fe);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:var(--blue);border:2px solid #bfdbfe;}
     .client-name{font-size:17px;font-weight:800;color:var(--text);transition:var(--tr);}
     .client-card:hover .client-name{color:var(--blue);}
@@ -92,12 +95,14 @@
     .col-in{color:#059669!important;font-weight:700;font-family:'JetBrains Mono',monospace;}
     .col-out{color:#dc2626!important;font-weight:700;font-family:'JetBrains Mono',monospace;}
     .input{background:#fff!important;border:1.5px solid var(--bm)!important;color:var(--text)!important;padding:9px 13px;border-radius:9px;width:100%;font-size:14px;transition:border-color .15s;font-family:inherit;}
-    .input:focus{outline:none;border-color:var(--blue)!important;box-shadow:0 0 0 3px rgba(59,130,246,.1);}
+    .input:focus{outline:none;border-color:var(--blue)!important;box-shadow:0 0 0 3px rgba(14,165,233,.1);}
     .input::placeholder{color:var(--muted);}
     .label{font-size:12px;font-weight:700;color:var(--sub);margin-bottom:5px;display:block;}
     .btn{background:var(--blue);color:#fff;padding:9px 18px;border-radius:9px;font-weight:700;font-size:14px;transition:var(--tr);border:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;}
     .btn:hover{background:var(--blue2);transform:translateY(-1px);}
     .btn:disabled{opacity:.5;cursor:not-allowed;transform:none;}
+    .btn-dark{background:var(--navy)!important;}
+    .btn-dark:hover{background:#1e293b!important;}
     .btn-sub{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:9px;font-weight:700;font-size:13px;cursor:pointer;transition:var(--tr);border:1.5px solid;background:transparent;}
     .icon-btn{width:30px;height:30px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;border:none;transition:var(--tr);background:transparent;}
     .icon-btn:hover.edit{background:#dbeafe;color:var(--blue);}
@@ -294,33 +299,33 @@
 </div>
 
 <!-- 로그인 -->
-<div id="login-view" style="position:fixed;inset:0;background:linear-gradient(135deg,#f0f9ff,#e0e7ff);display:flex;align-items:center;justify-content:center;padding:20px;z-index:600;">
-  <div style="background:#fff;padding:40px;border-radius:24px;border:1px solid var(--border);box-shadow:0 10px 30px rgba(0,0,0,.08);width:100%;max-width:400px;" class="animate-in">
-    <div style="text-align:center;margin-bottom:32px;">
-      <div style="width:56px;height:56px;background:var(--blue);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 14px;">📋</div>
-      <h1 style="font-size:22px;font-weight:900;color:var(--text);">CARE LEDGER</h1>
-      <p style="color:var(--muted);font-size:13px;margin-top:4px;">사회복지사 전용 금전관리 시스템</p>
+<div id="login-view" style="position:fixed;inset:0;background:linear-gradient(160deg,#f0f9ff 0%,#e0f2fe 60%,#f0fdf4 100%);display:flex;align-items:center;justify-content:center;padding:20px;z-index:600;">
+  <div style="background:#fff;padding:40px;border-radius:20px;border:1px solid var(--border);box-shadow:0 8px 32px rgba(14,165,233,.1);width:100%;max-width:400px;" class="animate-in">
+    <div style="margin-bottom:32px;">
+      <div style="color:var(--blue);font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px;">SMART CARE</div>
+      <h1 style="font-size:22px;font-weight:900;color:var(--navy);line-height:1.2;">사회복지사 금전관리</h1>
+      <p style="color:var(--muted);font-size:13px;margin-top:6px;">아이디와 비밀번호를 입력해 주세요.</p>
     </div>
     <!-- 로그인 폼 -->
     <div id="login-form" style="display:flex;flex-direction:column;gap:10px;">
       <input id="login-id" class="input" placeholder="아이디" type="text" style="font-size:15px;padding:12px;">
       <input id="login-pw" class="input" placeholder="비밀번호" type="password" style="font-size:15px;padding:12px;">
-      <button id="login-btn" class="btn" style="width:100%;padding:13px;font-size:15px;margin-top:4px;" onclick="handleLogin()">시스템 접속</button>
+      <button id="login-btn" class="btn btn-dark" style="width:100%;padding:13px;font-size:15px;margin-top:4px;" onclick="handleLogin()">로그인</button>
       <div style="text-align:center;margin-top:4px;">
         <a href="#" id="goto-signup" style="font-size:13px;color:var(--blue);text-decoration:none;">처음 사용하신가요? 회원가입 신청</a>
       </div>
     </div>
     <!-- 회원가입 폼 -->
     <div id="signup-form" style="display:none;flex-direction:column;gap:10px;">
-      <div style="text-align:center;margin-bottom:8px;">
-        <span style="font-size:15px;font-weight:800;color:var(--text);">회원가입 신청</span>
+      <div style="margin-bottom:8px;">
+        <span style="font-size:15px;font-weight:800;color:var(--navy);">회원가입 신청</span>
         <p style="font-size:12px;color:var(--muted);margin-top:4px;">관리자 승인 후 로그인이 가능합니다.</p>
       </div>
       <input id="signup-name" class="input" placeholder="이름 (필수)" type="text" style="font-size:15px;padding:12px;">
       <input id="signup-id" class="input" placeholder="아이디 — 영문·숫자 (필수)" type="text" style="font-size:15px;padding:12px;">
       <input id="signup-pw" class="input" placeholder="비밀번호 (필수)" type="password" style="font-size:15px;padding:12px;">
       <input id="signup-team" class="input" placeholder="소속 팀 (예: 1팀, 선택)" type="text" style="font-size:15px;padding:12px;">
-      <button id="signup-btn" class="btn" style="width:100%;padding:13px;font-size:15px;margin-top:4px;" onclick="handleSignup()">가입 신청</button>
+      <button id="signup-btn" class="btn btn-dark" style="width:100%;padding:13px;font-size:15px;margin-top:4px;" onclick="handleSignup()">가입 신청</button>
       <div style="text-align:center;margin-top:4px;">
         <a href="#" id="goto-login" style="font-size:13px;color:var(--blue);text-decoration:none;">로그인으로 돌아가기</a>
       </div>
@@ -334,13 +339,14 @@
   <div style="display:flex;height:100%;">
 
     <!-- 사이드바 -->
+    <!-- 사이드바 -->
     <aside style="width:216px;background:var(--sidebar);display:flex;flex-direction:column;flex-shrink:0;">
-      <div style="padding:18px 16px;border-bottom:1px solid #334155;">
-        <div style="color:#fff;font-weight:900;font-size:14px;">📋 SMART CARE</div>
+      <div style="padding:18px 16px;border-bottom:1px solid var(--sidebar-border);">
+        <div style="color:#fff;font-weight:900;font-size:14px;letter-spacing:-.01em;">SMART CARE</div>
         <div style="color:#64748b;font-size:10px;margin-top:2px;text-transform:uppercase;letter-spacing:.05em;">Care Ledger v2.0</div>
       </div>
       <div style="padding:10px;">
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;">
+        <div style="background:#0f172a;border:1px solid var(--sidebar-border);border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;">
           <div id="user-avatar" style="width:32px;height:32px;background:var(--blue);border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;flex-shrink:0;">-</div>
           <div style="overflow:hidden;">
             <div id="user-name" style="color:#fff;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">-</div>
@@ -357,7 +363,7 @@
         <button class="nav-sub" id="btn-trx">✍️ 수기 입력</button>
         <button class="nav-sub" id="btn-excel">📂 파일 업로드</button>
       </nav>
-      <div style="padding:8px;border-top:1px solid #334155;">
+      <div style="padding:8px;border-top:1px solid var(--sidebar-border);">
         <button onclick="handleLogout()" style="width:100%;padding:9px;border-radius:9px;font-size:12px;font-weight:700;color:#64748b;background:transparent;border:none;cursor:pointer;transition:var(--tr);" onmouseover="this.style.background='rgba(244,63,94,.1)';this.style.color='#f87171';" onmouseout="this.style.background='transparent';this.style.color='#64748b';">로그아웃</button>
       </div>
     </aside>
