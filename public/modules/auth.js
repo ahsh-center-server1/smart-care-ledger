@@ -70,14 +70,17 @@ export async function _enterApp() {
     document.querySelectorAll('.nav-item[data-view="report"],.nav-item[data-view="settings"]').forEach(el=>{
       el.style.display=isInputOnly?'none':'';
     });
-    // 파일 업로드는 excel.upload 권한으로 직접 제어
+    // 각 버튼을 고유 권한으로 제어
     const elExcel=document.getElementById('btn-h-excel');
     if(elExcel)elExcel.style.display=can('excel.upload')?'':'none';
-    // 나머지 입력자 제한 버튼
-    ['btn-h-receipt-print','btn-trx-view-toggle','btn-bulk-del','btn-h-fixed'].forEach(id=>{
-      const el=document.getElementById(id);
-      if(el)el.style.display=isInputOnly?'none':'';
-    });
+    const elReceiptPrint=document.getElementById('btn-h-receipt-print');
+    if(elReceiptPrint)elReceiptPrint.style.display=can('receipt.print')?'':'none';
+    const elViewToggle=document.getElementById('btn-trx-view-toggle');
+    if(elViewToggle)elViewToggle.style.display=isInputOnly?'none':'';
+    const elBulkDel=document.getElementById('btn-bulk-del');
+    if(elBulkDel)elBulkDel.style.display=can('trx.delete.bulk')?'':'none';
+    const elFixed=document.getElementById('btn-h-fixed');
+    if(elFixed)elFixed.style.display=can('settings.fixed')?'':'none';
     document.getElementById('login-view').style.display='none';
     await fetchBaseData();
     // isMobile / initMobileApp는 app.js에 정의됨 (모바일 전용, 미모듈화) — window 경유

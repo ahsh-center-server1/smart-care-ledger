@@ -102,7 +102,18 @@ export async function initPermissions() {
     const { getDoc, doc } = fb();
     const snap = await getDoc(doc(fdb(), COLS.CONFIG, 'permissions'));
     if (snap.exists()) {
-      S.permissions = snap.data();
+      const stored = snap.data();
+      // DEFAULT를 기준으로 병합: Firestore에 없는 키는 DEFAULT 값 사용
+      const merged = {};
+      for (const role of Object.keys(DEFAULT_PERMISSIONS)) {
+        merged[role] = {};
+        for (const key of Object.keys(DEFAULT_PERMISSIONS[role])) {
+          merged[role][key] = (stored[role] && key in stored[role])
+            ? stored[role][key]
+            : DEFAULT_PERMISSIONS[role][key];
+        }
+      }
+      S.permissions = merged;
     } else {
       S.permissions = DEFAULT_PERMISSIONS;
     }

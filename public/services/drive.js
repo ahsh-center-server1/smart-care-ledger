@@ -1,12 +1,9 @@
 /**
  * services/drive.js — Smart Care Ledger v2
- * Google Drive 파일 업로드 서비스 (OAuth 2.0)
+ * 이미지 압축 유틸리티
  */
 
 'use strict';
-
-import { S } from '../state.js';
-import { GOOGLE_OAUTH_CLIENT_ID, DRIVE_FOLDER_ID } from '../constants.js';
 
 /**
  * 이미지 파일을 Canvas로 압축
@@ -63,67 +60,4 @@ export function compressImage(file, maxPx=1200, quality=0.78) {
     reader.onerror = () => resolve(file);
     reader.readAsDataURL(file);
   });
-}
-
-/** Google OAuth 토큰 획득 (만료 시 자동 재발급) */
-export function getDriveToken() {
-  return new Promise((resolve, reject) => {
-    // 토큰이 있으면 재사용 (단, 만료 1분 전부터 재발급)
-    if (S.driveToken && S.driveTokenExpiry && Date.now() < S.driveTokenExpiry - 60000) {
-      resolve(S.driveToken); return;
-    }
-    if (!window.google?.accounts?.oauth2) {
-      reject(new Error('Google OAuth 라이브러리가 로드되지 않았습니다.')); return;
-    }
-    const client = google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_OAUTH_CLIENT_ID,
-      scope:     'https://www.googleapis.com/auth/drive.file',
-      callback:  (resp) => {
-        if (resp.error) { reject(new Error(resp.error)); return; }
-        S.driveToken       = resp.access_token;
-        S.driveTokenExpiry = Date.now() + (resp.expires_in || 3600) * 1000;
-        resolve(S.driveToken);
-      }
-    });
-    client.requestAccessToken();
-  });
-}
-
-/** Drive 지정 폴더에 파일 업로드 → 공개 URL 반환 */
-export async function uploadToDrive(file) {
-  // 1. 이미지 압축 (이미지 파일만, PDF 등은 그대로)
-  const uploadFile = await compressImage(file);
-
-  const token = await getDriveToken();
-
-  // 2. 파일 메타데이터 + 바이너리 멀티파트 업로드
-  const metadata = { name: uploadFile.name, parents: [DRIVE_FOLDER_ID] };
-  const form     = new FormData();
-  form.append('metadata', new Blob([JSON.stringify(metadata)], {type:'application/json'}));
-  form.append('file',     uploadFile);
-
-  const uploadRes = await fetch(
-    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',
-    { method:'POST', headers:{ Authorization:`Bearer ${token}` }, body:form }
-  );
-  if (!uploadRes.ok) {
-    const err = await uploadRes.json().catch(()=>({}));
-    // 토큰 만료(401) 시 토큰 초기화 후 1회 재시도
-    if (uploadRes.status === 401) {
-      S.driveToken=null; S.driveTokenExpiry=null;
-      throw new Error('인증이 만료되었습니다. 다시 시도해주세요.');
-    }
-    throw new Error('Drive 업로드 실패: ' + (err.error?.message||uploadRes.status));
-  }
-  const { id } = await uploadRes.json();
-
-  // 3. 파일 공개 권한 설정 (링크 있는 사람 보기)
-  await fetch(`https://www.googleapis.com/drive/v3/files/${id}/permissions`, {
-    method:  'POST',
-    headers: { Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
-    body:    JSON.stringify({ role:'reader', type:'anyone' })
-  });
-
-  // 4. 공유 링크 반환
-  return `https://drive.google.com/file/d/${id}/view?usp=sharing`;
 }

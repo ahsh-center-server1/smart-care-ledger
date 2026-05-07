@@ -9,7 +9,6 @@
 // ★ 설정값 — 본인 값으로 변경하세요
 // ─────────────────────────────────────────────
 export const GOOGLE_OAUTH_CLIENT_ID = '731965168909-80uq0h2andcc0pnlk5knreuofq47ad9v.apps.googleusercontent.com';
-export const DRIVE_FOLDER_ID        = '1Qie2S1UvKhyYpgWmWfhpUaNFrqF1cT7c';
 
 // ─────────────────────────────────────────────
 // Firestore 컬렉션명
