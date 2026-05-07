@@ -166,7 +166,7 @@ export function renderTrxForm(t){
     if(!amount){toast('금액을 입력하세요.','error');return;}
     const acc=S.accounts.find(a=>a.id===accId);
     const type=document.getElementById('f-type').value;
-    const today=new Date().toISOString().split('T')[0];
+    const date=document.getElementById('f-date').value||new Date().toISOString().split('T')[0];
     const time=document.getElementById('f-time')?.value||'';
     const cat=document.getElementById('f-cat').value;
     const desc=document.getElementById('f-desc').value;
@@ -176,14 +176,14 @@ export function renderTrxForm(t){
       if(toAccId===accId){toast('출금 계좌와 입금 계좌가 같습니다.','error');return;}
       const toAcc=S.accounts.find(a=>a.id===toAccId);
       const{addDoc,collection,updateDoc,doc}=fb();
-      const outRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:acc.clientId,accountId:accId,date:today,time,type:'자산이동',category:'자산이동',description:desc,amountIn:0,amountOut:amount,receiptUrl:'',linkedAccountId:toAccId});
-      const inRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:toAcc.clientId,accountId:toAccId,date:today,time,type:'자산이동',category:'자산이동',description:desc,amountIn:amount,amountOut:0,receiptUrl:'',linkedAccountId:accId,linkedTrxId:outRef.id});
+      const outRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:acc.clientId,accountId:accId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:0,amountOut:amount,receiptUrl:'',linkedAccountId:toAccId});
+      const inRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:toAcc.clientId,accountId:toAccId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:amount,amountOut:0,receiptUrl:'',linkedAccountId:accId,linkedTrxId:outRef.id});
       await updateDoc(doc(fdb(),COLS.TRANSACTIONS,outRef.id),{linkedTrxId:inRef.id});
       await updateAccBalance(accId); await updateAccBalance(toAccId);
       if(S.activeClient===acc.clientId||S.activeClient===toAcc?.clientId)await loadTransactions(S.activeClient);
       toast('✅ 거래가 복사되었습니다.','success');
     } else {
-      const trxData={clientId:acc.clientId,accountId:accId,date:today,time,type,category:cat,description:desc,
+      const trxData={clientId:acc.clientId,accountId:accId,date,time,type,category:cat,description:desc,
         amountIn:type==='수입'?amount:0,
         amountOut:(type==='지출'||type==='취소')?amount:0,
         receiptUrl:''};
