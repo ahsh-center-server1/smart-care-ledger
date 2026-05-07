@@ -165,7 +165,7 @@ export function renderTrxForm(t){
     if(!amount){toast('금액을 입력하세요.','error');return;}
     const acc=S.accounts.find(a=>a.id===accId);
     const type=document.getElementById('f-type').value;
-    const today=new Date().toISOString().split('T')[0];
+    const today=document.getElementById('f-date')?.value||new Date().toISOString().split('T')[0];
     const time=document.getElementById('f-time')?.value||'';
     const cat=document.getElementById('f-cat').value;
     const desc=document.getElementById('f-desc').value;
@@ -585,27 +585,45 @@ export async function applyFixedItems(){
   if(!clientId){toast('입주자를 먼저 선택하세요.','error');return;}
   await loadFixedItems(clientId);
   if(!S.fixedItems.length){toast('등록된 고정항목이 없습니다. 설정에서 추가하세요.','info');return;}
-  const now=new Date(), yearMonth=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-  const existing=S.transactions.filter(t=>(t.date||'').startsWith(yearMonth)&&t.isFixed);
-  const existKeys=new Set(existing.map(t=>t.fixedItemId));
-  const toAdd=S.fixedItems.filter(f=>!existKeys.has(f.id));
-  if(!toAdd.length){toast('이번 달 고정항목이 이미 입력되었습니다.','info');return;}
-  showConfirm('고정항목 입력',`${yearMonth} 기준 고정항목 ${toAdd.length}건을 입력하시겠습니까?`,async()=>{
-    const{addDoc,collection}=fb();
-    const today=yearMonth+'-01';
-    for(const f of toAdd){
-      await addDoc(collection(fdb(),COLS.TRANSACTIONS),{
-        clientId,accountId:f.accountId,
-        date:f.day?yearMonth+'-'+String(f.day).padStart(2,'0'):today,
-        type:f.type,category:f.category,description:f.description,
-        amountIn:f.type==='수입'?Number(f.amount):0,
-        amountOut:f.type==='지출'?Number(f.amount):0,
-        receiptUrl:'',isFixed:true,fixedItemId:f.id
-      });
-    }
-    toast(`${toAdd.length}건 입력 완료`,'success');
-    await loadTransactions(clientId);
-  },'입력');
+  // 기본값: 이전 달
+  const now=new Date();
+  const prev=new Date(now.getFullYear(),now.getMonth()-1,1);
+  const defaultYM=prev.getFullYear()+'-'+String(prev.getMonth()+1).padStart(2,'0');
+  // 월 선택 모달
+  document.getElementById('modal-body').innerHTML=`
+    <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">📌 고정항목 입력</h3>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div>
+        <label class="label">입력 대상 월</label>
+        <input type="month" id="fi-month-sel" class="input" value="${defaultYM}" style="padding:8px 12px;">
+      </div>
+      <button id="fi-month-ok" class="btn" style="padding:11px;width:100%;">📌 이 달로 입력하기</button>
+    </div>`;
+  document.getElementById('modal-wrap').classList.add('show');
+  document.getElementById('fi-month-ok').addEventListener('click',async()=>{
+    const yearMonth=document.getElementById('fi-month-sel').value;
+    if(!yearMonth){toast('월을 선택하세요.','error');return;}
+    closeModal();
+    const existing=S.transactions.filter(t=>(t.date||'').startsWith(yearMonth)&&t.isFixed);
+    const existKeys=new Set(existing.map(t=>t.fixedItemId));
+    const toAdd=S.fixedItems.filter(f=>!existKeys.has(f.id));
+    if(!toAdd.length){toast(`${yearMonth} 고정항목이 이미 입력되었습니다.`,'info');return;}
+    showConfirm('고정항목 입력',`${yearMonth} 기준 고정항목 ${toAdd.length}건을 입력하시겠습니까?`,async()=>{
+      const{addDoc,collection}=fb();
+      for(const f of toAdd){
+        await addDoc(collection(fdb(),COLS.TRANSACTIONS),{
+          clientId,accountId:f.accountId,
+          date:f.day?yearMonth+'-'+String(f.day).padStart(2,'0'):yearMonth+'-01',
+          type:f.type,category:f.category,description:f.description,
+          amountIn:f.type==='수입'?Number(f.amount):0,
+          amountOut:f.type==='지출'?Number(f.amount):0,
+          receiptUrl:'',isFixed:true,fixedItemId:f.id
+        });
+      }
+      toast(`${toAdd.length}건 입력 완료`,'success');
+      await loadTransactions(clientId);
+    },'입력');
+  });
 }
 export async function saveFixedItem(data){
   const{addDoc,setDoc,doc,collection}=fb();

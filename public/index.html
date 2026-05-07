@@ -11,7 +11,7 @@
   <!-- Firebase SDK (Firestore + Auth) -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
-    import { getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+    import { getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
     import { getAuth, signInWithCustomToken, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
 
     // ★ 본인 Firebase 설정으로 변경하세요
@@ -29,7 +29,7 @@
     const auth = getAuth(app);
 
     // 전역 노출
-    window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy };
+    window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch };
     window._fbAuth = { auth, signInWithCustomToken, signOut };
 
     // Firestore 준비 완료 → 앱 초기화 트리거
