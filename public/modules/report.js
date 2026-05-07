@@ -10,6 +10,7 @@ import { COLS, CAT_COLORS, STATUS_LABELS, STATUS_CLASSES, cs } from '../constant
 import { toast, showConfirm, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { can } from './permissions.js';
+import { getImageUrl } from '../services/storage.js';
 
 // ─────────────────────────────────────────────
 // 규칙 기반 자동 분석 (API 없음)
@@ -437,8 +438,7 @@ export async function renderRptBankStatements(clientId,year,month){
   section.style.display=stmts.length>0?'block':'none';
   gallery.innerHTML='';
   stmts.forEach(s=>{
-    const driveId=s.url.match(/\/d\/([^/?]+)/)?.[1];
-    const thumb=driveId?'https://drive.google.com/thumbnail?id='+driveId+'&sz=w300':s.url;
+    const thumb=getImageUrl(s.url,'w300');
     const cell=document.createElement('div');
     cell.style.cssText='border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;';
     cell.innerHTML='<div style="font-size:10px;color:var(--muted);padding:4px 6px;background:var(--bg);">'+s.label+(s.month?' · '+s.month:'')+'</div>'
@@ -482,7 +482,7 @@ export function openBankStatementsForApproval(){
   panel.style.cssText='position:fixed;right:16px;top:60px;width:400px;min-height:200px;max-height:90vh;z-index:9998;background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.25);display:flex;flex-direction:column;resize:both;overflow:hidden;border:1px solid var(--border);';
   const renderImg=()=>{
     const it=imgs[imgIdx];
-    const src=it.url.includes('drive.google.com/file/d/')?it.url.replace(/\/file\/d\/([^/]+).*/,'https://drive.google.com/thumbnail?id=$1&sz=w800'):it.url;
+    const src=getImageUrl(it.url,'w800');
     panel.querySelector('#bfp-img').src=src;
     panel.querySelector('#bfp-label').textContent=`${it.label} (${imgIdx+1}/${imgs.length})`;
   };
@@ -504,7 +504,7 @@ export function openBankStatementsForApproval(){
   panel.__renderImg=()=>{
     const it=window._bfpImgs[window._bfpIdx];
     let src=it.url;
-    if(src.includes('drive.google.com'))src=src.replace(/.*\/d\/([^/?]+).*/,'https://drive.google.com/thumbnail?id=$1&sz=w800');
+    src=getImageUrl(src,'w800');
     panel.querySelector('#bfp-img').src=src;
     panel.querySelector('#bfp-label').textContent=`${it.label} (${window._bfpIdx+1}/${window._bfpImgs.length})`;
   };

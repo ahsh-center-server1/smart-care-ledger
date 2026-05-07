@@ -9,7 +9,8 @@ import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.js';
 import { fb, fdb, batchAddDocs } from '../services/firestore.js';
-import { uploadToDrive, compressImage } from '../services/drive.js';
+import { compressImage } from '../services/drive.js';
+import { uploadToStorage, getImageUrl } from '../services/storage.js';
 import { fetchBaseData, loadTransactions } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
@@ -145,7 +146,7 @@ export function renderTrxForm(t){
       const receiptFile=document.getElementById('trx-receipt-file')?.files[0];
       if(receiptFile){
         try{
-          const url=await uploadToDrive(receiptFile);
+          const url=await uploadToStorage(receiptFile,`receipts/${acc.clientId}/${Date.now()}_${receiptFile.name}`);
           if(url)receiptUrl=url;
         }catch(e){toast('영수증 업로드 실패: '+e.message,'error');}
       }
@@ -400,16 +401,16 @@ export async function saveExcelData(){
     const uploadMonth=document.getElementById('xl-month-label')?.value||S.excelMonth;
     S.excelFile=null; S.excelRawRows=[]; S.excelMonth='';
     try{
-      toast('원본 파일 Drive 업로드 중...','info',3000);
-      const url=await uploadToDrive(uploadFile);
+      toast('원본 파일 업로드 중...','info',3000);
+      const url=await uploadToStorage(uploadFile,`excel/${acc.clientId}/${accId}/${Date.now()}_${uploadFile.name}`);
       const{addDoc:aDoc,collection:col}=fb();
       await aDoc(col(fdb(),COLS.EXCEL_UPLOADS),{
         accId,clientId:acc.clientId,filename:uploadFile.name,
         month:uploadMonth,url,uploadedAt:new Date().toISOString().split('T')[0],
         rawRows:uploadRawRows
       });
-      toast('원본 파일 Drive 저장 완료','success',2000);
-    }catch(e){toast('Drive 저장 실패 (거래는 정상 저장됨): '+e.message,'error',5000);}
+      toast('원본 파일 저장 완료','success',2000);
+    }catch(e){toast('파일 저장 실패 (거래는 정상 저장됨): '+e.message,'error',5000);}
   }
 }
 
@@ -464,7 +465,7 @@ export function onReceiptFileSelect(file){
     if(pdf)pdf.style.display='none'; if(img)img.style.display='block';
     const reader=new FileReader(); reader.onload=e=>{if(img)img.src=e.target.result;}; reader.readAsDataURL(file);
   } else {if(img)img.style.display='none'; if(pdf)pdf.style.display='block';}
-  if(btn){btn.disabled=false;btn.style.opacity='1';btn.style.cursor='pointer';btn.textContent='📤 Drive에 업로드';}
+  if(btn){btn.disabled=false;btn.style.opacity='1';btn.style.cursor='pointer';btn.textContent='📤 업로드';}
 }
 export async function doReceiptUpload(trxId){
   if(!_receiptSelectedFile){toast('파일을 선택하세요.','error');return;}
@@ -473,13 +474,13 @@ export async function doReceiptUpload(trxId){
   if(status){status.textContent='이미지 압축 중...';status.style.display='block';}
   try{
     btn.textContent='업로드 중...';
-    if(status)status.textContent='Google Drive에 업로드 중입니다...';
-    const url=await uploadToDrive(_receiptSelectedFile);
+    if(status)status.textContent='Firebase Storage에 업로드 중입니다...';
+    const url=await uploadToStorage(_receiptSelectedFile,`receipts/${S.activeClient||'all'}/${Date.now()}_${_receiptSelectedFile.name}`);
     const{doc,updateDoc}=fb();
     await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{receiptUrl:url});
     [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t)t.receiptUrl=url;});
     toast('업로드 완료!','success'); _receiptSelectedFile=null; closeModal(); renderHistoryTable();
-  }catch(e){btn.disabled=false;btn.textContent='📤 Drive에 업로드';if(status)status.style.display='none';toast('업로드 실패: '+e.message,'error');}
+  }catch(e){btn.disabled=false;btn.textContent='📤 업로드';if(status)status.style.display='none';toast('업로드 실패: '+e.message,'error');}
 }
 export function openReceiptUpload(trxId){openModal('receipt-upload',{id:trxId});}
 
@@ -492,7 +493,8 @@ export function openReceiptModal(url, trxId){
   const trx=trxId?[...S.transactions,...(S.reportData?.trxList||[])].find(x=>x.id===trxId):null;
   const driveMatch=url.match(/\/d\/([^/?]+)/);
   const isDrive=!!driveMatch;
-  const isLocalImg=/\.(jpg|jpeg|png|gif|webp|bmp)/i.test(url)&&!isDrive;
+  const isStorage=url.includes('firebasestorage.googleapis.com');
+  const isLocalImg=(/\.(jpg|jpeg|png|gif|webp|bmp)/i.test(url)||isStorage)&&!isDrive;
   // 기존 플로팅 패널 제거
   const existing=document.getElementById('receipt-float-panel');
   if(existing)existing.remove();
@@ -513,8 +515,7 @@ export function openReceiptModal(url, trxId){
   panel.style.cssText='position:fixed;right:16px;top:60px;width:300px;max-height:90vh;overflow-y:auto;background:#fff;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.18);z-index:9999;padding:16px;';
   let imgHtml='';
   if(isDrive){
-    const fileId=driveMatch[1];
-    imgHtml=`<div id="rfp-loading" style="text-align:center;padding:30px 0;"><div class="spinner" style="margin:0 auto 8px;"></div><p style="font-size:12px;color:var(--muted);">불러오는 중...</p></div><img id="rfp-img" src="https://drive.google.com/thumbnail?id=${fileId}&sz=w600" alt="영수증" style="display:none;max-width:100%;border-radius:8px;">`;
+    imgHtml=`<div id="rfp-loading" style="text-align:center;padding:30px 0;"><div class="spinner" style="margin:0 auto 8px;"></div><p style="font-size:12px;color:var(--muted);">불러오는 중...</p></div><img id="rfp-img" src="${getImageUrl(url,'w600')}" alt="영수증" style="display:none;max-width:100%;border-radius:8px;">`;
   } else if(isLocalImg){
     imgHtml=`<img src="${url}" alt="영수증" style="max-width:100%;border-radius:8px;">`;
   } else {
@@ -558,11 +559,9 @@ export async function printReceiptSheet(){
   if(!trxWithReceipt.length){toast('증빙이 있는 거래가 없습니다.','info');return;}
   const client=S.clients.find(c=>c.id===clientId)||{name:''};
   const win=window.open('','_blank');
-  const driveIdOf=url=>{const m=url.match(/\/d\/([^/?]+)/);return m?m[1]:null;};
   let cells='';
   trxWithReceipt.forEach((t,i)=>{
-    const id=driveIdOf(t.receiptUrl);
-    const imgSrc=id?'https://drive.google.com/thumbnail?id='+id+'&sz=w400':t.receiptUrl;
+    const imgSrc=getImageUrl(t.receiptUrl,'w400');
     cells+='<div class="cell"><div class="cell-info">'+t.date+' · '+(t.description||'')+' · '+(t.amountOut>0?t.amountOut.toLocaleString()+'원':t.amountIn.toLocaleString()+'원')+'</div><div class="cell-img"><img src="'+imgSrc+'" onerror="this.src=\'\';this.parentElement.innerHTML=\'이미지 없음\'"></div></div>';
     if((i+1)%8===0&&i+1<trxWithReceipt.length)cells+='<div style="grid-column:1/-1;page-break-after:always;height:0;margin:0;padding:0;border:none;"></div>';
   });
@@ -717,8 +716,7 @@ export async function openBankStatementModal(accountId,yearParam,monthParam){
     filtered.forEach((item,i)=>{
       const url=typeof item==='string'?item:item.url;
       const mon=typeof item==='string'?'':item.month||'';
-      const driveId=url.match(/\/d\/([^/?]+)/)?.[1];
-      const thumb=driveId?'https://drive.google.com/thumbnail?id='+driveId+'&sz=w200':url;
+      const thumb=getImageUrl(url,'w200');
       const cell=document.createElement('div');
       cell.style.cssText='position:relative;border:1px solid var(--border);border-radius:8px;overflow:hidden;';
       cell.innerHTML='<div style="font-size:10px;color:var(--muted);padding:3px 6px;background:var(--bg);text-align:center;">'+(mon||'날짜없음')+'</div><div style="aspect-ratio:3/4;"><img src="'+thumb+'" style="width:100%;height:100%;object-fit:cover;" onerror="this.src=\'\'"></div><button style="position:absolute;top:24px;right:4px;background:rgba(220,38,38,.85);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;" data-idx="'+i+'">✕</button>';
@@ -749,8 +747,7 @@ export async function renderBankStatementsList(accountId, targetEl){
   stmts.forEach(item=>{
     const url=item.url||'';
     const mon=item.month||'';
-    const driveId=url.match(/\/d\/([^/?]+)/)?.[1];
-    const thumb=driveId?'https://drive.google.com/thumbnail?id='+driveId+'&sz=w200':url;
+    const thumb=getImageUrl(url,'w200');
     const cell=document.createElement('div');
     cell.style.cssText='display:inline-block;margin:4px;cursor:pointer;border:1px solid var(--border);border-radius:8px;overflow:hidden;width:100px;vertical-align:top;';
     cell.innerHTML='<div style="font-size:10px;color:var(--muted);padding:2px 4px;text-align:center;">'+(mon||'날짜없음')+'</div><img src="'+thumb+'" style="width:100%;height:130px;object-fit:cover;" onerror="this.src=\'\'">';
@@ -765,8 +762,7 @@ export async function uploadBankStatements(files,accRef,existing,renderGallery){
   for(let i=0;i<total;i++){
     if(status)status.textContent=`업로드 중... ${i+1}/${total}`;
     try{
-      const compressed=await compressImage(files[i]);
-      const url=await uploadToDrive(compressed);
+      const url=await uploadToStorage(files[i],`bankbooks/${accRef.id}/${monthVal}_${Date.now()}_${files[i].name}`);
       existing.push({url,month:monthVal});
       const{updateDoc}=fb();
       await updateDoc(accRef,{bankStatements:[...existing]});
