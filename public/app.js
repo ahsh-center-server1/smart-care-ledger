@@ -25,11 +25,11 @@ import { S } from './state.js';
 import {
   COLS, CAT_COLORS, cs,
   STATUS_LABELS, STATUS_CLASSES,
-  GOOGLE_OAUTH_CLIENT_ID, DRIVE_FOLDER_ID,
 } from './constants.js';
 import { toast, showConfirm, closeConfirm, setText, showLoading, escAttr } from './utils/ui.js';
 import { fb, fdb } from './services/firestore.js';
-import { compressImage, getDriveToken, uploadToDrive } from './services/drive.js';
+import { compressImage } from './services/drive.js';
+import { uploadToStorage } from './services/storage.js';
 
 import * as Auth     from './modules/auth.js';
 import { initPermissions } from './modules/permissions.js';
@@ -511,7 +511,7 @@ async function submitMobileTrx(){
   if(receiptFile){
     try{
       showLoading(true);
-      receiptUrl=await uploadToDrive(receiptFile);
+      receiptUrl=await uploadToStorage(receiptFile,`receipts/${M.clientId}/${Date.now()}_${receiptFile.name}`);
     }catch(e){toast('영수증 업로드 실패: '+e.message,'error');}
     finally{showLoading(false);}
   }
@@ -693,7 +693,7 @@ Object.assign(window, {
   S, COLS, CAT_COLORS, cs, STATUS_LABELS, STATUS_CLASSES,
   fb, fdb,
   toast, showConfirm, closeConfirm, setText, showLoading,
-  compressImage, getDriveToken, uploadToDrive,
+  compressImage, uploadToStorage,
   // core.js 코어 (명시적 import)
   fetchBaseData: Core.fetchBaseData,
   loadTransactions: Core.loadTransactions,
