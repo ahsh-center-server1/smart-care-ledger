@@ -32,7 +32,7 @@ import { compressImage } from './services/drive.js';
 import { uploadToStorage } from './services/storage.js';
 
 import * as Auth     from './modules/auth.js';
-import { initPermissions } from './modules/permissions.js';
+import { initPermissions, can } from './modules/permissions.js';
 import * as Core     from './modules/core.js';
 import * as Dash     from './modules/dashboard.js';
 import * as Trx      from './modules/transactions.js';
@@ -449,15 +449,20 @@ function renderMobileHistory(){
     const isIn=t.amountIn>0;
     const amt=isIn?'+'+Number(t.amountIn).toLocaleString():'-'+Number(t.amountOut||0).toLocaleString();
     const amtColor=isIn?'#10b981':'#ef4444';
-    const receiptBtn=t.receiptUrl?`<button onclick="event.stopPropagation();openReceiptModal('${escAttr(t.receiptUrl)}')" style="font-size:12px;color:#f59e0b;font-weight:700;background:none;border:none;cursor:pointer;padding:0 2px;" title="영수증 보기">📎</button>`:'';
+    const receiptBtn=t.receiptUrl
+      ?`<button onclick="event.stopPropagation();openReceiptModal('${escAttr(t.receiptUrl)}','${t.id}')" style="font-size:12px;color:#f59e0b;font-weight:700;background:none;border:none;cursor:pointer;padding:0 2px;" title="영수증 보기">📎</button>`
+      :can('receipt.upload')?`<button onclick="event.stopPropagation();openReceiptUpload('${t.id}')" style="font-size:11px;color:var(--muted);background:#f1f5f9;border:1px solid var(--border);border-radius:6px;padding:2px 7px;cursor:pointer;" title="영수증 첨부">＋ 영수증</button>`:'';
     const cardId='mtrx-'+t.id;
     return `<div id="${cardId}" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:default;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.description||'-'} ${receiptBtn}</div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.description||'-'}</div>
           <div style="font-size:11px;color:var(--muted);margin-top:3px;">${t.date||''} · ${acc} · ${t.category||''}</div>
         </div>
-        <div style="font-size:14px;font-weight:800;color:${amtColor};white-space:nowrap;">${amt}원</div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+          <div style="font-size:14px;font-weight:800;color:${amtColor};white-space:nowrap;">${amt}원</div>
+          ${receiptBtn}
+        </div>
       </div>
     </div>`;
   }).join('');
