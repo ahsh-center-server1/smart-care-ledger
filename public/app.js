@@ -351,7 +351,7 @@ window.onFirebaseReady = async function() {
 
 // ─────────────────────────────────────────────
 // 모바일 뷰
-// ─────────────────────────────────────────────
+// ───────────��─────────────────────────────────
 let M={clientId:null,clients:[],transactions:[],accounts:[]};
 
 function isMobile(){return window.innerWidth<=768&&('ontouchstart' in window||navigator.maxTouchPoints>0);}
@@ -852,8 +852,17 @@ function bindEvents(){
   document.getElementById('signup-id')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleSignup();});
   document.getElementById('signup-pw')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleSignup();});
 
-  // 네비게이션
+  // 네비게이션 (사이드바)
   document.querySelectorAll('.nav-item[data-view]').forEach(btn=>btn.addEventListener('click',()=>Core.changeView(btn.dataset.view)));
+  
+  // 모바일 하단 네비게이션
+  document.querySelectorAll('.mobile-nav-item[data-view]').forEach(btn=>btn.addEventListener('click',()=>{
+    Core.changeView(btn.dataset.view);
+    // 모바일 네비 active 상태 업데이트
+    document.querySelectorAll('.mobile-nav-item').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+  }));
+  
   document.addEventListener('click',e=>{
     if(e.target.classList.contains('rpt-subtab'))Core.switchRptSubtab(e.target.dataset.subtab);
   });

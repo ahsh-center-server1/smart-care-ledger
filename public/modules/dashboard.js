@@ -7,11 +7,15 @@
 
 import { S } from '../state.js';
 import { loadTransactions, changeView } from './core.js';
+import { emptyState } from '../utils/ui.js';
 
 export function renderDashboard() {
   const grid=document.getElementById('client-grid'); if(!grid)return;
   grid.innerHTML='';
-  if (!S.clients.length) { grid.innerHTML='<div class="empty-state"><div class="icon">👤</div>등록된 입주자가 없습니다.</div>'; return; }
+  if (!S.clients.length) { 
+    grid.innerHTML = emptyState('👤', '등록된 입주자가 없습니다.', '입주자 등록하기', "changeView('settings')");
+    return; 
+  }
   S.clients.forEach(client=>{
     const card=document.createElement('div'); card.className='client-card';
     // F001: 입주자별 계좌 잔액 합산 미리보기
