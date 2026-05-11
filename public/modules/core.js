@@ -207,6 +207,9 @@ export function changeView(view) {
   });
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
   document.querySelector(`.nav-item[data-view="${view}"]`)?.classList.add('active');
+  // 모바일 하단 네비게이션도 동기화
+  document.querySelectorAll('.mobile-nav-item').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`.mobile-nav-item[data-view="${view}"]`)?.classList.add('active');
   const titles={
     dashboard: ['대시보드','관리 중인 입주자를 선택하세요'],
     history:   ['거래 내역','입주자별 거래 내역'],

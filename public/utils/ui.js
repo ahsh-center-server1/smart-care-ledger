@@ -50,10 +50,46 @@ export function toast(msg, type='info', duration=3000) {
   const icons = { success:'✅', error:'❌', info:'ℹ️' };
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `<span>${icons[type]||'ℹ️'}</span><span>${msg}</span>`;
+  el.innerHTML = `<span aria-hidden="true">${icons[type]||'ℹ️'}</span><span>${msg}</span>`;
   c.appendChild(el);
   setTimeout(() => {
     el.style.animation = 'toastOut .25s ease forwards';
     setTimeout(() => el.remove(), 260);
   }, duration);
+}
+
+/**
+ * 스켈레톤 로더 생성 유틸리티
+ * @param {string} type - 'card' | 'row' | 'text'
+ * @param {number} count - 생성할 개수
+ * @returns {string} HTML 문자열
+ */
+export function skeleton(type = 'card', count = 3) {
+  const templates = {
+    card: '<div class="skeleton skeleton-card"></div>',
+    row: '<div class="skeleton skeleton-row"></div>',
+    text: '<div class="skeleton skeleton-text"></div>',
+    textShort: '<div class="skeleton skeleton-text short"></div>',
+    textLong: '<div class="skeleton skeleton-text long"></div>',
+  };
+  return Array(count).fill(templates[type] || templates.card).join('');
+}
+
+/**
+ * 빈 상태 UI 생성 유틸리티
+ * @param {string} icon - 아이콘 (이모지)
+ * @param {string} message - 안내 메시지
+ * @param {string} [ctaText] - CTA 버튼 텍스트 (옵션)
+ * @param {string} [ctaAction] - CTA 버튼 onclick 핸들러 (옵션)
+ * @returns {string} HTML 문자열
+ */
+export function emptyState(icon, message, ctaText, ctaAction) {
+  let html = `<div class="empty-state">
+    <div class="icon" aria-hidden="true">${icon}</div>
+    <p>${message}</p>`;
+  if (ctaText && ctaAction) {
+    html += `<button class="btn" onclick="${ctaAction}">${ctaText}</button>`;
+  }
+  html += '</div>';
+  return html;
 }

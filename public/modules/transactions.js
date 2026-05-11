@@ -7,7 +7,7 @@
 
 import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
-import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.js';
+import { toast, showConfirm, showLoading, setText, escAttr, emptyState } from '../utils/ui.js';
 import { fb, fdb, batchDeleteDocs, batchUpdateDocs } from '../services/firestore.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
 import { openModal } from './modals.js';
@@ -104,11 +104,11 @@ export function renderHistoryTable() {
   const tbody=document.getElementById('h-body'), ce=document.getElementById('h-count');
   const total=S.filteredTrx.length;
   if (!S.activeClient) {
-    tbody.innerHTML='<tr><td colspan="9"><div class="empty-state"><div class="icon">👤</div>위에서 입주자를 선택하세요</div></td></tr>';
+    tbody.innerHTML=`<tr><td colspan="9">${emptyState('👤', '위에서 입주자를 선택하세요')}</td></tr>`;
     if(ce)ce.textContent=''; return;
   }
   if (!total) {
-    tbody.innerHTML='<tr><td colspan="9"><div class="empty-state"><div class="icon">📭</div>거래 내역이 없습니다</div></td></tr>';
+    tbody.innerHTML=`<tr><td colspan="9">${emptyState('📭', '거래 내역이 없습니다', '거래 추가하기', "openModal('trx')")}</td></tr>`;
     if(ce)ce.textContent=''; return;
   }
   const start=(S.page-1)*S.pageSize, end=Math.min(start+S.pageSize,total);
@@ -395,7 +395,7 @@ export async function confirmBulkDelete(){
   // confirmed 월 거래 포함 여부 체크
   const lockedChecked=checked.filter(cb=>{const t=S.transactions.find(x=>x.id===cb.value);return t&&isConfirmedLocked(t.clientId,t.date);});
   if(lockedChecked.length){toast(`최종 결재 완료된 월의 거래 ${lockedChecked.length}건이 포함되어 있습니다. 해당 거래는 삭제할 수 없습니다.`,'error');return;}
-  showConfirm('일괄 삭제',`선택한 ${checked.length}건을 삭제하시겠습니까?`,async()=>{
+  showConfirm('일괄 삭제',`선택한 ${checked.length}건을 삭제하시겠��니까?`,async()=>{
     const checkedIds=new Set(checked.map(c=>c.value));
     const toDelete=[]; // 배치 삭제 목록
     const linkedToDelete=[]; // 연결 거래 배치 삭제
