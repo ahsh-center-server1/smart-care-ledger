@@ -16,7 +16,7 @@ import { toast, showConfirm, showLoading, escAttr } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchMixedOps } from '../services/firestore.js';
 import { COLS } from '../constants.js';
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
-import { fetchBaseData, loadTransactions } from './core.js';
+import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
 import { can, savePermissions, DEFAULT_PERMISSIONS } from './permissions.js';
 
@@ -135,7 +135,7 @@ export async function toggleClientActive(id,makeActive){
     const{doc,updateDoc}=fb();
     await updateDoc(doc(fdb(),COLS.CLIENTS,id),{active:makeActive});
     toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
-    await fetchBaseData(); renderManagement();
+    await refetchClients(); renderManagement();
   }catch(e){ toast('저장 오류: '+e.message,'error'); }
 }
 export async function toggleAccountActive(id,makeActive){
@@ -143,17 +143,19 @@ export async function toggleAccountActive(id,makeActive){
     const{doc,updateDoc}=fb();
     await updateDoc(doc(fdb(),COLS.ACCOUNTS,id),{active:makeActive});
     toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
-    await fetchBaseData(); renderManagement();
+    await refetchAccounts(); renderManagement();
   }catch(e){ toast('저장 오류: '+e.message,'error'); }
 }
 
 export function confirmDelete(type,id){
   const labels={client:'입주자',account:'계좌',staff:'직원'};
+  const refetchByType={client:refetchClients,account:refetchAccounts,staff:refetchUsers};
   showConfirm(labels[type]+' 삭제',labels[type]+'를 삭제하시겠습니까?',async()=>{
     const{doc,deleteDoc}=fb();
     const cols={client:COLS.CLIENTS,account:COLS.ACCOUNTS,staff:COLS.USERS};
     await deleteDoc(doc(fdb(),cols[type],id));
-    await fetchBaseData(); renderManagement();
+    await (refetchByType[type]||fetchBaseData)();
+    renderManagement();
     toast('삭제됨','success');
   },'삭제');
 }
@@ -351,7 +353,7 @@ export async function addCategory(type,clientId=''){
   if(clientId)data.clientId=clientId;
   await addDoc(collection(fdb(),COLS.CATEGORIES),data);
   if(input)input.value='';
-  await fetchBaseData(); loadSettings();
+  await refetchCategories(); loadSettings();
   toast(`"${name}" 추가됨`,'success');
 }
 export async function deleteCategory(type,name,clientId=''){
@@ -367,7 +369,7 @@ export async function deleteCategory(type,name,clientId=''){
     if(!clientId&&data.clientId)continue;
     await deleteDoc(doc(fdb(),COLS.CATEGORIES,d.id));
   }
-  await fetchBaseData(); loadSettings(); toast(`"${name}" 삭제됨`,'success');
+  await refetchCategories(); loadSettings(); toast(`"${name}" 삭제됨`,'success');
 }
 export async function addRule(){
   const kw=(document.getElementById('new-rule-kw')?.value||'').trim();
@@ -382,12 +384,12 @@ export async function addRule(){
   if(clientId)data.clientId=clientId;
   await addDoc(collection(fdb(),COLS.CATEGORIES),data);
   const kwInput=document.getElementById('new-rule-kw'); if(kwInput)kwInput.value='';
-  await fetchBaseData(); loadSettings(); toast(`"${kw}" 규칙 추가됨`,'success');
+  await refetchCategories(); loadSettings(); toast(`"${kw}" 규칙 추가됨`,'success');
 }
 export async function deleteRule(docId){
   const{doc,deleteDoc}=fb();
   await deleteDoc(doc(fdb(),COLS.CATEGORIES,docId));
-  await fetchBaseData(); loadSettings(); toast('규칙 삭제됨','success');
+  await refetchCategories(); loadSettings(); toast('규칙 삭제됨','success');
 }
 // Phase 2 최적화: 배치 삭제 + 배치 추가
 export async function resetCategories(){
@@ -412,7 +414,7 @@ export async function resetCategories(){
     // 배치 추가
     const toAdd=defaults.map(d=>({col:COLS.CATEGORIES,data:d}));
     if(toAdd.length)await batchAddDocs(toAdd);
-    await fetchBaseData(); loadSettings(); toast('기본값으로 초기화됨','success');
+    await refetchCategories(); loadSettings(); toast('기본값으로 초기화됨','success');
   },'초기화');
 }
 
@@ -725,6 +727,6 @@ window.approveStaff = async (docId) => {
   try {
     await updateDoc(doc(fdb(), COLS.USERS, docId), { approved: true });
     toast('승인 완료. 해당 직원이 로그인 가능합니다.', 'success');
-    await fetchBaseData(); renderManagement();
+    await refetchUsers(); renderManagement();
   } catch(e) { toast('승인 오류: '+e.message, 'error'); }
 };

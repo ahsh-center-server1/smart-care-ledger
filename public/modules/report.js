@@ -13,6 +13,30 @@ import { can } from './permissions.js';
 import { getImageUrl } from '../services/storage.js';
 
 // ─────────────────────────────────────────────
+// 거래 캐시 활용 헬퍼
+// ─────────────────────────────────────────────
+/**
+ * 보고서/연간 통계용 거래 fetch.
+ * 같은 입주자의 전체 거래가 이미 S.transactions에 로드되어 있으면 캐시 재사용.
+ * 그렇지 않으면 fetch 후 S.transactions에 저장 (다음 호출 시 재사용 가능).
+ */
+async function getClientTrxAll(clientId) {
+  if (S.activeClient === clientId
+      && S.trxRange === 'all'
+      && Array.isArray(S.transactions)
+      && S.transactions.length) {
+    return S.transactions;
+  }
+  const { getDocs, collection, query, where } = fb();
+  const snap = await getDocs(query(collection(fdb(),COLS.TRANSACTIONS), where('clientId','==',clientId)));
+  const trx = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+  S.transactions = trx;
+  S.activeClient = clientId;
+  S.trxRange = 'all';
+  return trx;
+}
+
+// ─────────────────────────────────────────────
 // 규칙 기반 자동 분석 (API 없음)
 // ─────────────────────────────────────────────
 export function generateRuleBasedSummary(reportData) {
@@ -111,13 +135,14 @@ export async function loadAnnual(){
   if(!clientId){toast('입주자를 선택하세요.','error');return;}
   showLoading(true);
   const{getDocs,collection,query,where}=fb();
-  const [snap,budgetSnap]=await Promise.all([
-    getDocs(query(collection(fdb(),COLS.TRANSACTIONS),where('clientId','==',clientId))),
+  // 거래는 캐시 우선, 예산은 항상 fetch (작은 데이터)
+  const [trxAll,budgetSnap]=await Promise.all([
+    getClientTrxAll(clientId),
     getDocs(query(collection(fdb(),COLS.BUDGETS),where('clientId','==',clientId),where('year','==',year))),
   ]);
   const budgetMap={};
   budgetSnap.docs.forEach(d=>{const b=d.data();budgetMap[b.category]=Number(b.amount||0);});
-  const all=snap.docs.map(d=>({id:d.id,...d.data()})).filter(t=>t.date&&t.date.startsWith(String(year)));
+  const all=trxAll.filter(t=>t.date&&t.date.startsWith(String(year)));
   showLoading(false);
   let totalIn=0,totalOut=0;
   const monthly={},catMap={};
@@ -170,9 +195,8 @@ export async function loadReport(){
   try{
     const{getDocs,collection,query,where}=fb();
     const mStr=year+'-'+String(month).padStart(2,'0');
-    const tSnap=await getDocs(query(collection(fdb(),COLS.TRANSACTIONS),where('clientId','==',clientId)));
-    // B002: 전체 거래 목록 보존 (계좌 현황 잔액 계산용)
-    const allTrx=tSnap.docs.map(d=>({id:d.id,...d.data()}));
+    // B002: 전체 거래 목록 보존 (계좌 현황 잔액 계산용) — 캐시 우선 사용
+    const allTrx=await getClientTrxAll(clientId);
     const trxList=allTrx
       .filter(t=>t.date&&t.date.startsWith(mStr))
       .sort((a,b)=>{

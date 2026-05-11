@@ -11,7 +11,7 @@ import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.j
 import { fb, fdb, batchAddDocs } from '../services/firestore.js';
 import { compressImage } from '../services/drive.js';
 import { uploadToStorage, getImageUrl } from '../services/storage.js';
-import { fetchBaseData, loadTransactions } from './core.js';
+import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
 import { can } from './permissions.js';
@@ -817,7 +817,7 @@ export function renderClientForm(c){
     const data={id:document.getElementById('fc-id').value,name:document.getElementById('fc-name').value,contact:isEdit?c.contact||'':'',memo:document.getElementById('fc-memo').value,userIds:staffIds,teamLeader:leaderId};
     const{doc,setDoc}=fb();
     await setDoc(doc(fdb(),COLS.CLIENTS,data.id),data);
-    toast('저장됨','success'); closeModal(); await fetchBaseData(); renderManagement();
+    toast('저장됨','success'); closeModal(); await refetchClients(); renderManagement();
   });
 }
 
@@ -850,7 +850,7 @@ export function renderAccountForm(a){
     const{doc,setDoc}=fb();
     await setDoc(doc(fdb(),COLS.ACCOUNTS,id),data);
     await updateAccBalance(id);
-    toast('저장됨','success'); closeModal(); await fetchBaseData(); renderManagement();
+    toast('저장됨','success'); closeModal(); await refetchAccounts(); renderManagement();
   });
 }
 
@@ -877,7 +877,7 @@ export function renderStaffForm(u){
     if(pw)data.password=pw;
     const{doc,setDoc}=fb();
     await setDoc(doc(fdb(),COLS.USERS,id),data);
-    toast('저장됨','success'); closeModal(); await fetchBaseData(); renderManagement();
+    toast('저장됨','success'); closeModal(); await refetchUsers(); renderManagement();
   });
 }
 
@@ -1035,7 +1035,7 @@ async function saveBulkStaff(parsed){
     const adds=valid.map(s=>({col:COLS.USERS,data:{userId:s.userId,name:s.name,password:s.password,role:s.role,team:s.team||'',approved:true}}));
     await batchAddDocs(adds);
     toast(`직원 ${valid.length}명 등록 완료`,'success',4000);
-    closeModal(); await fetchBaseData(); renderManagement();
+    closeModal(); await refetchUsers(); renderManagement();
   }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
 }
 
@@ -1107,7 +1107,7 @@ async function saveBulkClients(parsed){
     const adds=valid.map(c=>({col:COLS.CLIENTS,data:{name:c.name,userIds:c.userIds||'',teamLeader:c.teamLeader||'',memo:c.memo||'',contact:'',active:true}}));
     await batchAddDocs(adds);
     toast(`입주자 ${valid.length}명 등록 완료`,'success',4000);
-    closeModal(); await fetchBaseData(); renderManagement();
+    closeModal(); await refetchClients(); renderManagement();
   }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
 }
 
@@ -1179,6 +1179,6 @@ async function saveBulkAccounts(parsed){
     const adds=valid.map(a=>({col:COLS.ACCOUNTS,data:{clientId:a.clientId,label:a.label,accountNumber:'',initialBalance:a.balance,initialBalanceDate:a.date,currentBalance:a.balance,active:true}}));
     await batchAddDocs(adds);
     toast(`계좌 ${valid.length}개 등록 완료`,'success',4000);
-    closeModal(); await fetchBaseData(); renderManagement();
+    closeModal(); await refetchAccounts(); renderManagement();
   }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
 }

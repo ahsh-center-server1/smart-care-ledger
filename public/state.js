@@ -11,6 +11,7 @@ export const S = {
   users: [], clients: [], accounts: [], categories: [],
   allClients: [], allAccounts: [],   // 비활성 포함 전체 목록 (설정 화면용)
   transactions: [], filteredTrx: [],
+  trxRange: 'month',                 // S.transactions의 fetch 범위 ('month' | 'all' | {start,end})
   activeClient: null,
   sortKey: 'date', sortDir: 'asc',       // 기본 오름차순(과거→최신)
   rptSortKey: 'date', rptSortDir: 'asc', // 보고서 거래내역 정렬

@@ -13,6 +13,32 @@ import { loadTransactions, isConfirmedLocked } from './core.js';
 import { openModal } from './modals.js';
 import { can } from './permissions.js';
 
+// 필터 범위가 현재 캐시 범위(S.trxRange)를 벗어나는지 검사
+function needsBroaderRange(filterStart, filterEnd, cachedRange) {
+  if (cachedRange === 'all') return false;
+  if (!filterStart && !filterEnd) return false;
+  if (cachedRange === 'month') {
+    const now = new Date();
+    const ymStart = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
+    const lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+    const ymEnd = ymStart.substring(0,8)+String(lastDay).padStart(2,'0');
+    if (filterStart && filterStart < ymStart) return true;
+    if (filterEnd && filterEnd > ymEnd) return true;
+    return false;
+  }
+  if (cachedRange && typeof cachedRange === 'object' && cachedRange.start && cachedRange.end) {
+    if (filterStart && filterStart < cachedRange.start) return true;
+    if (filterEnd && filterEnd > cachedRange.end) return true;
+    return false;
+  }
+  return false;
+}
+
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
 // ① 계좌 필터 셀렉터 업데이트 (현재 선택된 입주자 기준)
 export function rebuildAccountFilter(){
   const sel=document.getElementById('h-account'); if(!sel)return;
@@ -32,6 +58,13 @@ export function applyFilters() {
   const tf=document.getElementById('h-type')?.value||'all';
   const rf=document.getElementById('h-receipt')?.value||'all';
   const af=document.getElementById('h-account')?.value||'';   // ① 계좌 필터
+  // 캐시 범위 부족 시 추가 fetch (loadTransactions 끝나면 applyFilters 자동 재호출)
+  if (S.activeClient && (sd || ed) && needsBroaderRange(sd, ed, S.trxRange)) {
+    const reqStart = sd || '1900-01-01';
+    const reqEnd   = ed || todayStr();
+    loadTransactions(S.activeClient, { range: { start: reqStart, end: reqEnd } });
+    return;
+  }
   S.filteredTrx=S.transactions.filter(t=>{
     const desc=String(t.description||'').toLowerCase();
     return desc.includes(kw)

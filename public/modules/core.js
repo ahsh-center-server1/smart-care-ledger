@@ -19,66 +19,149 @@ import * as Rpt      from './report.js';
 import * as Settings from './settings.js';
 import { can } from './permissions.js';
 
-export async function fetchBaseData() {
+/**
+ * 기본 데이터 로드.
+ * @param {Object} [opts]
+ * @param {string[]} [opts.only] - 갱신할 컬렉션만 명시 ('users'|'clients'|'accounts'|'categories'|'reports'|'monthlyStats')
+ *                                  미지정 시 전체 로드 (로그인·새로고침용)
+ */
+export async function fetchBaseData(opts) {
   const { getDocs, collection, query, where } = fb();
   const db=fdb(), isAdmin=can('nav.staff');
-  const [uSnap,cSnap,aSnap,catSnap,rSnap] = await Promise.all([
-    getDocs(collection(db,COLS.USERS)),
-    getDocs(collection(db,COLS.CLIENTS)),
-    getDocs(collection(db,COLS.ACCOUNTS)),
-    getDocs(collection(db,COLS.CATEGORIES)),
-    getDocs(collection(db,COLS.REPORTS)),
-  ]);
-  S.users      = uSnap.docs.map(d=>{const u={id:d.id,...d.data()};u.team=u.team||'';return u;});
-  S.categories = catSnap.docs.map(d=>({id:d.id,...d.data()}));
-  const allClients  = cSnap.docs.map(d=>({id:d.id,...d.data()}));
-  const allAccounts = aSnap.docs.map(d=>({id:d.id,...d.data()}));
-  S.allClients  = allClients;   // 비활성 포함 전체 목록 (설정 화면용)
-  S.allAccounts = allAccounts;  // 비활성 포함 전체 목록 (설정 화면용)
-  const showInactive=S.settings?.showInactive||false;
-  const activeClients=showInactive?allClients:allClients.filter(c=>c.active!==false);
-  const activeAccounts=showInactive?allAccounts:allAccounts.filter(a=>a.active!==false);
-  S.clients  = isAdmin ? activeClients : activeClients.filter(c=>{
-    const ids=String(c.userIds||'').split(',').map(s=>s.trim());
-    const myUserId=String(S.user.userId);
-    const myDocId=String(S.users.find(u=>String(u.userId)===myUserId)?.id||'');
-    return ids.includes(myUserId)||(myDocId&&ids.includes(myDocId));
-  });
-  S.accounts = activeAccounts.filter(a=>S.clients.some(c=>c.id===a.clientId));
-  S.confirmedMonths=new Set(rSnap.docs.map(d=>d.data()).filter(r=>r.status==='confirmed').map(r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`));
-  // 당월 수입/지출 집계 (대시보드 카드 표시용)
-  try {
-    const now=new Date();
-    const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-    const ymStart=ym+'-01';
-    const lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
-    const ymEnd=ym+'-'+String(lastDay).padStart(2,'0');
-    const tSnap=await getDocs(query(collection(db,COLS.TRANSACTIONS),where('date','>=',ymStart),where('date','<=',ymEnd)));
-    const mStats={};
-    S.clients.forEach(c=>{ mStats[c.id]={inc:0,exp:0}; });
-    tSnap.docs.forEach(d=>{
-      const t=d.data();
-      if(!mStats[t.clientId])return;
-      if(t.type==='수입')       mStats[t.clientId].inc+=Number(t.amountIn||0);
-      else if(t.type==='지출') mStats[t.clientId].exp+=Number(t.amountOut||0);
-      // 자산이동, 취소 → 집계 제외
+  const only = opts && Array.isArray(opts.only) ? new Set(opts.only) : null;
+  const need = key => !only || only.has(key);
+
+  // 각 컬렉션을 필요한 경우에만 fetch (병렬)
+  const tasks = [];
+  if (need('users'))      tasks.push(['users',      getDocs(collection(db,COLS.USERS))]);
+  if (need('clients'))    tasks.push(['clients',    getDocs(collection(db,COLS.CLIENTS))]);
+  if (need('accounts'))   tasks.push(['accounts',   getDocs(collection(db,COLS.ACCOUNTS))]);
+  if (need('categories')) tasks.push(['categories', getDocs(collection(db,COLS.CATEGORIES))]);
+  // reports: confirmedMonths 만들기용 — status='confirmed'만 필요
+  if (need('reports'))    tasks.push(['reports',    getDocs(query(collection(db,COLS.REPORTS),where('status','==','confirmed')))]);
+
+  const results = await Promise.all(tasks.map(t=>t[1]));
+  const snapMap = {};
+  tasks.forEach((t,i)=>{ snapMap[t[0]] = results[i]; });
+
+  if (snapMap.users) {
+    S.users = snapMap.users.docs.map(d=>{const u={id:d.id,...d.data()};u.team=u.team||'';return u;});
+  }
+  if (snapMap.categories) {
+    S.categories = snapMap.categories.docs.map(d=>({id:d.id,...d.data()}));
+  }
+
+  // clients/accounts는 활성/비활성 + 권한 필터링이 함께 들어가므로 한 묶음으로 처리
+  if (snapMap.clients || snapMap.accounts) {
+    if (snapMap.clients) {
+      S.allClients = snapMap.clients.docs.map(d=>({id:d.id,...d.data()}));
+    }
+    if (snapMap.accounts) {
+      S.allAccounts = snapMap.accounts.docs.map(d=>({id:d.id,...d.data()}));
+    }
+    const showInactive=S.settings?.showInactive||false;
+    const activeClients=showInactive?S.allClients:S.allClients.filter(c=>c.active!==false);
+    const activeAccounts=showInactive?S.allAccounts:S.allAccounts.filter(a=>a.active!==false);
+    S.clients  = isAdmin ? activeClients : activeClients.filter(c=>{
+      const ids=String(c.userIds||'').split(',').map(s=>s.trim());
+      const myUserId=String(S.user.userId);
+      const myDocId=String(S.users.find(u=>String(u.userId)===myUserId)?.id||'');
+      return ids.includes(myUserId)||(myDocId&&ids.includes(myDocId));
     });
-    S.monthlyStats=mStats;
-  } catch(e) { S.monthlyStats={}; }
+    S.accounts = activeAccounts.filter(a=>S.clients.some(c=>c.id===a.clientId));
+  }
+
+  if (snapMap.reports) {
+    // status='confirmed' 필터가 이미 적용되어 있으므로 추가 필터 불필요
+    S.confirmedMonths=new Set(snapMap.reports.docs.map(d=>d.data()).map(r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`));
+  }
+
+  // 당월 수입/지출 집계 (대시보드 카드 표시용)
+  // 본인 담당 입주자만 쿼리하여 read 절감 (Firestore 'in' 절은 최대 30개)
+  if (need('monthlyStats')) {
+    try {
+      const now=new Date();
+      const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+      const ymStart=ym+'-01';
+      const lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+      const ymEnd=ym+'-'+String(lastDay).padStart(2,'0');
+      const myClientIds = S.clients.map(c=>c.id);
+      let docs = [];
+      if (myClientIds.length === 0) {
+        docs = [];
+      } else if (myClientIds.length <= 30) {
+        const tSnap = await getDocs(query(collection(db,COLS.TRANSACTIONS),
+          where('clientId','in',myClientIds),
+          where('date','>=',ymStart),
+          where('date','<=',ymEnd)));
+        docs = tSnap.docs;
+      } else {
+        const tSnap = await getDocs(query(collection(db,COLS.TRANSACTIONS),
+          where('date','>=',ymStart),
+          where('date','<=',ymEnd)));
+        docs = tSnap.docs;
+      }
+      const mStats={};
+      S.clients.forEach(c=>{ mStats[c.id]={inc:0,exp:0}; });
+      docs.forEach(d=>{
+        const t=d.data();
+        if(!mStats[t.clientId])return;
+        if(t.type==='수입')       mStats[t.clientId].inc+=Number(t.amountIn||0);
+        else if(t.type==='지출') mStats[t.clientId].exp+=Number(t.amountOut||0);
+        // 자산이동, 취소 → 집계 제외
+      });
+      S.monthlyStats=mStats;
+    } catch(e) { S.monthlyStats={}; }
+  }
+
   rebuildSelectors();
 }
+
+// 부분 갱신 헬퍼 (CRUD 후 호출)
+export const refetchUsers      = () => fetchBaseData({ only: ['users'] });
+export const refetchClients    = () => fetchBaseData({ only: ['clients','accounts','monthlyStats'] }); // 입주자 변경 시 권한 필터 + 계좌 매핑 + 통계 재계산
+export const refetchAccounts   = () => fetchBaseData({ only: ['accounts'] });
+export const refetchCategories = () => fetchBaseData({ only: ['categories'] });
+export const refetchReports    = () => fetchBaseData({ only: ['reports'] });
 
 export function isConfirmedLocked(clientId, dateStr){
   const ym=(dateStr||'').substring(0,7);
   return !!(S.confirmedMonths?.has(`${clientId}_${ym}`));
 }
 
-export async function loadTransactions(clientId) {
+/**
+ * 특정 입주자의 거래내역 로드.
+ * @param {string} clientId
+ * @param {Object} [opts]
+ * @param {'month'|'all'|{start:string,end:string}} [opts.range='month'] - 조회 범위
+ */
+export async function loadTransactions(clientId, opts) {
   if (!clientId) return;
   showLoading(true);
   try {
     const { getDocs, collection, query, where } = fb();
-    const snap = await getDocs(query(collection(fdb(),COLS.TRANSACTIONS), where('clientId','==',clientId)));
+    const range = (opts && opts.range) ? opts.range : 'month';
+    const db = fdb();
+    let q;
+    if (range === 'all') {
+      q = query(collection(db,COLS.TRANSACTIONS), where('clientId','==',clientId));
+    } else if (range && typeof range === 'object' && range.start && range.end) {
+      q = query(collection(db,COLS.TRANSACTIONS),
+                where('clientId','==',clientId),
+                where('date','>=',range.start),
+                where('date','<=',range.end));
+    } else {
+      // 'month' (기본) — 당월
+      const now = new Date();
+      const ymStart = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
+      const lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+      const ymEnd = ymStart.substring(0,8)+String(lastDay).padStart(2,'0');
+      q = query(collection(db,COLS.TRANSACTIONS),
+                where('clientId','==',clientId),
+                where('date','>=',ymStart),
+                where('date','<=',ymEnd));
+    }
+    const snap = await getDocs(q);
     let allTrx = snap.docs.map(d=>({id:d.id,...d.data()}));
     if(!can('trx.view.all')) allTrx=allTrx.filter(t=>t.createdBy===S.user.userId);
     S.transactions = allTrx.sort((a,b)=>{
@@ -89,7 +172,7 @@ export async function loadTransactions(clientId) {
       const dtB=(b.date||'')+(b.time?' '+b.time:'');
       return dtA.localeCompare(dtB);
     });
-    S.activeClient=clientId; S.page=1; S.sortKey='date'; S.sortDir='asc';
+    S.activeClient=clientId; S.trxRange=range; S.page=1; S.sortKey='date'; S.sortDir='asc';
     Trx.rebuildAccountFilter();
     Trx.applyFilters();
     Rpt.syncReportTrxList();
@@ -134,8 +217,8 @@ export function changeView(view) {
   setText('view-title',t); setText('view-sub',s);
   if (view==='dashboard') Dash.renderDashboard();
   if (view==='settings')  {
+    // 캐시된 데이터로 즉시 렌더 (CRUD 시 부분 갱신으로 최신 상태 유지)
     Settings.renderManagement(); Settings.loadSettings();
-    fetchBaseData().then(()=>{ Settings.renderManagement(); Settings.loadSettings(); }).catch(()=>{});
   }
   if (view==='report')    { Rpt.loadReportList(); switchRptSubtab('monthly'); }
 }
