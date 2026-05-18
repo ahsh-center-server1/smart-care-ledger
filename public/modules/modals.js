@@ -42,7 +42,11 @@ export function closeModal(){
 // ─────────────────────────────────────────────
 export function renderTrxForm(t){
   const isEdit=!!t;
-  const editAmount=isEdit?(t.type==='수입'?t.amountIn:t.type==='자산이동'?t.amountOut:t.amountOut):'';
+  // 취소는 amountIn/amountOut에 따라 수입/지출 취소로 구분
+  const editTypeUI=isEdit&&t.type==='취소'
+    ?(Number(t.amountIn||0)>0?'취소-수입':'취소-지출')
+    :(isEdit?t.type:'');
+  const editAmount=isEdit?(t.type==='수입'?t.amountIn:t.type==='자산이동'?t.amountOut:Number(t.amountIn||0)>0?t.amountIn:t.amountOut):'';
   document.getElementById('modal-body').innerHTML=`
     <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:20px;">${isEdit?'내역 수정':'수기 입력'}</h3>
     <input type="hidden" id="f-trx-id" value="${isEdit?t.id:''}">
@@ -54,10 +58,11 @@ export function renderTrxForm(t){
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
         <div><label class="label">구분</label><select id="f-type" class="input" style="padding:8px 12px;">
-          <option value="지출"${isEdit&&t.type==='지출'?' selected':''}>지출</option>
-          <option value="수입"${isEdit&&t.type==='수입'?' selected':''}>수입</option>
-          <option value="자산이동"${isEdit&&t.type==='자산이동'?' selected':''}>자산이동 (계좌간 이체)</option>
-          <option value="취소"${isEdit&&t.type==='취소'?' selected':''}>취소 (카드승인취소)</option>
+          <option value="지출"${editTypeUI==='지출'?' selected':''}>지출</option>
+          <option value="수입"${editTypeUI==='수입'?' selected':''}>수입</option>
+          <option value="자산이동"${editTypeUI==='자산이동'?' selected':''}>자산이동 (계좌간 이체)</option>
+          <option value="취소-지출"${editTypeUI==='취소-지출'?' selected':''}>취소(지출, 카드승인취소)</option>
+          <option value="취소-수입"${editTypeUI==='취소-수입'?' selected':''}>취소(수입 환수)</option>
         </select></div>
         <div><label class="label">금액</label><input type="number" id="f-amount" class="input" value="${editAmount}" placeholder="0" min="0" style="text-align:right;"></div>
       </div>
@@ -129,6 +134,29 @@ export function renderTrxForm(t){
           await ud2(d2(fdb(),COLS.TRANSACTIONS,t.linkedTrxId),{clientId:toAcc2?.clientId||acc.clientId,accountId:toAccId,date,time,description:desc,amountIn:amount,amountOut:0,linkedAccountId:accId});
           await updateAccBalance(toAccId);
           if(S.activeClient)await loadTransactions(S.activeClient);
+        } else {
+          // Feature 5: 반대편 거래 자동 매칭 (엑셀 업로드된 단일 거래를 자산이동으로 변환)
+          const candidates=S.transactions.filter(x=>
+            x.id!==existId &&
+            x.accountId===toAccId &&
+            (x.date||'')===date &&
+            x.type!=='자산이동' &&
+            Number(x.amountIn||0)===amount &&
+            Number(x.amountOut||0)===0
+          );
+          if(candidates.length===1){
+            const cand=candidates[0];
+            const{doc:d3,updateDoc:ud3}=fb();
+            await ud3(d3(fdb(),COLS.TRANSACTIONS,cand.id),{type:'자산이동',category:'자산이동',amountIn:amount,amountOut:0,linkedAccountId:accId,linkedTrxId:existId,clientId:toAcc?.clientId||acc.clientId});
+            await ud3(d3(fdb(),COLS.TRANSACTIONS,existId),{linkedTrxId:cand.id});
+            await updateAccBalance(toAccId);
+            if(S.activeClient)await loadTransactions(S.activeClient);
+            toast('반대편 거래 자동 매칭 완료','success');
+          } else if(candidates.length>1){
+            toast('반대편 후보 '+candidates.length+'건 — 입금 계좌에서 직접 정리 필요','info',4000);
+          } else {
+            toast('반대편 거래 미발견 — 입금 계좌에서 별도 입력 필요','info',4000);
+          }
         }
       } else {
         const{addDoc,collection,updateDoc,doc}=fb();
@@ -150,9 +178,13 @@ export function renderTrxForm(t){
           if(url)receiptUrl=url;
         }catch(e){toast('영수증 업로드 실패: '+e.message,'error');}
       }
-      const trxData={clientId:acc.clientId,accountId:accId,date,time,type,category:cat,description:desc,
-        amountIn:type==='수입'?amount:0,
-        amountOut:(type==='지출'||type==='취소')?amount:0,
+      // 취소-수입/취소-지출은 저장 시 '취소'로 정규화
+      const isCancelIn=type==='취소-수입';
+      const isCancelOut=type==='취소-지출';
+      const normType=(isCancelIn||isCancelOut)?'취소':type;
+      const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,
+        amountIn:(type==='수입'||isCancelIn)?amount:0,
+        amountOut:(type==='지출'||isCancelOut)?amount:0,
         receiptUrl};
       if(existId)trxData.id=existId;
       closeModal(); await saveTrx(trxData);
@@ -183,9 +215,12 @@ export function renderTrxForm(t){
       if(S.activeClient===acc.clientId||S.activeClient===toAcc?.clientId)await loadTransactions(S.activeClient);
       toast('✅ 거래가 복사되었습니다.','success');
     } else {
-      const trxData={clientId:acc.clientId,accountId:accId,date,time,type,category:cat,description:desc,
-        amountIn:type==='수입'?amount:0,
-        amountOut:(type==='지출'||type==='취소')?amount:0,
+      const isCancelIn=type==='취소-수입';
+      const isCancelOut=type==='취소-지출';
+      const normType=(isCancelIn||isCancelOut)?'취소':type;
+      const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,
+        amountIn:(type==='수입'||isCancelIn)?amount:0,
+        amountOut:(type==='지출'||isCancelOut)?amount:0,
         receiptUrl:''};
       await saveTrx(trxData);
       toast('✅ 거래가 복사되었습니다.','success');
@@ -220,7 +255,7 @@ export function updateTrxCatSel(){
   const sel=document.getElementById('f-cat');
   const catRow=document.getElementById('f-cat-row');
   if(!sel)return;
-  if(type==='자산이동'||type==='취소'){
+  if(type==='자산이동'||type==='취소'||type==='취소-지출'||type==='취소-수입'){
     if(catRow)catRow.style.display='none';
     sel.innerHTML='<option value="">-</option>';
     return;
@@ -477,8 +512,8 @@ export async function doReceiptUpload(trxId){
     if(status)status.textContent='Firebase Storage에 업로드 중입니다...';
     const url=await uploadToStorage(_receiptSelectedFile,`receipts/${S.activeClient||'all'}/${Date.now()}_${_receiptSelectedFile.name}`);
     const{doc,updateDoc}=fb();
-    await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{receiptUrl:url});
-    [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t)t.receiptUrl=url;});
+    await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{receiptUrl:url,receiptMissing:false});
+    [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t){t.receiptUrl=url;t.receiptMissing=false;}});
     toast('업로드 완료!','success'); _receiptSelectedFile=null; closeModal(); renderHistoryTable();
   }catch(e){btn.disabled=false;btn.textContent='📤 업로드';if(status)status.style.display='none';toast('업로드 실패: '+e.message,'error');}
 }
@@ -488,8 +523,9 @@ export function openReceiptUpload(trxId){openModal('receipt-upload',{id:trxId});
 // 영수증 미리보기 모달
 // ─────────────────────────────────────────────
 // 영수증 미리보기 — 드래그 가능 플로팅 패널 (거래정보 함께 표시)
-export function openReceiptModal(url, trxId){
+export function openReceiptModal(url, trxId, opts){
   if(!url)return;
+  const large=!!(opts&&opts.large);
   const trx=trxId?[...S.transactions,...(S.reportData?.trxList||[])].find(x=>x.id===trxId):null;
   const driveMatch=url.match(/\/d\/([^/?]+)/);
   const isDrive=!!driveMatch;
@@ -513,10 +549,12 @@ export function openReceiptModal(url, trxId){
   </div>`:'';
   const panel=document.createElement('div');
   panel.id='receipt-float-panel';
-  panel.style.cssText='position:fixed;right:16px;top:60px;width:300px;max-height:90vh;overflow-y:auto;background:#fff;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.18);z-index:9999;padding:16px;';
+  const panelW=large?'min(900px, 92vw)':'300px';
+  panel.style.cssText='position:fixed;right:16px;top:60px;width:'+panelW+';max-height:90vh;overflow-y:auto;background:#fff;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.18);z-index:9999;padding:16px;';
+  const driveSize=large?'w1600':'w600';
   let imgHtml='';
   if(isDrive){
-    imgHtml=`<div id="rfp-loading" style="text-align:center;padding:30px 0;"><div class="spinner" style="margin:0 auto 8px;"></div><p style="font-size:12px;color:var(--muted);">불러오는 중...</p></div><img id="rfp-img" src="${getImageUrl(url,'w600')}" alt="영수증" style="display:none;max-width:100%;border-radius:8px;">`;
+    imgHtml=`<div id="rfp-loading" style="text-align:center;padding:30px 0;"><div class="spinner" style="margin:0 auto 8px;"></div><p style="font-size:12px;color:var(--muted);">불러오는 중...</p></div><img id="rfp-img" src="${getImageUrl(url,driveSize)}" alt="영수증" style="display:none;max-width:100%;border-radius:8px;">`;
   } else if(isPdf){
     imgHtml=`<iframe src="${url}" style="width:100%;height:380px;border:none;border-radius:8px;background:#f8fafc;" title="PDF 미리보기"></iframe><p style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center;"><a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);">새 탭에서 열기</a></p>`;
   } else if(isLocalImg){
@@ -627,16 +665,43 @@ export async function applyFixedItems(){
     },'입력');
   });
 }
+async function refreshAllFixedItems(){
+  try{
+    const{getDocs,collection}=fb();
+    const snap=await getDocs(collection(fdb(),'fixedItems'));
+    S.allFixedItems=snap.docs.map(d=>({id:d.id,...d.data()}));
+  }catch(e){/* no-op */}
+}
 export async function saveFixedItem(data){
   const{addDoc,setDoc,doc,collection}=fb();
   if(data.id){const id=data.id;delete data.id;await setDoc(doc(fdb(),'fixedItems',id),data);}
   else await addDoc(collection(fdb(),'fixedItems'),data);
+  await refreshAllFixedItems();
   toast('고정항목 저장됨','success');
 }
 export async function deleteFixedItem(id){
   const{doc,deleteDoc}=fb();
   await deleteDoc(doc(fdb(),'fixedItems',id));
+  await refreshAllFixedItems();
   toast('삭제됨','success');
+}
+
+// 필수 고정항목 중 해당 월에 미납된 항목 배열 반환
+// @param clientId
+// @param ym 'YYYY-MM'
+// @param trxList 해당 월 거래 목록(없으면 S.transactions에서 자동 추출)
+export function getUnpaidMandatoryItems(clientId, ym, trxList){
+  if(!clientId||!ym)return[];
+  // 미래 월은 알림 없음 — 당월 또는 과거만
+  const now=new Date();
+  const curYM=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  if(ym>curYM)return[];
+  const pool=(S.allFixedItems&&S.allFixedItems.length)?S.allFixedItems:S.fixedItems;
+  const mandatory=pool.filter(f=>f.clientId===clientId&&f.isMandatory);
+  if(!mandatory.length)return[];
+  const txs=Array.isArray(trxList)?trxList:S.transactions.filter(t=>t.clientId===clientId&&(t.date||'').startsWith(ym));
+  const paidIds=new Set(txs.filter(t=>t.isFixed&&t.fixedItemId).map(t=>t.fixedItemId));
+  return mandatory.filter(f=>!paidIds.has(f.id));
 }
 
 // ─────────────────────────────────────────────
@@ -656,6 +721,10 @@ export function renderFixedItemForm(item){
       <div><label class="label">카테고리</label><select id="fi-cat" class="input" style="padding:8px 12px;"></select></div>
       <div><label class="label">내용</label><input type="text" id="fi-desc" class="input" value="${isEdit?item.description||'':''}" placeholder="예: 국민연금, 복지관 이용료"></div>
       <div><label class="label">금액</label><input type="number" id="fi-amt" class="input" value="${isEdit?item.amount||0:0}" style="text-align:right;"></div>
+      <div style="display:flex;align-items:center;gap:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;">
+        <input type="checkbox" id="fi-mandatory" ${isEdit&&item.isMandatory?'checked':''} style="width:16px;height:16px;cursor:pointer;accent-color:#dc2626;">
+        <label for="fi-mandatory" style="font-size:13px;color:#991b1b;cursor:pointer;">필수 항목 (미납 시 알림 표시)</label>
+      </div>
       <button id="fi-save" class="btn" style="width:100%;padding:11px;">💾 저장</button>
     </div>`;
   const accSel=document.getElementById('fi-acc');
@@ -666,7 +735,7 @@ export function renderFixedItemForm(item){
   fillCats();
   document.getElementById('fi-type').addEventListener('change',fillCats);
   document.getElementById('fi-save').addEventListener('click',async()=>{
-    const data={clientId:S.activeClient,accountId:document.getElementById('fi-acc').value,type:document.getElementById('fi-type').value,day:Number(document.getElementById('fi-day').value)||1,category:document.getElementById('fi-cat').value,description:document.getElementById('fi-desc').value,amount:Number(document.getElementById('fi-amt').value)||0};
+    const data={clientId:S.activeClient,accountId:document.getElementById('fi-acc').value,type:document.getElementById('fi-type').value,day:Number(document.getElementById('fi-day').value)||1,category:document.getElementById('fi-cat').value,description:document.getElementById('fi-desc').value,amount:Number(document.getElementById('fi-amt').value)||0,isMandatory:!!document.getElementById('fi-mandatory')?.checked};
     if(isEdit)data.id=item.id;
     await saveFixedItem(data); closeModal();
   });
@@ -682,7 +751,8 @@ export async function renderFixedItemsList(clientId){
     const acc=S.accounts.find(a=>a.id===f.accountId)?.label||'-';
     const div=document.createElement('div');
     div.style.cssText='display:flex;justify-content:space-between;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 14px;';
-    div.innerHTML='<div><div style="font-size:14px;font-weight:700;color:var(--text);">'+(f.description||'(이름없음)')+' <span style="font-size:12px;font-weight:400;color:var(--muted);">매월 '+(f.day||1)+'일</span></div><div style="font-size:12px;color:var(--muted);margin-top:2px;">'+acc+' · '+f.type+' · '+f.category+' · '+Number(f.amount||0).toLocaleString()+'원</div></div><div style="display:flex;gap:6px;"><button class="fi-edit-btn icon-btn" style="color:#64748b;">✏️</button><button class="fi-del-btn icon-btn" style="color:#94a3b8;">🗑️</button></div>';
+    const mandBadge=f.isMandatory?' <span style="font-size:10px;background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:4px;font-weight:700;">필수</span>':'';
+    div.innerHTML='<div><div style="font-size:14px;font-weight:700;color:var(--text);">'+(f.description||'(이름없음)')+mandBadge+' <span style="font-size:12px;font-weight:400;color:var(--muted);">매월 '+(f.day||1)+'일</span></div><div style="font-size:12px;color:var(--muted);margin-top:2px;">'+acc+' · '+f.type+' · '+f.category+' · '+Number(f.amount||0).toLocaleString()+'원</div></div><div style="display:flex;gap:6px;"><button class="fi-edit-btn icon-btn" style="color:#64748b;">✏️</button><button class="fi-del-btn icon-btn" style="color:#94a3b8;">🗑️</button></div>';
     div.querySelector('.fi-edit-btn').addEventListener('click',()=>{S.activeClient=clientId;openModal('fixed-item',f);});
     div.querySelector('.fi-del-btn').addEventListener('click',()=>showConfirm('삭제','"'+f.description+'" 고정항목을 삭제하시겠습니까?',async()=>{await deleteFixedItem(f.id);renderFixedItemsList(clientId);}));
     el.appendChild(div);
