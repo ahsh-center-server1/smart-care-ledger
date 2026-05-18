@@ -103,15 +103,34 @@ export async function fetchBaseData(opts) {
       }
       const mStats={};
       S.clients.forEach(c=>{ mStats[c.id]={inc:0,exp:0}; });
+      // 필수 고정항목 미납 카운트 계산을 위해 클라이언트별로 매칭된 fixedItemId 집합 수집
+      const paidFixedIdsByClient={};
+      S.clients.forEach(c=>{ paidFixedIdsByClient[c.id]=new Set(); });
       docs.forEach(d=>{
         const t=d.data();
         if(!mStats[t.clientId])return;
         if(t.type==='수입')       mStats[t.clientId].inc+=Number(t.amountIn||0);
         else if(t.type==='지출') mStats[t.clientId].exp+=Number(t.amountOut||0);
         // 자산이동, 취소 → 집계 제외
+        if(t.isFixed&&t.fixedItemId&&paidFixedIdsByClient[t.clientId]){
+          paidFixedIdsByClient[t.clientId].add(t.fixedItemId);
+        }
       });
       S.monthlyStats=mStats;
-    } catch(e) { S.monthlyStats={}; }
+
+      // 필수 고정항목 전체 로드 + 미납 카운트
+      try {
+        const fSnap=await getDocs(collection(db,'fixedItems'));
+        S.allFixedItems=fSnap.docs.map(d=>({id:d.id,...d.data()}));
+        const unpaid={};
+        S.clients.forEach(c=>{
+          const mandatory=S.allFixedItems.filter(f=>f.clientId===c.id&&f.isMandatory);
+          const paid=paidFixedIdsByClient[c.id]||new Set();
+          unpaid[c.id]=mandatory.filter(f=>!paid.has(f.id)).length;
+        });
+        S.mandatoryUnpaid=unpaid;
+      } catch(e) { S.allFixedItems=[]; S.mandatoryUnpaid={}; }
+    } catch(e) { S.monthlyStats={}; S.mandatoryUnpaid={}; }
   }
 
   rebuildSelectors();

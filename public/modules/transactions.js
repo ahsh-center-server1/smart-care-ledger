@@ -10,8 +10,23 @@ import { COLS, CAT_COLORS, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, escAttr, emptyState } from '../utils/ui.js';
 import { fb, fdb, batchDeleteDocs, batchUpdateDocs } from '../services/firestore.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
-import { openModal } from './modals.js';
+import { openModal, getUnpaidMandatoryItems } from './modals.js';
 import { can } from './permissions.js';
+
+// 필수 고정항목 미납 배너 렌더 (당월 기준)
+function renderTrxMandatoryBanner(){
+  const el=document.getElementById('trx-mandatory-banner'); if(!el)return;
+  if(!S.activeClient){el.style.display='none';el.innerHTML='';return;}
+  const now=new Date();
+  const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const unpaid=getUnpaidMandatoryItems(S.activeClient,ym,null);
+  if(!unpaid.length){el.style.display='none';el.innerHTML='';return;}
+  const names=unpaid.map(f=>f.description||'(이름없음)').join(', ');
+  el.style.display='';
+  el.innerHTML='<div style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;color:#991b1b;">'
+    +'<span style="font-weight:700;">⚠️ 이번 달 필수 고정지출 '+unpaid.length+'건 미입력</span>'
+    +'<span style="color:#7f1d1d;margin-left:8px;">'+names+'</span></div>';
+}
 
 // 필터 범위가 현재 캐시 범위(S.trxRange)를 벗어나는지 검사
 function needsBroaderRange(filterStart, filterEnd, cachedRange) {
@@ -92,6 +107,7 @@ export function applyFilters() {
     if(vA<vB)return dir==='asc'?-1:1; if(vA>vB)return dir==='asc'?1:-1; return 0;
   });
   renderHistoryTable(); renderPagination();
+  renderTrxMandatoryBanner();
 }
 
 export function renderHistoryTable() {
@@ -120,8 +136,17 @@ export function renderHistoryTable() {
     tr.dataset.id=t.id; tr.dataset.idx=String(start+idx);
     tr.draggable=!isInputOnly;
     // 유형 뱃지 (자산이동/취소는 별도 표시)
-    const typeTag=(t.type==='자산이동')?'<span style="font-size:10px;background:#e0f2fe;color:#0369a1;padding:1px 5px;border-radius:4px;margin-left:4px;">↕이동</span>'
-                 :(t.type==='취소')?'<span style="font-size:10px;background:#f4f4f5;color:#71717a;padding:1px 5px;border-radius:4px;margin-left:4px;">취소</span>':'';
+    let typeTag='';
+    if(t.type==='자산이동'){
+      const srcId=Number(t.amountOut||0)>0?t.accountId:t.linkedAccountId;
+      const dstId=Number(t.amountOut||0)>0?t.linkedAccountId:t.accountId;
+      const src=S.accounts.find(a=>a.id===srcId)?.label||'?';
+      const dst=S.accounts.find(a=>a.id===dstId)?.label||'?';
+      typeTag='<span style="font-size:10px;background:#e0f2fe;color:#0369a1;padding:1px 5px;border-radius:4px;margin-left:4px;">↕이동 '+src+' → '+dst+'</span>';
+    } else if(t.type==='취소'){
+      const sub=Number(t.amountIn||0)>0?'수입':'지출';
+      typeTag='<span style="font-size:10px;background:#f4f4f5;color:#71717a;padding:1px 5px;border-radius:4px;margin-left:4px;">취소('+sub+')</span>';
+    }
     const accName=S.accounts.find(a=>a.id===t.accountId)?.label||'';
     tr.innerHTML=`
       <td style="text-align:center;width:28px;cursor:grab;color:#cbd5e1;font-size:16px;user-select:none;${isInputOnly?'display:none;':''}" class="drag-handle" title="드래그로 순서 변경">⠿</td>
@@ -135,17 +160,27 @@ export function renderHistoryTable() {
       </div></td>
       <td class="trx-edit" data-id="${t.id}" style="cursor:pointer;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.description||''}">${t.description||''}${typeTag}</td>
       <td style="font-size:11px;color:var(--muted);white-space:nowrap;">${accName}</td>
-      <td style="text-align:right;" class="col-in">${t.amountIn>0?'<span style="color:'+(t.type==='자산이동'?'#0ea5e9':'')+'">'+'+'+t.amountIn.toLocaleString()+'원</span>':''}</td>
+      <td style="text-align:right;" class="col-in">${
+        t.type==='취소'&&t.amountIn>0?'<span style="color:#a1a1aa;text-decoration:line-through;">+'+t.amountIn.toLocaleString()+'원</span>':
+        t.amountIn>0?'<span style="color:'+(t.type==='자산이동'?'#0ea5e9':'')+'">'+'+'+t.amountIn.toLocaleString()+'원</span>':''
+      }</td>
       <td style="text-align:right;" class="col-out">${
         t.type==='자산이동'?'<span style="color:#0ea5e9;">'+Math.abs(t.amountOut).toLocaleString()+'원</span>':
-        t.type==='취소'?'<span style="color:#a1a1aa;">취소</span>':
+        t.type==='취소'&&t.amountOut>0?'<span style="color:#a1a1aa;text-decoration:line-through;">'+t.amountOut.toLocaleString()+'원</span>':
+        t.type==='취소'?'':
         t.amountOut<0?'<span style="color:#059669;font-size:12px;">-'+Math.abs(t.amountOut).toLocaleString()+'원</span>':
         (t.amountOut>0?t.amountOut.toLocaleString()+'원':'')
       }</td>
       <td style="text-align:center;">
         ${t.receiptUrl
           ?`<button class="icon-btn receipt-view" data-url="${t.receiptUrl}" title="증빙 보기">📎</button>`
-          :can('receipt.upload')?`<button class="icon-btn receipt-add" data-id="${t.id}" title="증빙 추가" style="color:#94a3b8;">＋</button>`:''}
+          :`<span style="display:inline-flex;align-items:center;gap:3px;justify-content:center;">${
+              can('receipt.upload')?`<button class="icon-btn receipt-add" data-id="${t.id}" title="증빙 추가" style="color:#94a3b8;">＋</button>`:''
+            }${
+              can('receipt.upload')
+                ?`<button class="receipt-miss-toggle" data-id="${t.id}" title="${t.receiptMissing?'분실 표시 해제':'영수증 분실 표시'}" style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid ${t.receiptMissing?'#fecaca':'#e5e7eb'};background:${t.receiptMissing?'#fee2e2':'transparent'};color:${t.receiptMissing?'#b91c1c':'#94a3b8'};cursor:pointer;">분실</button>`
+                :(t.receiptMissing?'<span style="font-size:10px;font-weight:700;color:#b91c1c;background:#fee2e2;padding:1px 6px;border-radius:4px;border:1px solid #fecaca;">분실</span>':'')
+            }</span>`}
       </td>
       <td style="text-align:center;"><div style="display:flex;justify-content:center;gap:4px;">${(()=>{
         const canEdit=can('trx.edit')&&(!isInputOnly||(t.createdBy===S.user?.userId));
@@ -168,6 +203,8 @@ export function renderHistoryTable() {
     if(rvBtn)rvBtn.addEventListener('click',()=>openReceiptModal(rvBtn.dataset.url,t.id));
     const raBtn=tr.querySelector('.receipt-add');
     if(raBtn)raBtn.addEventListener('click',()=>openReceiptUpload(t.id));  // ★ 버그1 수정
+    const rmBtn=tr.querySelector('.receipt-miss-toggle');
+    if(rmBtn)rmBtn.addEventListener('click',()=>toggleReceiptMissing(t.id));
     tbody.appendChild(tr);
   });
   document.addEventListener('click',closeCatDropdowns,{once:true});
@@ -348,6 +385,20 @@ export async function saveTrx(data){
     if(S.activeClient===data.clientId)await loadTransactions(data.clientId);
   }
   toast('저장되었습니다.','success');
+}
+
+// 영수증 분실 표시 토글
+export async function toggleReceiptMissing(id){
+  const t=S.transactions.find(x=>x.id===id); if(!t)return;
+  if(isConfirmedLocked(t.clientId,t.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다.','error');return;}
+  const newVal=!t.receiptMissing;
+  const{doc,updateDoc}=fb();
+  try{
+    await updateDoc(doc(fdb(),COLS.TRANSACTIONS,id),{receiptMissing:newVal});
+    t.receiptMissing=newVal;
+    applyFilters();
+    toast(newVal?'영수증 분실 표시':'분실 표시 해제','success',1500);
+  }catch(e){toast('저장 실패: '+e.message,'error');}
 }
 
 export async function delTrx(id,accId){

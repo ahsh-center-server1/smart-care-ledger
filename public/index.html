@@ -41,7 +41,7 @@
 
   <!-- 외부 라이브러리 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- 파서 설정 — 은행/카드사 추가 시 이 파일만 수정 -->
   <script src="parser-config.js"></script>
@@ -180,7 +180,7 @@
     @media print{
       body{background:#fff!important;font-size:15px!important;margin:0!important;}
       #toast-wrap,#confirm-dialog,#receipt-modal,#modal-wrap,#loading-overlay,
-      aside,header,.no-print{display:none!important;}
+      aside,header,.no-print,.mobile-nav,#m-bottom-nav{display:none!important;}
       /* 조회영역/결재현황/자동요약/트랙 인쇄 제외 */
       #view-report>*:not(#rpt-subtab-monthly){display:none!important;}
       #rpt-subtab-monthly>*:not(#report-area){display:none!important;}
@@ -239,7 +239,7 @@
       /* 섹션 단위로 페이지 나눔 방지 */
       #print-area>div{page-break-inside:avoid!important;break-inside:avoid!important;}
       /* 인쇄 시 숨겨진 섹션 여백 제거 */
-      #rpt-bank-stmt-section,#rpt-excel-cmp-section{display:none!important;padding:0!important;margin:0!important;border:none!important;}
+      #rpt-bank-stmt-section{display:none!important;padding:0!important;margin:0!important;border:none!important;}
       #print-area>div[style*="display: none"],#print-area>div[style*="display:none"]{padding:0!important;margin:0!important;border:none!important;height:0!important;overflow:hidden!important;}
     }
     @media(max-width:768px){aside{display:none;}}
@@ -450,6 +450,7 @@
 
         <!-- 거래 내역 -->
         <div id="view-history" style="display:none;" class="animate-in">
+          <div id="trx-mandatory-banner" style="display:none;"></div>
           <div class="card" style="padding:20px;margin-bottom:14px;">
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
               <div style="min-width:150px;">
@@ -561,7 +562,11 @@
 
           <div id="rpt-list-area" class="no-print" style="margin-top:10px;margin-bottom:18px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-              <h3 style="font-size:14px;font-weight:700;color:var(--sub);">저장된 보고서</h3>
+              <button id="btn-rpt-list-toggle" type="button" style="display:flex;align-items:center;gap:6px;font-size:14px;font-weight:700;color:var(--sub);background:none;border:none;cursor:pointer;padding:0;">
+                <span id="rpt-list-arrow" style="font-size:11px;color:var(--muted);">▼</span>
+                저장된 보고서
+                <span id="rpt-list-count" style="font-size:11px;font-weight:600;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:99px;padding:1px 8px;"></span>
+              </button>
               <button id="btn-rpt-list-refresh" style="font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;">↺ 새로고침</button>
             </div>
             <div id="rpt-list" style="display:flex;flex-direction:column;gap:8px;"></div>
@@ -592,6 +597,7 @@
               </div>
               <div id="rpt-summary-text" style="font-size:14px;color:var(--sub);line-height:1.7;min-height:40px;">조회 후 생성 버튼을 클릭하세요.</div>
             </div>
+            <div id="rpt-mandatory-banner" class="no-print" style="display:none;"></div>
             <div id="print-area" style="background:#fff;border-radius:16px;box-shadow:var(--shadow2);overflow:hidden;border:1px solid var(--border);">
               <div style="padding:20px 24px 16px;border-bottom:2px solid #e5e7eb;">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -631,8 +637,6 @@
                 <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">🤖 지출 분석 요약</div>
                 <div id="rpt-summary-print-text" style="font-size:14px;color:#374151;line-height:1.7;"></div>
               </div>
-              <!-- 엑셀 원본 대조 섹션 -->
-              <div id="rpt-excel-cmp-section" class="no-print" style="padding:14px 24px;border-bottom:1px solid #e5e7eb;display:none;"></div>
               <!-- 통장 사진 섹션 -->
               <div id="rpt-bank-stmt-section" style="padding:14px 24px;border-bottom:1px solid #e5e7eb;display:none;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">

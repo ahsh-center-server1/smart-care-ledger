@@ -749,8 +749,6 @@ Object.assign(window, {
   reorderRptTrx: Rpt.reorderRptTrx,
   renderRptBankStatements: Rpt.renderRptBankStatements,
   openBankStatementsForApproval: Rpt.openBankStatementsForApproval,
-  matchExcelToTrx: Rpt.matchExcelToTrx,
-  renderRptExcelComparison: Rpt.renderRptExcelComparison,
   openBankStatementFromReport: Rpt.openBankStatementFromReport,
   renderComments: Rpt.renderComments,
   saveComment: Rpt.saveComment,
@@ -952,6 +950,23 @@ function bindEvents(){
   document.getElementById('btn-annual-load')?.addEventListener('click',Rpt.loadAnnual);
   document.getElementById('btn-rpt-load')?.addEventListener('click',Rpt.loadReport);
   document.getElementById('btn-rpt-list-refresh')?.addEventListener('click',Rpt.loadReportList);
+  // 저장된 보고서 토글 (기본: 숨김)
+  document.getElementById('btn-rpt-list-toggle')?.addEventListener('click',()=>{
+    const list=document.getElementById('rpt-list');
+    const arrow=document.getElementById('rpt-list-arrow');
+    const refresh=document.getElementById('btn-rpt-list-refresh');
+    if(!list)return;
+    const isHidden=list.style.display==='none'||list.style.display==='';
+    if(isHidden){
+      list.style.display='flex';
+      if(arrow)arrow.textContent='▼';
+      if(refresh)refresh.style.display='';
+    } else {
+      list.style.display='none';
+      if(arrow)arrow.textContent='▶';
+      if(refresh)refresh.style.display='none';
+    }
+  });
   document.getElementById('btn-gen-summary')?.addEventListener('click',Rpt.handleGenSummary);
   document.getElementById('rpt-summary-print')?.addEventListener('change',e=>{
     const area=document.getElementById('rpt-summary-print-area');
