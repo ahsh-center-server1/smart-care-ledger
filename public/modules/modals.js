@@ -23,6 +23,7 @@ export function openModal(type,data){
   document.getElementById('modal-wrap').classList.add('show');
   if(type==='trx')           renderTrxForm(data);
   if(type==='excel')         renderExcelForm();
+  if(type==='bankbook')      openBankStatementModal();
   if(type==='receipt-upload')renderReceiptUploadForm(data?.id);
   if(type==='client')        renderClientForm(data);
   if(type==='account')       renderAccountForm(data);
@@ -763,15 +764,53 @@ export async function renderFixedItemsList(clientId){
 // 통장 사진 다중 업로드
 // ─────────────────────────────────────────────
 export async function openBankStatementModal(accountId,yearParam,monthParam){
-  if(!accountId){toast('계좌를 선택하세요.','error');return;}
-  const acc=S.accounts.find(a=>a.id===accountId)||{label:'계좌'};
-  const now=new Date(); const year=yearParam||now.getFullYear(); const month=monthParam||now.getMonth()+1;
-  const mStr=String(year)+'-'+String(month).padStart(2,'0');
+  if(!can('bankbook.upload')){ toast('접근 권한이 없습니다.','error'); return; }
   document.getElementById('modal-wrap').classList.add('show');
   const body=document.getElementById('modal-body');
+  const accs=S.accounts.slice();
+  if(!accs.length){
+    body.innerHTML='<h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:10px;">🏦 통장 사진 관리</h3><div style="font-size:13px;color:var(--muted);">등록된 계좌가 없습니다. 먼저 계좌를 등록하세요.</div>';
+    return;
+  }
+  // 진입 시 미리 선택할 계좌/입주자 (계좌관리에서 호출 시 accountId 전달, 대시보드는 활성 입주자 기준)
+  const preId=accountId||'';
+  const preClient=preId?(accs.find(a=>a.id===preId)?.clientId||''):(S.activeClient||'');
+  const clientIds=[...new Set(accs.map(a=>a.clientId))];
+  const clientOpts=clientIds.map(cid=>{const nm=S.clients.find(c=>c.id===cid)?.name||'(이름없음)';return '<option value="'+cid+'"'+(cid===preClient?' selected':'')+'>'+nm+'</option>';}).join('');
+  body.innerHTML=`
+    <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:6px;">🏦 통장 사진 관리</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">입주자와 계좌를 선택한 뒤 통장 사진을 업로드하세요.</p>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+      <label class="label" style="margin:0;white-space:nowrap;">👤 입주자:</label>
+      <select id="bs-client" class="input" style="flex:1;min-width:120px;padding:6px 10px;">${clientOpts}</select>
+      <label class="label" style="margin:0;white-space:nowrap;">🏦 계좌:</label>
+      <select id="bs-acc" class="input" style="flex:1;min-width:120px;padding:6px 10px;"></select>
+    </div>
+    <div id="bs-content"></div>`;
+  const clientSel=document.getElementById('bs-client');
+  const accSel=document.getElementById('bs-acc');
+  const fillAccounts=(selId)=>{
+    const cid=clientSel.value;
+    accSel.innerHTML='';
+    accs.filter(a=>a.clientId===cid).forEach(a=>accSel.add(new Option(a.label,a.id)));
+    if(selId&&accs.some(a=>a.id===selId&&a.clientId===cid))accSel.value=selId;
+  };
+  fillAccounts(preId);
+  clientSel.addEventListener('change',()=>{fillAccounts('');if(accSel.value)renderBankStatementManager(accSel.value,yearParam,monthParam);});
+  accSel.addEventListener('change',()=>{if(accSel.value)renderBankStatementManager(accSel.value,yearParam,monthParam);});
+  if(accSel.value)renderBankStatementManager(accSel.value,yearParam,monthParam);
+}
+// 선택된 계좌의 통장 사진 업로드/갤러리 UI를 #bs-content 에 렌더링
+export async function renderBankStatementManager(accountId,yearParam,monthParam){
+  const content=document.getElementById('bs-content'); if(!content)return;
+  const now=new Date(); const year=yearParam||now.getFullYear(); const month=monthParam||now.getMonth()+1;
+  const mStr=String(year)+'-'+String(month).padStart(2,'0');
   const{getDoc,doc,updateDoc}=fb();
   const accRef=doc(fdb(),COLS.ACCOUNTS,accountId);
+  content.innerHTML='<div style="font-size:13px;color:var(--muted);padding:8px 0;">불러오는 중...</div>';
   const accSnap=await getDoc(accRef);
+  // 비동기 로드 중 계좌가 변경됐으면 폐기 (경쟁 상태 방지)
+  if(document.getElementById('bs-acc')?.value!==accountId)return;
   const rawStmts=(accSnap.exists()?accSnap.data().bankStatements:[])||[];
   const existing=rawStmts.map(s=>typeof s==='string'?{url:s,month:''}:s);
   // C004: 연월 내림차순 정렬
@@ -779,9 +818,7 @@ export async function openBankStatementModal(accountId,yearParam,monthParam){
   // C005: 연월 필터 옵션 생성
   const months=[...new Set(existing.map(s=>s.month||'').filter(Boolean))].sort((a,b)=>b.localeCompare(a));
   const monthOpts='<option value="">전체</option>'+months.map(m=>'<option value="'+m+'">'+m+'</option>').join('');
-  body.innerHTML=`
-    <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:6px;">🏦 통장 사진 관리</h3>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:10px;">${acc.label} — 여러 장 업로드 가능</p>
+  content.innerHTML=`
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
       <label class="label" style="margin:0;white-space:nowrap;">📅 업로드 연월:</label>
       <input type="month" id="bs-month" class="input" value="${mStr}" style="width:140px;padding:6px 10px;">
