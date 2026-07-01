@@ -59,8 +59,8 @@ config:       { type='archive', year, archivedAt, count }
 fixedItems:   { clientId, accountId, type, day, category,
                 description, amount }
 budgets:      { clientId, year, categoryBudgets{...} }  // 연간 예산
-excelUploads: { accId, clientId, filename, month, count, uploadedAt }
-              // 경량 이력만 저장 (원본 파일/rawRows 미저장 — 용량 절약)
+excelUploads: { accId, clientId, filename, month, count, url, uploadedAt }
+              // 원본 파일은 gzip 압축 저장(용량 절감), rawRows는 미저장
 archive_YYYY: 마감된 거래 데이터 백업
 ```
 
@@ -323,7 +323,7 @@ https://smart-care-ledger.web.app
 | 삭제 시 파일 정리 | `deleteFromStorage` / `deleteManyFromStorage` | 거래·영수증·통장사진 삭제, 전체 초기화 시 Storage 객체까지 삭제 (고아 파일 방지) |
 | 연도 마감 시 재압축 보관 | `recompressStorageImage` + `settings.js executeArchive` | 해당 연도 영수증·통장사진을 900px/0.6으로 재압축(덮어쓰기), **삭제하지 않음** |
 | 목록용 썸네일 | `uploadImageWithThumb` | 통장사진 업로드 시 320px 썸네일 동시 생성 → 갤러리/보고서 목록은 `thumbUrl` 사용 (다운로드 대역폭 절감) |
-| 엑셀 원본 미저장 | `modals.js` 엑셀 저장부 | 파싱 결과는 transactions에 저장되므로 원본 파일/rawRows 미보관 |
+| 엑셀 원본 gzip 저장 | `storage.js` `uploadExcelOriginal` | 원본은 유지하되 gzip 압축 저장(다운로드 시 원본 복원), 중복 rawRows는 미저장 |
 
 ### CORS 설정 (연도 마감 재압축에 필요)
 

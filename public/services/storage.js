@@ -83,6 +83,37 @@ export async function uploadImageWithThumb(file, path) {
 }
 
 /**
+ * 엑셀 원본 파일 업로드 (원본 보관 + 저장 용량 절감)
+ * - gzip 지원 시 압축해 저장(저장 용량 감소), contentEncoding으로 다운로드 시 원본 복원
+ * - 압축이 이득이 없거나 미지원 브라우저면 원본 그대로 업로드
+ * @returns {Promise<string>} 다운로드 URL
+ */
+export async function uploadExcelOriginal(file, path) {
+  validateUploadSize(file);
+  const { storage, ref, uploadBytes, getDownloadURL } = window._fb;
+  const contentType = file.type || 'application/octet-stream';
+  let data = file;
+  let metadata = { contentType };
+  try {
+    if (typeof CompressionStream !== 'undefined' && file.stream) {
+      const gz = await new Response(file.stream().pipeThrough(new CompressionStream('gzip'))).blob();
+      if (gz.size > 0 && gz.size < file.size) {
+        data = gz;
+        // contentEncoding: 다운로드 시 브라우저가 자동 해제 → 원본 그대로 복원
+        metadata = {
+          contentType,
+          contentEncoding: 'gzip',
+          contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(file.name || 'excel')}`
+        };
+      }
+    }
+  } catch (e) { console.warn('엑셀 gzip 압축 건너뜀(원본 저장):', e.message); data = file; metadata = { contentType }; }
+  const objRef = ref(storage, path);
+  await uploadBytes(objRef, data, metadata);
+  return await getDownloadURL(objRef);
+}
+
+/**
  * Storage 객체 삭제 (best-effort)
  * - Firebase Storage URL이 아니면(구형 Drive URL/빈 값) 무시
  * - 이미 없는 객체 등 오류는 조용히 무시
