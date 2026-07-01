@@ -504,7 +504,7 @@ export async function renderRptBankStatements(clientId,year,month){
   section.style.display=stmts.length>0?'block':'none';
   gallery.innerHTML='';
   stmts.forEach(s=>{
-    const thumb=getImageUrl(s.url,'w300');
+    const thumb=getImageUrl(s.thumbUrl||s.url,'w300');
     const cell=document.createElement('div');
     cell.style.cssText='position:relative;border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;';
     cell.innerHTML='<div style="font-size:10px;color:var(--muted);padding:4px 6px;background:var(--bg);">'+s.label+(s.month?' · '+s.month:'')+'</div>'

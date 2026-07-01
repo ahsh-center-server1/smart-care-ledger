@@ -14,6 +14,7 @@
 import { S } from '../state.js';
 import { toast, showConfirm, showLoading, escAttr } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchMixedOps } from '../services/firestore.js';
+import { deleteManyFromStorage, recompressStorageImage } from '../services/storage.js';
 import { COLS } from '../constants.js';
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
@@ -439,7 +440,7 @@ export async function loadArchiveHistory(){
 export async function confirmArchive(){
   const year=Number(document.getElementById('archive-year')?.value);
   if(!year){toast('연도를 선택하세요.','error');return;}
-  showConfirm(`${year}년 데이터 마감`,`${year}년 거래 데이터를 보관하고 계좌 기초잔액을 업데이트합니다.\n이 작업은 되돌릴 수 없습니다.`,()=>executeArchive(year),'마감 실행');
+  showConfirm(`${year}년 데이터 마감`,`${year}년 거래 데이터를 보관하고 계좌 기초잔액을 업데이트합니다.\n영수증·통장사진은 삭제하지 않고 저해상도로 압축 보관됩니다.\n이 작업은 되돌릴 수 없습니다.`,()=>executeArchive(year),'마감 실행');
 }
 // Phase 3 최적화: 배치 처리 + 500개 단위 자동 분할
 export async function executeArchive(year){
@@ -450,23 +451,43 @@ export async function executeArchive(year){
     const snap=await getDocs(query(collection(db,COLS.TRANSACTIONS),where('date','>=',year+'-01-01'),where('date','<=',year+'-12-31')));
     const trxList=snap.docs.map(d=>({id:d.id,...d.data()}));
     if(!trxList.length){showLoading(false);toast(`${year}년 거래 데이터가 없습니다.`,'error');return;}
-    // 1. 배치 추가: archive_YYYY 테이블에 거래 복제 (500개씩 자동 분할)
+    // 0. 아카이브 보관용 이미지 저해상도 재압축 — 삭제하지 않고 Storage 공간만 확보 (best-effort)
+    //    (재압축을 위해 이미지를 다시 읽으므로 버킷 CORS 설정 필요. 실패해도 마감은 진행)
+    let recompressed=0;
+    toast('보관용 이미지 압축 중...','info',3000);
+    for(const t of trxList){
+      if(t.receiptUrl){const nu=await recompressStorageImage(t.receiptUrl);if(nu){t.receiptUrl=nu;recompressed++;}}
+    }
+    const yr=String(year);
+    const bankUpdateMap={}; // accId → 재압축 반영된 bankStatements
+    for(const acc of S.accounts){
+      const stmts=acc.bankStatements||[]; let changed=false; const newStmts=[];
+      for(const s of stmts){
+        const item=typeof s==='string'?{url:s,month:''}:{...s};
+        if(item.url&&(item.month||'').startsWith(yr)){const nu=await recompressStorageImage(item.url);if(nu){item.url=nu;changed=true;recompressed++;}}
+        newStmts.push(item);
+      }
+      if(changed)bankUpdateMap[acc.id]=newStmts;
+    }
+    // 1. 배치 추가: archive_YYYY 테이블에 거래 복제 (재압축된 receiptUrl 반영, 500개씩 자동 분할)
     const archiveData=trxList.map(t=>({col:'archive_'+year,data:t}));
     await batchAddDocs(archiveData);
-    // 2. 배치 업데이트: 계좌별 기초잔액 업데이트 (500개 제한 자동 처리)
+    // 2. 배치 업데이트: 계좌 기초잔액 + (재압축된) 통장사진 URL (500개 제한 자동 처리)
     const accUpdates=S.accounts.map(acc=>{
       const net=trxList.filter(t=>t.accountId===acc.id&&t.type!=='취소').reduce((s,t)=>s+(Number(t.amountIn||0)-Number(t.amountOut||0)),0);
       const newBal=(Number(acc.initialBalance||0))+net;
-      return {col:COLS.ACCOUNTS,docId:acc.id,data:{initialBalance:newBal,initialBalanceDate:(year+1)+'-01-01',currentBalance:newBal}};
+      const data={initialBalance:newBal,initialBalanceDate:(year+1)+'-01-01',currentBalance:newBal};
+      if(bankUpdateMap[acc.id])data.bankStatements=bankUpdateMap[acc.id];
+      return {col:COLS.ACCOUNTS,docId:acc.id,data};
     });
     if(accUpdates.length)await batchUpdateDocs(accUpdates);
-    // 3. 배치 삭제: 원본 거래 제거 (500개씩 자동 분할)
+    // 3. 배치 삭제: 원본 거래만 제거 (Storage 파일은 보관, 500개씩 자동 분할)
     const trxDeletes=trxList.map(t=>({col:COLS.TRANSACTIONS,docId:t.id}));
     await batchDeleteDocs(trxDeletes);
     // 4. 아카이브 기록 추가 (1건, 배치 불필요)
     await addDoc(collection(db,COLS.CONFIG),{type:'archive',year,archivedAt:new Date().toISOString(),count:trxList.length});
     await fetchBaseData(); loadSettings();
-    toast(`${year}년 마감 완료! ${trxList.length}건 보관.`,'success',5000);
+    toast(`${year}년 마감 완료! ${trxList.length}건 보관, 이미지 ${recompressed}건 압축.`,'success',5000);
   }catch(e){toast('마감 오류: '+e.message,'error');}
   showLoading(false);
 }
@@ -572,13 +593,22 @@ export async function executeFirebaseReset(){
       const{getDocs,collection,deleteDoc,doc}=fb();
       const db=fdb();
       const cols=[COLS.TRANSACTIONS,COLS.CLIENTS,COLS.ACCOUNTS,COLS.CATEGORIES,COLS.REPORTS,COLS.CONFIG,COLS.EXCEL_UPLOADS,'fixedItems'];
+      const storageUrls=[]; // Storage 고아 파일 방지: 삭제 전 파일 URL 수집
       for(const col of cols){
         const snap=await getDocs(collection(db,col));
-        for(const d of snap.docs)await deleteDoc(doc(db,col,d.id));
+        for(const d of snap.docs){
+          const data=d.data();
+          if(col===COLS.TRANSACTIONS&&data.receiptUrl)storageUrls.push(data.receiptUrl);
+          else if(col===COLS.ACCOUNTS)(data.bankStatements||[]).forEach(s=>{if(s&&typeof s==='object'){if(s.url)storageUrls.push(s.url);if(s.thumbUrl)storageUrls.push(s.thumbUrl);}else if(typeof s==='string')storageUrls.push(s);});
+          else if(col===COLS.EXCEL_UPLOADS&&data.url)storageUrls.push(data.url); // 구형 데이터 호환
+          await deleteDoc(doc(db,col,d.id));
+        }
       }
+      // Firestore 삭제 후 Storage 파일도 전량 삭제(best-effort)
+      await deleteManyFromStorage(storageUrls);
       await fetchBaseData();
       loadSettings();
-      toast('초기화 완료. 모든 데이터가 삭제되었습니다.','success',5000);
+      toast(`초기화 완료. 모든 데이터가 삭제되었습니다. (첨부 파일 ${storageUrls.length}건 정리)`,'success',5000);
     }catch(e){toast('초기화 오류: '+e.message,'error');}
     showLoading(false);
   },'초기화 실행');

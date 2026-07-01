@@ -9,8 +9,7 @@ import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.js';
 import { fb, fdb, batchAddDocs } from '../services/firestore.js';
-import { compressImage } from '../services/drive.js';
-import { uploadToStorage, getImageUrl } from '../services/storage.js';
+import { uploadToStorage, uploadImageWithThumb, deleteFromStorage, deleteManyFromStorage, getImageUrl } from '../services/storage.js';
 import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
@@ -170,7 +169,8 @@ export function renderTrxForm(t){
       }
     } else {
       // 영수증 업로드 처리
-      let receiptUrl=isEdit?t.receiptUrl||'':'';
+      const oldReceiptUrl=isEdit?(t.receiptUrl||''):'';
+      let receiptUrl=oldReceiptUrl;
       if(window._trxReceiptClear)receiptUrl='';
       const receiptFile=document.getElementById('trx-receipt-file')?.files[0];
       if(receiptFile){
@@ -179,6 +179,8 @@ export function renderTrxForm(t){
           if(url)receiptUrl=url;
         }catch(e){toast('영수증 업로드 실패: '+e.message,'error');}
       }
+      // 증빙이 교체/해제되면 기존 파일은 Storage에서 삭제(고아 파일 방지)
+      if(oldReceiptUrl&&oldReceiptUrl!==receiptUrl)deleteFromStorage(oldReceiptUrl);
       // 취소-수입/취소-지출은 저장 시 '취소'로 정규화
       const isCancelIn=type==='취소-수입';
       const isCancelOut=type==='취소-지출';
@@ -431,22 +433,20 @@ export async function saveExcelData(){
   const msg=dupCount>0?`${toSave.length}건 저장됨 (중복 ${dupCount}건 제외)`:toSave.length+'건 저장됨';
   toast(msg,'success'); closeModal();
   if(S.activeClient===acc.clientId)await loadTransactions(acc.clientId);
-  // 엑셀 원본 Drive 업로드 + excelUploads 저장 (거래 저장 후 비동기)
+  // 엑셀 업로드 이력 저장 (경량 로그만; 원본 파일/rawRows는 저장하지 않음)
+  // 파싱된 데이터는 이미 transactions에 저장되므로 원본 파일 보관은 중복 → 무료 용량 절약
   if(S.excelFile){
-    const uploadFile=S.excelFile, uploadRawRows=[...S.excelRawRows];
+    const uploadFile=S.excelFile;
     const uploadMonth=document.getElementById('xl-month-label')?.value||S.excelMonth;
+    const savedCount=toSave.length;
     S.excelFile=null; S.excelRawRows=[]; S.excelMonth='';
     try{
-      toast('원본 파일 업로드 중...','info',3000);
-      const url=await uploadToStorage(uploadFile,`excel/${acc.clientId}/${accId}/${Date.now()}_${uploadFile.name}`);
       const{addDoc:aDoc,collection:col}=fb();
       await aDoc(col(fdb(),COLS.EXCEL_UPLOADS),{
         accId,clientId:acc.clientId,filename:uploadFile.name,
-        month:uploadMonth,url,uploadedAt:new Date().toISOString().split('T')[0],
-        rawRows:uploadRawRows
+        month:uploadMonth,count:savedCount,uploadedAt:new Date().toISOString().split('T')[0]
       });
-      toast('원본 파일 저장 완료','success',2000);
-    }catch(e){toast('파일 저장 실패 (거래는 정상 저장됨): '+e.message,'error',5000);}
+    }catch(e){console.warn('엑셀 이력 저장 건너뜀:',e.message);}
   }
 }
 
@@ -511,9 +511,11 @@ export async function doReceiptUpload(trxId){
   try{
     btn.textContent='업로드 중...';
     if(status)status.textContent='Firebase Storage에 업로드 중입니다...';
+    const oldUrl=S.transactions.find(x=>x.id===trxId)?.receiptUrl||'';
     const url=await uploadToStorage(_receiptSelectedFile,`receipts/${S.activeClient||'all'}/${Date.now()}_${_receiptSelectedFile.name}`);
     const{doc,updateDoc}=fb();
     await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{receiptUrl:url,receiptMissing:false});
+    if(oldUrl&&oldUrl!==url)deleteFromStorage(oldUrl);
     [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t){t.receiptUrl=url;t.receiptMissing=false;}});
     toast('업로드 완료!','success'); _receiptSelectedFile=null; closeModal(); renderHistoryTable();
   }catch(e){btn.disabled=false;btn.textContent='📤 업로드';if(status)status.style.display='none';toast('업로드 실패: '+e.message,'error');}
@@ -844,12 +846,13 @@ export async function renderBankStatementManager(accountId,yearParam,monthParam)
     filtered.forEach((item,i)=>{
       const url=typeof item==='string'?item:item.url;
       const mon=typeof item==='string'?'':item.month||'';
-      const thumb=getImageUrl(url,'w200');
+      const thumbUrl=typeof item==='string'?'':item.thumbUrl||'';
+      const thumb=getImageUrl(thumbUrl||url,'w200');
       const cell=document.createElement('div');
       cell.style.cssText='position:relative;border:1px solid var(--border);border-radius:8px;overflow:hidden;';
       cell.innerHTML='<div style="font-size:10px;color:var(--muted);padding:3px 6px;background:var(--bg);text-align:center;">'+(mon||'날짜없음')+'</div><div style="aspect-ratio:3/4;"><img src="'+thumb+'" style="width:100%;height:100%;object-fit:cover;" onerror="this.src=\'\'"></div><button style="position:absolute;top:24px;right:4px;background:rgba(220,38,38,.85);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;" data-idx="'+i+'">✕</button>';
       const origIdx=existing.indexOf(item);
-      cell.querySelector('button').addEventListener('click',async()=>{if(origIdx>-1)existing.splice(origIdx,1);await updateDoc(accRef,{bankStatements:[...existing]});document.getElementById('bs-count').textContent=existing.length;renderGallery(existing);});
+      cell.querySelector('button').addEventListener('click',async()=>{if(origIdx>-1)existing.splice(origIdx,1);await updateDoc(accRef,{bankStatements:[...existing]});document.getElementById('bs-count').textContent=existing.length;renderGallery(existing);deleteManyFromStorage([url,thumbUrl]);});
       cell.querySelector('img').addEventListener('click',()=>openReceiptModal(url));
       gallery.appendChild(cell);
     });
@@ -875,7 +878,7 @@ export async function renderBankStatementsList(accountId, targetEl){
   stmts.forEach(item=>{
     const url=item.url||'';
     const mon=item.month||'';
-    const thumb=getImageUrl(url,'w200');
+    const thumb=getImageUrl(item.thumbUrl||url,'w200');
     const cell=document.createElement('div');
     cell.style.cssText='display:inline-block;margin:4px;cursor:pointer;border:1px solid var(--border);border-radius:8px;overflow:hidden;width:100px;vertical-align:top;';
     cell.innerHTML='<div style="font-size:10px;color:var(--muted);padding:2px 4px;text-align:center;">'+(mon||'날짜없음')+'</div><img src="'+thumb+'" style="width:100%;height:130px;object-fit:cover;" onerror="this.src=\'\'">';
@@ -890,8 +893,8 @@ export async function uploadBankStatements(files,accRef,existing,renderGallery){
   for(let i=0;i<total;i++){
     if(status)status.textContent=`업로드 중... ${i+1}/${total}`;
     try{
-      const url=await uploadToStorage(files[i],`bankbooks/${accRef.id}/${monthVal}_${Date.now()}_${files[i].name}`);
-      existing.push({url,month:monthVal});
+      const{url,thumbUrl}=await uploadImageWithThumb(files[i],`bankbooks/${accRef.id}/${monthVal}_${Date.now()}_${files[i].name}`);
+      existing.push({url,thumbUrl,month:monthVal});
       const{updateDoc}=fb();
       await updateDoc(accRef,{bankStatements:[...existing]});
       document.getElementById('bs-count').textContent=existing.length;

@@ -9,6 +9,7 @@ import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, escAttr, emptyState } from '../utils/ui.js';
 import { fb, fdb, batchDeleteDocs, batchUpdateDocs } from '../services/firestore.js';
+import { deleteFromStorage } from '../services/storage.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
 import { openModal, getUnpaidMandatoryItems } from './modals.js';
 import { can } from './permissions.js';
@@ -408,6 +409,8 @@ export async function delTrx(id,accId){
     const{doc,deleteDoc}=fb();
     const trx=S.transactions.find(x=>x.id===id);
     await deleteDoc(doc(fdb(),COLS.TRANSACTIONS,id));
+    // 증빙 파일도 Storage에서 삭제(고아 파일 방지)
+    if(trx?.receiptUrl)await deleteFromStorage(trx.receiptUrl);
     await updateAccBalance(accId);
     // B001: 자산이동 연결 거래 함께 삭제
     if(trx?.type==='자산이동'&&trx.linkedTrxId){
@@ -464,6 +467,8 @@ export async function confirmBulkDelete(){
     // 배치 삭제: 선택 거래 + 연결 거래
     await batchDeleteDocs(toDelete);
     if(linkedToDelete.length)await batchDeleteDocs(linkedToDelete);
+    // 삭제된 거래의 증빙 파일도 Storage에서 제거(고아 파일 방지, best-effort)
+    checkedIds.forEach(cid=>{const t=S.transactions.find(x=>x.id===cid);if(t?.receiptUrl)deleteFromStorage(t.receiptUrl);});
     // 로컬 캐시 업데이트 (모든 삭제 거래 제거)
     const allDeletedIds=new Set([...checkedIds,...linkedToDelete.map(d=>d.docId)]);
     S.transactions=S.transactions.filter(t=>!allDeletedIds.has(t.id));

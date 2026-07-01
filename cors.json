@@ -1,0 +1,13 @@
+[
+  {
+    "origin": [
+      "https://smart-care-ledger.web.app",
+      "https://smart-care-ledger.firebaseapp.com",
+      "http://localhost:5000",
+      "http://127.0.0.1:5000"
+    ],
+    "method": ["GET"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type"]
+  }
+]

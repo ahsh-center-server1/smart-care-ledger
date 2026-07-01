@@ -42,7 +42,7 @@ users:        { userId, password, name, role, team }
 clients:      { clientId, name, userIds, teamLeader, contact, memo }
 accounts:     { accountId, clientId, label, accountNumber,
                 initialBalance, initialBalanceDate, currentBalance,
-                bankStatements: [{url, month}] }
+                bankStatements: [{url, thumbUrl, month}] }
 transactions: { trxId, clientId, accountId, date, type, category,
                 subcategory, description, amountIn, amountOut,
                 receiptUrl, sortOrder, isFixed, fixedItemId,
@@ -59,7 +59,8 @@ config:       { type='archive', year, archivedAt, count }
 fixedItems:   { clientId, accountId, type, day, category,
                 description, amount }
 budgets:      { clientId, year, categoryBudgets{...} }  // 연간 예산
-excelUploads: 엑셀 업로드 이력
+excelUploads: { accId, clientId, filename, month, count, uploadedAt }
+              // 경량 이력만 저장 (원본 파일/rawRows 미저장 — 용량 절약)
 archive_YYYY: 마감된 거래 데이터 백업
 ```
 
@@ -306,3 +307,31 @@ https://smart-care-ledger.web.app
 - [ ] git 커밋 완료
 - [ ] `firebase deploy` 실행
 - [ ] 배포된 앱 확인
+
+---
+
+## 13. Storage 용량 관리 정책 (Firebase 무료 한도 대응)
+
+> 무료(Spark) 한도: Storage 저장 5GB · 다운로드 1GB/일 · 업로드 2만/일 · 다운로드 5만/일
+
+핵심 로직은 `public/services/storage.js`에 있음.
+
+| 정책 | 구현 위치 | 설명 |
+|---|---|---|
+| 업로드 전 이미지 압축 | `drive.js` `compressImage` | 1200px / JPEG 0.78 |
+| 업로드 크기 상한 | `storage.js` `validateUploadSize` | 이미지 15MB / HEIC 6MB / 기타(PDF) 8MB, 초과 시 예외 |
+| 삭제 시 파일 정리 | `deleteFromStorage` / `deleteManyFromStorage` | 거래·영수증·통장사진 삭제, 전체 초기화 시 Storage 객체까지 삭제 (고아 파일 방지) |
+| 연도 마감 시 재압축 보관 | `recompressStorageImage` + `settings.js executeArchive` | 해당 연도 영수증·통장사진을 900px/0.6으로 재압축(덮어쓰기), **삭제하지 않음** |
+| 목록용 썸네일 | `uploadImageWithThumb` | 통장사진 업로드 시 320px 썸네일 동시 생성 → 갤러리/보고서 목록은 `thumbUrl` 사용 (다운로드 대역폭 절감) |
+| 엑셀 원본 미저장 | `modals.js` 엑셀 저장부 | 파싱 결과는 transactions에 저장되므로 원본 파일/rawRows 미보관 |
+
+### CORS 설정 (연도 마감 재압축에 필요)
+
+재압축은 브라우저에서 저장된 이미지를 다시 읽어야 하므로 버킷 CORS 허용이 필요하다.
+설정하지 않으면 마감은 정상 진행되지만 이미지 재압축만 건너뛴다(best-effort).
+
+```bash
+gsutil cors set cors.json gs://smart-care-ledger.firebasestorage.app
+```
+
+> `cors.json`은 프로젝트 루트에 있으며 배포 대상은 아님(운영 1회 적용).

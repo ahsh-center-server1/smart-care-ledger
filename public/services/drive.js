@@ -45,12 +45,14 @@ export function compressImage(file, maxPx=1200, quality=0.78) {
           // 압축 후가 더 크면 원본 반환 (매우 작은 파일의 경우)
           if (blob.size >= origSize) { resolve(file); return; }
           // 압축된 Blob을 File 객체로 변환 (확장자는 jpg로 통일)
-          const baseName = file.name.replace(/\.[^.]+$/, '');
+          // Blob 입력(재압축 등 file.name 없음)도 안전하게 처리
+          const srcName = file.name || 'image.jpg';
+          const baseName = srcName.replace(/\.[^.]+$/, '');
           const compressed = new File([blob], baseName + '_compressed.jpg', {
             type: 'image/jpeg', lastModified: Date.now()
           });
           const ratio = Math.round((1 - blob.size/origSize) * 100);
-          console.log(`[압축] ${file.name}: ${(origSize/1024).toFixed(0)}KB → ${(blob.size/1024).toFixed(0)}KB (${ratio}% 감소)`);
+          console.log(`[압축] ${srcName}: ${(origSize/1024).toFixed(0)}KB → ${(blob.size/1024).toFixed(0)}KB (${ratio}% 감소)`);
           resolve(compressed);
         }, 'image/jpeg', quality);
       };
