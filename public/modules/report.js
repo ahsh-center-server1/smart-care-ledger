@@ -455,6 +455,8 @@ export function syncReportTrxList(){
 
 export async function reorderRptTrx(fromId,toId){
   if(!S.reportData)return;
+  const rd=S.reportData;
+  if(isConfirmedLocked(rd.clientId,`${rd.year}-${String(rd.month).padStart(2,'0')}-01`)){toast('최종 결재 완료된 월의 거래는 순서를 변경할 수 없습니다.','error');return;}
   const arr=[...S.reportData.trxList];
   const fi=arr.findIndex(x=>x.id===fromId), ti=arr.findIndex(x=>x.id===toId);
   if(fi<0||ti<0)return;

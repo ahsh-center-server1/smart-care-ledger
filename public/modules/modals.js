@@ -10,7 +10,7 @@ import { COLS, CAT_COLORS, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.js';
 import { fb, fdb, batchAddDocs } from '../services/firestore.js';
 import { uploadToStorage, uploadImageWithThumb, uploadExcelOriginal, deleteFromStorage, deleteManyFromStorage, getImageUrl } from '../services/storage.js';
-import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts } from './core.js';
+import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts, isConfirmedLocked } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
 import { can } from './permissions.js';
@@ -118,6 +118,10 @@ export function renderTrxForm(t){
     const cat=document.getElementById('f-cat').value;
     const desc=document.getElementById('f-desc').value;
     const existId=document.getElementById('f-trx-id').value;
+    // 최종 결재 완료 월 잠금 (자산이동은 출금/입금 계좌 입주자 모두 검사)
+    const toAccIdChk=document.getElementById('f-to-acc')?.value||'';
+    const toAccChk=S.accounts.find(a=>a.id===toAccIdChk);
+    if(isConfirmedLocked(acc?.clientId,date)||(type==='자산이동'&&toAccChk&&isConfirmedLocked(toAccChk.clientId,date))){toast('최종 결재 완료된 월에는 거래를 추가/수정할 수 없습니다.','error');return;}
     if(type==='자산이동'){
       const toAccId=document.getElementById('f-to-acc').value;
       if(!toAccId){toast('입금 계좌를 선택하세요.','error');return;}
@@ -205,6 +209,10 @@ export function renderTrxForm(t){
     const time=document.getElementById('f-time')?.value||'';
     const cat=document.getElementById('f-cat').value;
     const desc=document.getElementById('f-desc').value;
+    // 최종 결재 완료 월 잠금 (복사 대상 월도 검사)
+    const toAccIdCp=document.getElementById('f-to-acc')?.value||'';
+    const toAccCp=S.accounts.find(a=>a.id===toAccIdCp);
+    if(isConfirmedLocked(acc?.clientId,date)||(type==='자산이동'&&toAccCp&&isConfirmedLocked(toAccCp.clientId,date))){toast('최종 결재 완료된 월에는 거래를 추가할 수 없습니다.','error');return;}
     if(type==='자산이동'){
       const toAccId=document.getElementById('f-to-acc').value;
       if(!toAccId){toast('입금 계좌를 선택하세요.','error');return;}
@@ -416,6 +424,9 @@ export async function saveExcelData(){
   if(!accId){toast('계좌를 선택하세요.','error');return;}
   if(!S.excelTemp.length){toast('데이터가 없습니다.','error');return;}
   const acc=S.accounts.find(a=>a.id===accId); if(!acc)return;
+  // 최종 결재 완료 월에 속한 행이 있으면 업로드 차단
+  const lockedRows=S.excelTemp.filter(item=>!item._dup&&isConfirmedLocked(acc.clientId,item.date));
+  if(lockedRows.length){toast(`최종 결재 완료된 월의 거래 ${lockedRows.length}건이 포함되어 있습니다. 해당 행을 제거한 뒤 저장하세요.`,'error',6000);return;}
   const btn=document.getElementById('xl-save-btn'); if(btn){btn.disabled=true;btn.textContent='저장 중...';}
   // 중복(_dup) 행 제외하고 저장
   const toSave=S.excelTemp.filter(item=>!item._dup);
@@ -506,6 +517,8 @@ export function onReceiptFileSelect(file){
 }
 export async function doReceiptUpload(trxId){
   if(!_receiptSelectedFile){toast('파일을 선택하세요.','error');return;}
+  const _lk=S.transactions.find(x=>x.id===trxId);
+  if(_lk&&isConfirmedLocked(_lk.clientId,_lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다.','error');return;}
   const btn=document.getElementById('ru-btn'), status=document.getElementById('ru-status');
   btn.disabled=true; btn.textContent='압축 중...';
   if(status){status.textContent='이미지 압축 중...';status.style.display='block';}
@@ -647,6 +660,8 @@ export async function applyFixedItems(){
   document.getElementById('fi-month-ok').addEventListener('click',async()=>{
     const yearMonth=document.getElementById('fi-month-sel').value;
     if(!yearMonth){toast('월을 선택하세요.','error');return;}
+    // 최종 결재 완료 월에는 고정항목 입력 불가
+    if(isConfirmedLocked(clientId,yearMonth+'-01')){toast(`${yearMonth}은 최종 결재 완료된 월이라 고정항목을 입력할 수 없습니다.`,'error',5000);return;}
     closeModal();
     const existing=S.transactions.filter(t=>(t.date||'').startsWith(yearMonth)&&t.isFixed);
     const existKeys=new Set(existing.map(t=>t.fixedItemId));

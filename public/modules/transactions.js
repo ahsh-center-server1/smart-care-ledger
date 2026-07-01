@@ -323,6 +323,8 @@ export function moveCalendar(dir){
 }
 
 export async function saveCatChange(trxId, newCat, chipEl) {
+  const lk=S.transactions.find(x=>x.id===trxId);
+  if(lk&&isConfirmedLocked(lk.clientId,lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다.','error');return;}
   const {doc,updateDoc}=fb();
   await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{category:newCat});
   [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t)t.category=newCat;});
@@ -366,7 +368,9 @@ export function applyPeriod(p){
 // 거래 CRUD
 // ─────────────────────────────────────────────
 export async function saveTrx(data){
-  if(isConfirmedLocked(data.clientId,data.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다.','error');return;}
+  if(isConfirmedLocked(data.clientId,data.date)){toast('최종 결재 완료된 월의 거래는 추가/수정할 수 없습니다.','error');return;}
+  // 편집 시: 원본 거래가 확정 월에 있으면 다른 월로 이동/수정 금지
+  if(data.id){const prev=S.transactions.find(x=>x.id===data.id);if(prev&&isConfirmedLocked(prev.clientId,prev.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다.','error');return;}}
   const {doc,addDoc,collection,updateDoc}=fb();
   const isEdit=!!data.id;
   if(isEdit){
@@ -516,6 +520,8 @@ export async function reorderTrx(fromId,toId){
   const fromIdx=S.filteredTrx.findIndex(x=>x.id===fromId);
   const toIdx  =S.filteredTrx.findIndex(x=>x.id===toId);
   if(fromIdx<0||toIdx<0)return;
+  const movedItem=S.filteredTrx[fromIdx];
+  if(movedItem&&isConfirmedLocked(movedItem.clientId,movedItem.date)){toast('최종 결재 완료된 월의 거래는 순서를 변경할 수 없습니다.','error');return;}
   const arr=[...S.filteredTrx];
   const [moved]=arr.splice(fromIdx,1);
   arr.splice(toIdx,0,moved);
