@@ -18,12 +18,20 @@
 
 ## 2. 파일 구조
 
+앱은 ES 모듈로 분리되어 있습니다. 프론트엔드 파일은 `public/` 하위에 있습니다.
+
 | 파일 | 경로 | 설명 |
 |---|---|---|
-| `index.html` | `/mnt/user-data/outputs/public/index.html` | 전체 HTML + CSS + 구조 |
-| `app.js` | `/mnt/user-data/outputs/public/app.js` | 전체 JS 로직 (~149KB, ~2500줄) |
-| `parser-config.js` | `/mnt/user-data/outputs/public/parser-config.js` | 은행별 엑셀 파서 설정 |
-| `firestore.rules` | `/mnt/user-data/outputs/public/firestore.rules` | Firestore 보안 규칙 |
+| `index.html` | `public/index.html` | 전체 HTML + CSS + 구조 |
+| `app.js` | `public/app.js` | 전역 초기화 및 이벤트 바인딩 |
+| `constants.js` | `public/constants.js` | 상수(COLS, 색상 등) 정의 |
+| `state.js` | `public/state.js` | 전역 상태(S) |
+| `parser-config.js` | `public/parser-config.js` | 은행별 엑셀 파서 설정 |
+| `manifest.json` / `sw.js` | `public/` | PWA 매니페스트 / 서비스 워커 |
+| 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions |
+| 서비스 | `public/services/*.js` | firestore, drive(Google Drive), storage |
+| 유틸 | `public/utils/ui.js` | UI 유틸리티 |
+| `firestore.rules` | `firestore.rules` (루트) | Firestore 보안 규칙 |
 
 ---
 
@@ -47,10 +55,15 @@ reports:      { reportId, clientId, year, month, status, summary,
                 rejectedAt/By/ByName,
                 staffComment, leaderComment, centerComment }
 config:       { type='archive', year, archivedAt, count }
+              // 'permissions' 문서: 역할별 권한 오버라이드 저장
 fixedItems:   { clientId, accountId, type, day, category,
                 description, amount }
+budgets:      { clientId, year, categoryBudgets{...} }  // 연간 예산
+excelUploads: 엑셀 업로드 이력
 archive_YYYY: 마감된 거래 데이터 백업
 ```
+
+> 컬렉션 상수는 `public/constants.js`의 `COLS` 참조.
 
 ---
 
@@ -58,10 +71,15 @@ archive_YYYY: 마감된 거래 데이터 백업
 
 | 역할 | 권한 |
 |---|---|
-| 담당자 | 거래 입력/수정, 보고서 작성·제출 |
-| 팀장 | 담당자 권한 + 보고서 결재(1차)/반려/수정/삭제 |
-| 센터장 | 팀장 권한 + 최종 결재(2차)/반려/수정/삭제 |
-| 관리자 | 모든 권한 + 데이터 마감 |
+| 입력자 | 거래 입력/수정 전용 (엑셀·증빙·보고서·설정 불가) |
+| 담당자 | 거래 입력/수정 + 엑셀/증빙, 보고서 작성·제출·회수 |
+| 팀장 | 담당자 권한 + 보고서 결재(1차)/반려/수정/삭제 + 설정(직원/입주자/계좌) |
+| 센터장 | 팀장 권한 + 최종 결재(2차)/반려/수정/삭제 + 데이터 마감 |
+| 관리자 | 모든 권한 + 역할별 권한 관리 + 전체 초기화 |
+
+> 권한은 `public/modules/permissions.js`의 `DEFAULT_PERMISSIONS`가 기본값이며,
+> `config/permissions` 문서로 역할별 오버라이드 가능(관리자, 설정→권한 탭).
+> 권한 판정은 `can('key')` 헬퍼로 수행.
 
 ---
 
@@ -76,6 +94,7 @@ draft → submitted(담당자 제출) → team_approved(팀장 결재) → confi
 - **순서 강제**: 팀장 결재 완료 후에만 센터장 결재 가능
 - **팀장 직접 담당**: 담당자 없음 + `userIds`에 포함 + `teamLeader`가 본인 → 제출+팀장결재 동시 처리
 - **반려 후**: 담당자가 의견 수정 후 재제출 가능
+- **회수(recall)**: 팀장 결재 전(submitted) 상태면 담당자 본인이 draft로 회수 가능 (`report.recall`)
 
 ---
 
@@ -104,12 +123,15 @@ draft → submitted(담당자 제출) → team_approved(팀장 결재) → confi
 ### 거래내역
 - [x] 입주자/계좌/구분/증빙/기간 필터
 - [x] 계좌 필터 (입주자 변경 시 자동 갱신)
+- [x] 키워드(내용) 검색
 - [x] 날짜 오름차순 기본 정렬
-- [] 날짜/카테고리/내용/계좌/수입/지출/증빙 정렬
+- [x] 날짜/카테고리/내용/계좌/수입/지출/증빙 컬럼 헤더 정렬 (토글)
+- [x] 목록 뷰 ↔ 달력 뷰 전환
 - [x] sortOrder 기반 드래그앤드롭 순서 변경 (현재 페이지 내)
 - [x] 수정 후 정렬 유지 (로컬 업데이트)
 - [x] 페이지네이션 (100건/페이지)
 - [x] 일괄 삭제 (체크박스)
+- [x] CSV 내보내기 (현재 필터 기준)
 - [x] 카테고리 칩 인라인 수정 (드롭다운)
 - [x] 빈 공간 클릭 시 카테고리 드롭다운 닫기
 - [x] 자산이동/취소 유형 뱃지 표시
@@ -125,20 +147,21 @@ draft → submitted(담당자 제출) → team_approved(팀장 결재) → confi
 - [x] 파일 순서 그대로 sortOrder 부여
 - [x] 음수 지출 → 지출에서 음수 처리 (잔액 반영)
 - [x] 중복 경고 (날짜+금액 비교, 중복의심 뱃지)
-- [] 입주자별 자동 분류 규칙 (우선) + 공통 규칙 합산 매칭
+- [x] 입주자별 자동 분류 규칙 (우선) + 공통 규칙 매칭
 - [x] 미리보기에서 행 삭제 가능
+- [x] 수동 입력 템플릿 다운로드 (은행 파일 없을 때)
 
 ### 증빙 관리
 - [x] Google Drive OAuth 업로드 (이미지 압축: max 1200px, JPEG 0.78)
 - [x] 드래그앤드롭 파일 선택
 - [x] 미리보기 (Drive 썸네일 API: drive.google.com/thumbnail?id=&sz=w800)
-- [] 영수증 A4 일괄 출력 (2×4 격자)
+- [x] 영수증 A4 일괄 출력 (2열×4행 격자)
 
 ### 통장 사진
 - [x] 계좌 관리에서 다중 업로드 (연월 지정)
 - [x] 대시보드 퀵 액션에서 통장 사진 업로드 (입주자/계좌 선택)
-- [] 사진 정렬 (연월 내림차순)
-- [] 사진 리스트 기본 보기 (연월 필터)
+- [x] 사진 정렬 (연월 내림차순)
+- [x] 사진 리스트 연월 필터
 - [x] 보고서에서 해당 월 통장사진 조회
 - [x] 클릭 시 미리보기
 
@@ -159,10 +182,12 @@ draft → submitted(담당자 제출) → team_approved(팀장 결재) → confi
 - [x] "고정항목 입력" 버튼 → 이번 달 일괄 입력
 - [x] 월별 중복 방지 (fixedItemId 기준)
 
-### 연간 통계
+### 연간 통계 (보고서 → 연간 통계 서브탭)
+- [x] 연간 수입/지출/잔액 요약
 - [x] 월별 수입/지출 막대 차트
 - [x] 카테고리 순위
 - [x] 월별 상세 테이블
+- [x] 예산 대비 실적 (budgets 컬렉션 기반)
 - [x] 자산이동/취소 집계 제외
 
 ### 보고서
@@ -170,6 +195,7 @@ draft → submitted(담당자 제출) → team_approved(팀장 결재) → confi
 - [x] 결재 순서 강제 (팀장 → 센터장)
 - [x] 팀장/센터장 결재 대기 목록 (네비 뱃지 포함)
 - [x] 반려/수정(초안)/삭제 기능
+- [x] 담당자 제출 회수(recall) — 팀장 결재 전
 - [x] 의견란 (담당자/팀장/센터장 각각)
 - [x] 계좌 현황: 기초잔액+기준일이후~보고서월말 거래 직접 계산
 - [x] 분류별 지출: 비율순 정렬 + 바 시각화 (원차트 제거)
@@ -179,31 +205,39 @@ draft → submitted(담당자 제출) → team_approved(팀장 결재) → confi
 - [x] 엑셀 저장
 - [x] 인쇄/PDF (A4, 글씨 15px)
 - [x] sortOrder 기반 드래그앤드롭 순서 변경 (현재 페이지 내)
-- [] 거래내역 자동 정렬: 거래내역 sortOrder 기준 → 날짜/시간 오름차순
+- [x] 거래내역 자동 정렬: sortOrder 기준 → 날짜/시간 오름차순
+- [x] 컬럼 헤더 정렬 (rptSortKey)
 
 ### 설정 (관리 통합)
 - [x] 직원/입주자/계좌 관리 (설정 탭으로 통합)
-- [x] 공통/입주자별 카테고리 관리
+- [x] 공통/입주자별 카테고리 관리 (관리 대상/지출/수입/규칙 서브탭)
 - [x] 카테고리 드래그 순서 변경
 - [x] 공통/입주자별 자동분류 규칙 관리
 - [x] 고정항목 관리
-- [x] 데이터 마감 (관리자/센터장)
+- [x] 연간 예산 관리
+- [x] 데이터 초기화/마감 (센터장·관리자, Firebase 전체 초기화는 관리자)
+- [x] 역할별 권한 커스터마이징 (관리자)
+
+### 접근성/플랫폼
+- [x] PWA (크롬/엣지 설치형 앱, manifest.json + sw.js)
+- [x] 모바일 하단 네비게이션 + 반응형 UI
 
 ---
 
-## 8. 프로젝트 현황 (2026-05-05)
+## 8. 프로젝트 현황 (2026-07-01)
 
 ### 개발 완료 상태
-- **전체 기능**: 90개 완료 (A001~A059 기본 기능 + B001~B005 버그 + D001~D011 추가 기능 + E001~E004 보안/품질 + F001~F003 대시보드 강화 + I001~I002 개선)
-- **Firebase 최적화**: 3단계 완료 (Phase 1-3, 배치 처리 + 로컬 캐싱)
+- **전체 기능**: 기본 90개 + 이후 UX/플랫폼 개선 다수 완료
+- **Firebase 최적화**: 4단계 완료 (Phase 1-4, 배치 처리 + 로컬 캐싱 + 부분 갱신)
 - **Production Ready**: 모든 핵심 기능 완료, Firebase 무료 할당량 관리 최적화
-- **최근 변경사항**:
+- **최근 변경사항** (main 기준):
+  - 061e38a: 대시보드에 통장 사진 업로드 퀵 액션 추가
+  - 2f12bd7: PWA(크롬 설치형 앱) 지원 추가
+  - 07c80dd: 보고서/거래내역 UX 개선 및 엑셀 출력 디자인 통일
+  - de3bb22: UI/UX 개선 및 모바일 네비게이션
+  - d354960: Firebase 읽기 최적화 Phase 4 — 부분 갱신 + 캐시 활용 + 당월 기본
+  - c07463d: asktrust.kr 스타일 디자인 리뉴얼 (스카이블루 강조 + 로그인 리뉴얼)
   - 1262c1c: Firebase 무료 할당량 관리 최적화 (Phase 1-3) — 일일 읽기 52% 감소
-    - Phase 1: 로컬 캐싱 + 배치 삭제 (33% 감소)
-    - Phase 2: 페이지 정렬/예산/카테고리 배치화 (40% 누적)
-    - Phase 3: 마감 작업 배치 + 500개 단위 분할 (52% 누적)
-  - 991473f: D006 대상자/계좌 비활성화 시 목록 제거 버그 수정
-  - 323330c: 권한 설정 시스템 개선 및 입주자/계좌 목록 UI 개선
 
 ### 성능 개선 결과
 - **읽기 호출**: 32,000/일 → 15,500/일 (52% 감소)
@@ -254,13 +288,14 @@ firebase deploy
 `public/` 폴더의 다음 파일들이 배포됩니다:
 - `index.html` — 메인 HTML + CSS
 - `app.js` — 전역 초기화 및 이벤트 바인딩
-- `modules/*.js` — 기능별 모듈 (auth, core, transactions, report, settings, modals, dashboard)
-- `services/*.js` — Firestore, Google Drive 서비스
-- `utils/*.js` — UI 유틸리티 함수
+- `modules/*.js` — 기능별 모듈 (auth, core, dashboard, transactions, report, settings, modals, permissions)
+- `services/*.js` — firestore, drive(Google Drive), storage
+- `utils/ui.js` — UI 유틸리티 함수
 - `constants.js` — 상수 정의
 - `state.js` — 전역 상태
 - `parser-config.js` — 엑셀 파서 설정
-- `firestore.rules` — Firestore 보안 규칙
+- `manifest.json`, `sw.js`, `icons/` — PWA 매니페스트/서비스 워커/아이콘
+- `firestore.rules` — Firestore 보안 규칙 (루트)
 
 ### 배포 URL
 https://smart-care-ledger.web.app
