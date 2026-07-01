@@ -144,6 +144,8 @@ export const refetchCategories = () => fetchBaseData({ only: ['categories'] });
 export const refetchReports    = () => fetchBaseData({ only: ['reports'] });
 
 export function isConfirmedLocked(clientId, dateStr){
+  // 관리자는 최종 결재 완료 월도 추가/수정/삭제 가능 (잠금 우회)
+  if(S.user?.role==='관리자')return false;
   const ym=(dateStr||'').substring(0,7);
   return !!(S.confirmedMonths?.has(`${clientId}_${ym}`));
 }
