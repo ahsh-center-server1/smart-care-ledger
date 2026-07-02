@@ -3,7 +3,7 @@
  *
  * ES6 Native Modules 구조:
  *   state.js / constants.js / utils/ui.js
- *   services/firestore.js / services/drive.js
+ *   services/firestore.js / services/image.js / services/storage.js
  *   modules/auth / dashboard / transactions / report / settings / modals
  *
  * 이 파일(app.js)은 다음만 담당한다:
@@ -28,7 +28,7 @@ import {
 } from './constants.js';
 import { toast, showConfirm, closeConfirm, setText, showLoading, escAttr } from './utils/ui.js';
 import { fb, fdb } from './services/firestore.js';
-import { compressImage } from './services/drive.js';
+import { compressImage } from './services/image.js';
 import { uploadToStorage } from './services/storage.js';
 
 import * as Auth     from './modules/auth.js';

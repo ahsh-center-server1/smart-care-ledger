@@ -1,6 +1,6 @@
 /**
- * services/drive.js — Smart Care Ledger v2
- * 이미지 압축 유틸리티
+ * services/image.js — Smart Care Ledger v2
+ * 이미지 압축 유틸리티 (업로드 전 리사이즈/JPEG 압축)
  */
 
 'use strict';

@@ -56,7 +56,7 @@
 - ✅ 역할별 권한 커스터마이징 (관리자)
 
 ### 증빙 관리
-- ✅ Google Drive OAuth 업로드 (이미지 자동 압축)
+- ✅ 이미지 업로드 (Firebase Storage, 자동 압축)
 - ✅ 영수증 미리보기 + A4 일괄 출력 (2×4 격자)
 - ✅ 통장 사진 관리 (계좌 관리 · 대시보드 퀵 액션)
 
@@ -166,8 +166,8 @@
   │   └── permissions.js      # 역할별 권한 레이어
   ├── services/               # 외부 서비스
   │   ├── firestore.js
-  │   ├── drive.js            # Google Drive 업로드
-  │   └── storage.js
+  │   ├── image.js            # 이미지 압축 유틸
+  │   └── storage.js          # Firebase Storage 업로드/삭제
   ├── utils/                  # 유틸리티
   │   └── ui.js
   └── icons/                  # PWA 아이콘

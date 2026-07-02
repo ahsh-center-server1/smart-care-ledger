@@ -15,7 +15,7 @@ export const S = {
   activeClient: null,
   sortKey: 'date', sortDir: 'asc',       // 기본 오름차순(과거→최신)
   rptSortKey: 'date', rptSortDir: 'asc', // 보고서 거래내역 정렬
-  excelFile: null, excelMonth: '', excelRawRows: [], // 엑셀 원본 Drive 저장용
+  excelFile: null, excelMonth: '', excelRawRows: [], // 엑셀 업로드 임시 상태(원본 파일/미리보기)
   page: 1, pageSize: 100,
   trxViewMode: 'list', // 'list' | 'calendar'
   calendarYM: '',      // 달력뷰 표시 연월 (YYYY-MM, 비면 filteredTrx 기준)

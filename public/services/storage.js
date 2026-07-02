@@ -11,7 +11,7 @@
 
 'use strict';
 
-import { compressImage } from './drive.js';
+import { compressImage } from './image.js';
 
 const MB = 1024 * 1024;
 

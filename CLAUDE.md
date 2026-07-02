@@ -29,7 +29,7 @@
 | `parser-config.js` | `public/parser-config.js` | 은행별 엑셀 파서 설정 |
 | `manifest.json` / `sw.js` | `public/` | PWA 매니페스트 / 서비스 워커 |
 | 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions |
-| 서비스 | `public/services/*.js` | firestore, drive(Google Drive), storage |
+| 서비스 | `public/services/*.js` | firestore, image(이미지 압축), storage |
 | 유틸 | `public/utils/ui.js` | UI 유틸리티 |
 | `firestore.rules` | `firestore.rules` (루트) | Firestore 보안 규칙 |
 
@@ -153,9 +153,9 @@ draft → submitted(담당자 제출) → team_approved(팀장 결재) → confi
 - [x] 수동 입력 템플릿 다운로드 (은행 파일 없을 때)
 
 ### 증빙 관리
-- [x] Google Drive OAuth 업로드 (이미지 압축: max 1200px, JPEG 0.78)
+- [x] 이미지 업로드 (Firebase Storage, 압축: max 1200px, JPEG 0.78)
 - [x] 드래그앤드롭 파일 선택
-- [x] 미리보기 (Drive 썸네일 API: drive.google.com/thumbnail?id=&sz=w800)
+- [x] 미리보기 (Firebase Storage 다운로드 URL 직접 사용, 구형 Drive URL은 썸네일 API로 호환)
 - [x] 영수증 A4 일괄 출력 (2열×4행 격자)
 
 ### 통장 사진
@@ -260,9 +260,14 @@ draft → submitted(담당자 제출) → team_approved(팀장 결재) → confi
 
 ## 10. 핵심 설정값
 
+Firebase 설정(`firebaseConfig`)은 `public/index.html`에 정의되어 있으며, 파일
+업로드는 Firebase Storage(`services/storage.js`)를 사용한다. (Google Drive 업로드는
+더 이상 사용하지 않음 — 구형 Drive URL 표시 호환만 `getImageUrl`에 남아 있음.)
+
 ```javascript
-const GOOGLE_OAUTH_CLIENT_ID = 'YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com';
-const DRIVE_FOLDER_ID        = 'YOUR_DRIVE_FOLDER_ID';
+// public/index.html
+const firebaseConfig = { apiKey, authDomain, projectId,
+  storageBucket: 'smart-care-ledger.firebasestorage.app', ... };
 ```
 
 ---
@@ -290,7 +295,7 @@ firebase deploy
 - `index.html` — 메인 HTML + CSS
 - `app.js` — 전역 초기화 및 이벤트 바인딩
 - `modules/*.js` — 기능별 모듈 (auth, core, dashboard, transactions, report, settings, modals, permissions)
-- `services/*.js` — firestore, drive(Google Drive), storage
+- `services/*.js` — firestore, image(이미지 압축), storage
 - `utils/ui.js` — UI 유틸리티 함수
 - `constants.js` — 상수 정의
 - `state.js` — 전역 상태
@@ -318,7 +323,7 @@ https://smart-care-ledger.web.app
 
 | 정책 | 구현 위치 | 설명 |
 |---|---|---|
-| 업로드 전 이미지 압축 | `drive.js` `compressImage` | 1200px / JPEG 0.78 |
+| 업로드 전 이미지 압축 | `image.js` `compressImage` | 1200px / JPEG 0.78 |
 | 업로드 크기 상한 | `storage.js` `validateUploadSize` | 이미지 15MB / HEIC 6MB / 기타(PDF) 8MB, 초과 시 예외 |
 | 삭제 시 파일 정리 | `deleteFromStorage` / `deleteManyFromStorage` | 거래·영수증·통장사진 삭제, 전체 초기화 시 Storage 객체까지 삭제 (고아 파일 방지) |
 | 연도 마감 시 재압축 보관 | `recompressStorageImage` + `settings.js executeArchive` | 해당 연도 영수증·통장사진을 900px/0.6으로 재압축(덮어쓰기), **삭제하지 않음** |

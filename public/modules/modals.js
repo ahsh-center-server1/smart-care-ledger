@@ -365,7 +365,7 @@ export function analyzeXlFile(){
         const isDup=existSet.has(`${p.date}_${Math.abs(amIn)}_${Math.abs(amOut)}`);
         return {date:p.date,description:p.desc,amountIn:amIn,amountOut:amOut,type,category:p.cat||'확인필요',subcategory:p.sub||'',receiptUrl:'',_dup:isDup,sortOrder:existingMaxOrder+i+1};
       });
-      // 원본 행 보존 (Drive 저장 + 대조용)
+      // 원본 행 임시 보관 (미리보기/중복 대조용, Firestore에는 저장하지 않음)
       S.excelRawRows=parsed.map(p=>({date:p.date,desc:p.desc,amountIn:p.in>0?p.in:0,amountOut:p.out>0?p.out:0}));
       // 가장 빈번한 연월 자동 감지
       const mCount={};parsed.forEach(p=>{const m=(p.date||'').substring(0,7);if(m)mCount[m]=(mCount[m]||0)+1;});
@@ -401,7 +401,7 @@ export function renderXlPreview(){
         <tbody id="xl-tbody"></tbody>
       </table>
     </div>
-    <button id="xl-save-btn" class="btn" style="width:100%;padding:11px;background:#10b981;">✅ 최종 저장 (Drive 자동 백업 포함)</button>`;
+    <button id="xl-save-btn" class="btn" style="width:100%;padding:11px;background:#10b981;">✅ 최종 저장 (원본 파일 백업 포함)</button>`;
   const tbody=document.getElementById('xl-tbody');
   S.excelTemp.forEach((t,i)=>{
     const isIn=t.amountIn>0, amt=isIn?t.amountIn:Math.abs(t.amountOut), c=cs(t.category);
@@ -470,7 +470,7 @@ export function renderReceiptUploadForm(trxId){
   _receiptSelectedFile=null;
   document.getElementById('modal-body').innerHTML=`
     <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">📎 증빙 업로드</h3>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">클릭하거나 파일을 끌어다 놓으면 Google Drive에 자동 업로드됩니다.</p>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">클릭하거나 파일을 끌어다 놓으면 자동 업로드됩니다.</p>
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div id="ru-drop" style="border:2px dashed var(--bm);border-radius:12px;background:#f8fafc;padding:24px 20px;text-align:center;cursor:pointer;transition:all .15s;">
         <input type="file" id="ru-file" accept="image/*,.pdf" style="display:none;">

@@ -13,7 +13,7 @@
  */
 'use strict';
 
-const CACHE_VERSION = 'scl-v1';
+const CACHE_VERSION = 'scl-v2';
 const SHELL_CACHE = `shell-${CACHE_VERSION}`;
 
 // 오프라인 폴백을 위해 미리 캐시할 앱 셸 (동일 출처 정적 자원)
@@ -26,7 +26,7 @@ const APP_SHELL = [
   '/parser-config.js',
   '/utils/ui.js',
   '/services/firestore.js',
-  '/services/drive.js',
+  '/services/image.js',
   '/services/storage.js',
   '/modules/auth.js',
   '/modules/core.js',
