@@ -5,13 +5,57 @@
 
 'use strict';
 
+// ─────────────────────────────────────────────
+// HEIC/HEIF → JPEG 변환
+//  브라우저(크롬/엣지 등)는 HEIC를 canvas로 디코딩하지 못해 원본이 그대로
+//  저장된다. heic2any(libheif WASM)를 "HEIC 업로드 시에만" 지연 로드해 JPEG로
+//  변환한 뒤 일반 압축 경로를 태운다. 로드/변환 실패 시 원본을 그대로 사용(무해).
+// ─────────────────────────────────────────────
+const HEIC2ANY_SRC = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+let _heic2anyPromise = null;
+function loadHeic2any() {
+  if (_heic2anyPromise) return _heic2anyPromise;
+  _heic2anyPromise = new Promise((resolve, reject) => {
+    if (window.heic2any) { resolve(window.heic2any); return; }
+    const s = document.createElement('script');
+    s.src = HEIC2ANY_SRC; s.async = true;
+    s.onload = () => window.heic2any ? resolve(window.heic2any) : reject(new Error('heic2any 미로드'));
+    s.onerror = () => { _heic2anyPromise = null; reject(new Error('heic2any 스크립트 로드 실패')); };
+    document.head.appendChild(s);
+  });
+  return _heic2anyPromise;
+}
+
+/** HEIC/HEIF면 JPEG로 변환해 반환, 그 외에는 원본 그대로 반환 */
+export async function heicToJpeg(file) {
+  const type = (file.type || '').toLowerCase();
+  const name = (file.name || '').toLowerCase();
+  const isHeic = type.includes('heic') || type.includes('heif') || /\.(heic|heif)$/.test(name);
+  if (!isHeic) return file;
+  try {
+    const heic2any = await loadHeic2any();
+    const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 });
+    const blob = Array.isArray(out) ? out[0] : out;
+    if (!blob || !blob.size) return file;
+    const base = (file.name || 'image').replace(/\.[^.]+$/, '');
+    console.log(`[HEIC 변환] ${file.name || 'image'} → ${base}.jpg (${(blob.size/1024).toFixed(0)}KB)`);
+    return new File([blob], base + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
+  } catch (e) {
+    console.warn('HEIC 변환 실패, 원본 사용:', e.message);
+    return file;
+  }
+}
+
 /**
  * 이미지 파일을 Canvas로 압축
+ * - HEIC/HEIF는 먼저 JPEG로 변환 (브라우저가 직접 디코딩하지 못함)
  * - 최대 너비/높이: 1200px (초과 시 비율 유지하며 축소)
  * - JPEG 품질: 0.78 (육안으로 거의 차이 없음, 용량 약 80~90% 감소)
  * - PDF, GIF 등 비이미지 파일은 그대로 반환
  */
-export function compressImage(file, maxPx=1200, quality=0.78) {
+export async function compressImage(file, maxPx=1200, quality=0.78) {
+  // HEIC/HEIF → JPEG 선변환 (변환 실패 시 원본 유지)
+  file = await heicToJpeg(file);
   return new Promise((resolve) => {
     // 이미지가 아니거나 GIF면 압축 없이 그대로 반환
     if (!file.type.startsWith('image/') || file.type === 'image/gif') {

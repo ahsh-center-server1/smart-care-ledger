@@ -324,7 +324,8 @@ https://smart-care-ledger.web.app
 | 정책 | 구현 위치 | 설명 |
 |---|---|---|
 | 업로드 전 이미지 압축 | `image.js` `compressImage` | 1200px / JPEG 0.78 |
-| 업로드 크기 상한 | `storage.js` `validateUploadSize` | 이미지 15MB / HEIC 6MB / 기타(PDF) 8MB, 초과 시 예외 |
+| 업로드 크기 상한 | `storage.js` `validateUploadSize` | 이미지·HEIC 15MB / 기타(PDF) 8MB, 초과 시 예외 |
+| HEIC→JPEG 변환 | `image.js` `heicToJpeg` | iPhone HEIC 업로드 시 heic2any(CDN 지연 로드)로 JPEG 변환 후 압축, 실패 시 원본 유지 |
 | 삭제 시 파일 정리 | `deleteFromStorage` / `deleteManyFromStorage` | 거래·영수증·통장사진 삭제, 전체 초기화 시 Storage 객체까지 삭제 (고아 파일 방지) |
 | 연도 마감 시 재압축 보관 | `recompressStorageImage` + `settings.js executeArchive` | 해당 연도 영수증·통장사진을 900px/0.6으로 재압축(덮어쓰기), **삭제하지 않음** |
 | 목록용 썸네일 | `uploadImageWithThumb` | 통장사진 업로드 시 320px 썸네일 동시 생성 → 갤러리/보고서 목록은 `thumbUrl` 사용 (다운로드 대역폭 절감) |

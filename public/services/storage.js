@@ -11,7 +11,7 @@
 
 'use strict';
 
-import { compressImage } from './image.js';
+import { compressImage, heicToJpeg } from './image.js';
 
 const MB = 1024 * 1024;
 
@@ -22,24 +22,18 @@ export function isStorageUrl(url) {
 
 /**
  * 업로드 전 파일 크기 상한 검증 (초과 시 예외)
- *  - 이미지(압축 대상): 15MB
- *  - HEIC/HEIF(브라우저 압축 불가 → 원본 저장): 6MB
+ *  - 이미지/HEIC(업로드 시 JPEG로 변환·압축): 15MB
  *  - 기타(PDF 등, 비압축): 8MB
  */
 export function validateUploadSize(file) {
-  const type = file.type || '';
+  const type = (file.type || '').toLowerCase();
   const name = (file.name || '').toLowerCase();
   const isHeic = type.includes('heic') || type.includes('heif') || /\.(heic|heif)$/.test(name);
-  const isImg = type.startsWith('image/') && !isHeic;
-  let cap, label;
-  if (isImg)       { cap = 15 * MB; label = '이미지'; }
-  else if (isHeic) { cap = 6 * MB;  label = 'HEIC 이미지'; }
-  else             { cap = 8 * MB;  label = '파일'; }
+  const isImg = type.startsWith('image/') || isHeic; // HEIC도 JPEG로 변환되므로 이미지로 취급
+  const cap = isImg ? 15 * MB : 8 * MB;
+  const label = isImg ? '이미지' : '파일';
   if (file.size > cap) {
     throw new Error(`${label} 용량이 너무 큽니다 (${(file.size / MB).toFixed(1)}MB). 최대 ${Math.round(cap / MB)}MB까지 업로드할 수 있습니다.`);
-  }
-  if (isHeic) {
-    console.warn('[HEIC] 브라우저에서 압축할 수 없어 원본이 그대로 저장됩니다. 가능하면 JPG로 업로드하세요.');
   }
 }
 
@@ -65,6 +59,7 @@ export async function uploadToStorage(file, path) {
  */
 export async function uploadImageWithThumb(file, path) {
   validateUploadSize(file);
+  file = await heicToJpeg(file); // HEIC는 1회만 변환 후 원본/썸네일에 공용
   const { storage, ref, uploadBytes, getDownloadURL } = window._fb;
   const main = await compressImage(file);
   const mainRef = ref(storage, path);
