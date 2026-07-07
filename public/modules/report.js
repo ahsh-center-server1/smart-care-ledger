@@ -197,6 +197,32 @@ export async function loadAnnual(){
   document.getElementById('annual-content').style.display='block';
 }
 
+
+function getReportAccountRows(year,month,accs,allTrx){
+  const mStr=`${year}-${String(month).padStart(2,'0')}`;
+  const endDate=mStr+'-31';
+  const prevYM=month===1?`${year-1}-12`:`${year}-${String(month-1).padStart(2,'0')}`;
+  const prevEnd=prevYM+'-31';
+  return (accs||[]).map(a=>{
+    const baseDate=a.initialBalanceDate||'';
+    const baseAmt=Number(a.initialBalance||0);
+    const allAccTrx=(allTrx||[]).filter(t=>t.accountId===a.id&&t.type!=='취소');
+    let bal=baseAmt, prevBal=baseAmt, monthlyIn=0, monthlyOut=0;
+    allAccTrx.forEach(t=>{
+      if(baseDate&&(t.date||'')<baseDate)return;
+      const d=t.date||'';
+      const diff=Number(t.amountIn||0)-Number(t.amountOut||0);
+      if(d<=prevEnd)prevBal+=diff;
+      if(d<=endDate)bal+=diff;
+      if(d.startsWith(mStr)&&t.type!=='자산이동'){
+        monthlyIn+=Number(t.amountIn||0);
+        monthlyOut+=Number(t.amountOut||0);
+      }
+    });
+    return {...a,prevBal,monthlyIn,monthlyOut,bal};
+  });
+}
+
 // ─────────────────────────────────────────────
 // 보고서
 // ─────────────────────────────────────────────
@@ -238,7 +264,8 @@ export async function loadReport(){
         catStats[k].total+=Number(t.amountOut||0); // 음수면 자동 차감
       }
     });
-    S.reportData={clientId,year,month,trxList,allTrx,accs,report,summary:{totalIn,totalOut,balance:totalIn-totalOut,catStats}};
+    const accountRows=getReportAccountRows(year,month,accs,allTrx);
+    S.reportData={clientId,year,month,trxList,allTrx,accs,accountRows,report,summary:{totalIn,totalOut,balance:totalIn-totalOut,catStats}};
     renderReportView();
     document.getElementById('report-area').style.display='block';
     // 목록 테이블에서 현재 보고서 행 하이라이트
@@ -257,7 +284,7 @@ export async function loadReport(){
 }
 
 export function renderReportView(){
-  const{clientId,year,month,trxList,accs,report,summary}=S.reportData;
+  const{clientId,year,month,trxList,accs,accountRows,report,summary}=S.reportData;
   const client=S.clients.find(c=>c.id===clientId)||{name:'-'};
   const now=new Date(), curStatus=report?report.status:'';
   setText('rpt-period',`${year}년 ${month}월 거래 내역`);
@@ -276,28 +303,14 @@ export function renderReportView(){
   if(sl){sl.textContent=lbl;sl.className=cls;} if(ub){ub.textContent=lbl;ub.className=cls;}
   // 계좌 현황 — 기초잔액 + 기준일 이후 거래 합산으로 직접 계산 (전월 잔액 포함)
   const accEl=document.getElementById('rpt-accounts'); accEl.innerHTML='';
-  accs.forEach(a=>{
-    const baseDate=a.initialBalanceDate||'';
-    const baseAmt=Number(a.initialBalance||0);
-    // B002: allTrx(loadReport에서 보존한 전체 거래)로 잔액 계산 — S.transactions 의존 제거
-    const mStr=`${year}-${String(month).padStart(2,'0')}`;
-    const endDate=mStr+'-31';
-    const prevYM=month===1?`${year-1}-12`:`${year}-${String(month-1).padStart(2,'0')}`;
-    const prevEnd=prevYM+'-31';
-    const allAccTrx=(S.reportData.allTrx||[]).filter(t=>t.accountId===a.id&&t.type!=='취소');
-    let bal=baseAmt, prevBal=baseAmt;
-    allAccTrx.forEach(t=>{
-      if(baseDate&&(t.date||'')<baseDate)return;
-      const d=t.date||'';
-      const diff=Number(t.amountIn||0)-Number(t.amountOut||0);
-      if(d<=prevEnd)prevBal+=diff;
-      if(d<=endDate)bal+=diff;
-    });
+  (accountRows||getReportAccountRows(year,month,accs,S.reportData.allTrx)).forEach(a=>{
     const row=document.createElement('div');
-    row.style.cssText='display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f3f4f6;gap:8px;';
-    row.innerHTML=`<span style="font-size:14px;color:#6b7280;flex:1;">${a.label}</span>`
-      +`<span style="font-size:12px;color:#9ca3af;white-space:nowrap;">전월 ${prevBal.toLocaleString()}원</span>`
-      +`<span style="font-size:14px;font-weight:700;color:${bal>=0?'#111827':'#dc2626'};white-space:nowrap;">${bal.toLocaleString()}원</span>`;
+    row.style.cssText='display:grid;grid-template-columns:minmax(120px,1fr) repeat(4,minmax(86px,auto));align-items:center;padding:7px 0;border-bottom:1px solid #f3f4f6;gap:8px;';
+    row.innerHTML=`<span style="font-size:14px;color:#374151;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${a.label}</span>`
+      +`<span style="font-size:12px;color:#9ca3af;text-align:right;white-space:nowrap;">전월 ${a.prevBal.toLocaleString()}원</span>`
+      +`<span style="font-size:12px;color:#15803d;text-align:right;white-space:nowrap;">수입 +${a.monthlyIn.toLocaleString()}원</span>`
+      +`<span style="font-size:12px;color:#b91c1c;text-align:right;white-space:nowrap;">지출 ${a.monthlyOut.toLocaleString()}원</span>`
+      +`<span style="font-size:14px;font-weight:700;color:${a.bal>=0?'#111827':'#dc2626'};text-align:right;white-space:nowrap;">${a.bal.toLocaleString()}원</span>`;
     accEl.appendChild(row);
   });
   // 분류별 지출
@@ -355,7 +368,21 @@ export function renderRptTrxTable(trxList){
     tbody.appendChild(tr); return;
   }
   const confirmedLocked=isConfirmedLocked(S.reportData?.clientId, S.reportData?.trxList?.[0]?.date||'');
+  const byAccount=new Map();
+  (S.reportData?.accs||[]).forEach(a=>byAccount.set(a.id,{account:a,items:[]}));  
   trxList.forEach(t=>{
+    if(!byAccount.has(t.accountId))byAccount.set(t.accountId,{account:S.accounts.find(a=>a.id===t.accountId)||{id:t.accountId,label:'미지정 계좌'},items:[]});
+    byAccount.get(t.accountId).items.push(t);
+  });
+  byAccount.forEach(group=>{
+    if(!group.items.length)return;
+    const subIn=group.items.reduce((sum,t)=>t.type==='자산이동'||t.type==='취소'?sum:sum+Number(t.amountIn||0),0);
+    const subOut=group.items.reduce((sum,t)=>t.type==='자산이동'||t.type==='취소'?sum:sum+Number(t.amountOut||0),0);
+    const header=document.createElement('tr');
+    header.className='rpt-account-group-row';
+    header.innerHTML=`<td colspan="6" style="padding:8px 6px;background:#f8fafc;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:800;color:#374151;">🏦 ${group.account.label||'미지정 계좌'} <span style="font-weight:600;color:#6b7280;margin-left:8px;">${group.items.length}건 · 수입 ${subIn.toLocaleString()}원 · 지출 ${subOut.toLocaleString()}원</span></td>`;
+    tbody.appendChild(header);
+    group.items.forEach(t=>{    
     const tr=document.createElement('tr');
     tr.dataset.id=t.id;
     const locked=confirmedLocked; // 최종 결재 완료 보고서는 드래그 불가
@@ -392,6 +419,7 @@ export function renderRptTrxTable(trxList){
     const rvBtn=tr.querySelector('.rpt-rv');
     if(rvBtn)rvBtn.addEventListener('click',()=>openReceiptModal(rvBtn.dataset.url,t.id));
     tbody.appendChild(tr);
+    });      
   });
 }
 
@@ -447,6 +475,7 @@ export function syncReportTrxList(){
     return dtA.localeCompare(dtB);
   });
   S.reportData.trxList=baseSort;
+  S.reportData.accountRows=getReportAccountRows(year,month,S.reportData.accs,S.transactions);  
   // 현재 보고서 정렬이 날짜 기본이 아니면 정렬 적용
   const sorted=(S.rptSortKey!=='date'||S.rptSortDir!=='asc')?applyRptSort(baseSort):baseSort;
   renderRptTrxTable(sorted);
@@ -533,10 +562,10 @@ export async function renderRptBankStatements(clientId,year,month){
 // 결재 시 통장사진 새창으로 열기
 export function openBankStatementsForApproval(){
   if(!S.reportData)return;
-  const{year,month,accounts}=S.reportData;
+  const{year,month,accs}=S.reportData;
   const mStr=`${year}-${String(month).padStart(2,'0')}`;
   const imgs=[];
-  (accounts||[]).forEach(a=>{
+  (accs||[]).forEach(a=>{
     (a.bankStatements||[]).filter(b=>b.month===mStr&&b.url).forEach(b=>{
       imgs.push({url:b.url,label:a.label||''});
     });
@@ -1003,7 +1032,7 @@ export async function loadReportList(){
 
 export async function exportReportExcel(){
   if(!S.reportData){toast('먼저 조회하세요.','error');return;}
-  const{clientId,year,month,trxList,accs,report,summary}=S.reportData;
+  const{clientId,year,month,trxList,accs,accountRows,report,summary}=S.reportData;
   const client=S.clients.find(c=>c.id===clientId)||{name:'-'};
   const XLSX=window.XLSX;
   if(!XLSX){toast('엑셀 라이브러리가 없습니다.','error');return;}
@@ -1087,29 +1116,18 @@ export async function exportReportExcel(){
 
   // ── 4. 계좌 현황 ──
   mergeCell(0,COLS_N-1,r,sSectionLabel,'계좌 현황'); setRow(18); r++;
-  mergeCell(0,3,r,sThead,'계좌');
-  mergeCell(4,5,r,sThead,'전월 잔액');
+  mergeCell(0,2,r,sThead,'계좌');
+  mergeCell(3,3,r,sThead,'전월 잔액');
+  mergeCell(4,4,r,sThead,'수입');
+  mergeCell(5,5,r,sThead,'지출');
   mergeCell(6,COLS_N-1,r,sThead,'현재 잔액');
   setRow(20); r++;
-  (accs||[]).forEach(a=>{
-    const baseDate=a.initialBalanceDate||'';
-    const baseAmt=Number(a.initialBalance||0);
-    const mStr=year+'-'+String(month).padStart(2,'0');
-    const endDate=mStr+'-31';
-    const prevYM=month===1?(year-1)+'-12':year+'-'+String(month-1).padStart(2,'0');
-    const prevEnd=prevYM+'-31';
-    const allAccTrx=(S.reportData.allTrx||[]).filter(t=>t.accountId===a.id&&t.type!=='취소');
-    let bal=baseAmt, prevBal=baseAmt;
-    allAccTrx.forEach(t=>{
-      if(baseDate&&(t.date||'')<baseDate)return;
-      const d=t.date||'';
-      const diff=Number(t.amountIn||0)-Number(t.amountOut||0);
-      if(d<=prevEnd)prevBal+=diff;
-      if(d<=endDate)bal+=diff;
-    });
-    mergeCell(0,3,r,sTd,a.label||'-');
-    mergeCell(4,5,r,sTdNum,prevBal);
-    mergeCell(6,COLS_N-1,r,{...sTdNum,font:{name:'맑은 고딕',sz:11,bold:true,color:{rgb:bal>=0?'111827':'DC2626'}}},bal);
+  (accountRows||getReportAccountRows(year,month,accs,S.reportData.allTrx)).forEach(a=>{
+    mergeCell(0,2,r,sTd,a.label||'-');
+    mergeCell(3,3,r,sTdNum,Number(a.prevBal||0));
+    mergeCell(4,4,r,sTdNumIn,Number(a.monthlyIn||0));
+    mergeCell(5,5,r,sTdNumOut,Number(a.monthlyOut||0));
+    mergeCell(6,COLS_N-1,r,{...sTdNum,font:{name:'맑은 고딕',sz:11,bold:true,color:{rgb:Number(a.bal||0)>=0?'111827':'DC2626'}}},Number(a.bal||0));
     setRow(20); r++;
   });
   r++;
@@ -1142,7 +1160,19 @@ export async function exportReportExcel(){
   mergeCell(6,6,r,sThead,'수입');
   mergeCell(7,7,r,sThead,'지출');
   setRow(22); r++;
+  const excelByAccount=new Map();
+  (accs||[]).forEach(a=>excelByAccount.set(a.id,{account:a,items:[]}));  
   (trxList||[]).forEach(t=>{
+    if(!excelByAccount.has(t.accountId))excelByAccount.set(t.accountId,{account:S.accounts.find(a=>a.id===t.accountId)||{label:'미지정 계좌'},items:[]});
+    excelByAccount.get(t.accountId).items.push(t);
+  });
+  excelByAccount.forEach(group=>{
+    if(!group.items.length)return;
+    const subIn=group.items.reduce((sum,t)=>t.type==='자산이동'||t.type==='취소'?sum:sum+Number(t.amountIn||0),0);
+    const subOut=group.items.reduce((sum,t)=>t.type==='자산이동'||t.type==='취소'?sum:sum+Number(t.amountOut||0),0);
+    mergeCell(0,COLS_N-1,r,{...sThead,alignment:{horizontal:'left',vertical:'center'}},`🏦 ${group.account.label||'미지정 계좌'} (${group.items.length}건 · 수입 ${subIn.toLocaleString()}원 · 지출 ${subOut.toLocaleString()}원)`);
+    setRow(20); r++;
+    group.items.forEach(t=>{    
     mergeCell(0,1,r,sTdCtr,t.date||'');
     mergeCell(2,2,r,sTdCtr,t.category||'');
     let descTxt=t.description||'';
@@ -1162,6 +1192,7 @@ export async function exportReportExcel(){
     mergeCell(6,6,r,amtIn>0?sTdNumIn:sTd,amtIn>0?amtIn:'');
     mergeCell(7,7,r,amtOut>0?sTdNumOut:sTd,amtOut>0?amtOut:'');
     setRow(18); r++;
+    });      
   });
   // 거래내역 합계 행
   mergeCell(0,5,r,sFootLbl,'합계');
