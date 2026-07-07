@@ -414,7 +414,7 @@
         <button class="nav-item active" data-view="dashboard">📊 대시보드</button>
         <button class="nav-item" data-view="history">📜 거래 내역</button>
         <button class="nav-item" data-view="report">📑 보고서 <span id="nav-rpt-badge" style="display:none;background:#ef4444;color:#fff;font-size:10px;font-weight:900;padding:1px 6px;border-radius:99px;margin-left:4px;"></span></button>
-        <button class="nav-item" data-view="settings">⚙️ 설정</button>
+        <button class="nav-item" data-view="settings">⚙️ 설정 <span id="nav-settings-badge" style="display:none;background:#f59e0b;color:#fff;font-size:10px;font-weight:900;padding:1px 6px;border-radius:99px;margin-left:4px;"></span></button>
         <div style="padding:14px 10px 4px;color:#475569;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;">작업</div>
         <button class="nav-sub" id="btn-trx">✍️ 수기 입력</button>
         <button class="nav-sub" id="btn-excel">📂 파일 업로드</button>
@@ -462,6 +462,8 @@
 
         <!-- 대시보드 -->
         <div id="view-dashboard" class="animate-in">
+          <!-- 결재 대기 알림 배너 (팀장/센터장/관리자) -->
+          <div id="dash-approval-banner" onclick="changeView('report')" role="button" tabindex="0" style="display:none;align-items:center;gap:10px;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:12px;padding:14px 18px;margin-bottom:16px;cursor:pointer;font-size:15px;font-weight:700;color:#92400e;"></div>
           <!-- 퀵 액션 버튼 -->
           <div id="dashboard-actions">
             <button onclick="openModal('excel')" class="dash-action-btn" style="color:var(--amber);">

@@ -29,6 +29,7 @@ import { can, savePermissions, DEFAULT_PERMISSIONS } from './permissions.js';
 // window 경유로 해석되므로 import된 심볼명으로 교체하면 런타임 오류 발생
 export function renderManagement(){
   const isAdmin=can('nav.staff');
+  updateSignupBadge();
   // B005: admin-staff 섹션 및 등록 버튼 역할별 표시/숨김
   const adminStaff=document.getElementById('admin-staff');
   if(adminStaff)adminStaff.style.display=isAdmin?'block':'none';
@@ -57,8 +58,10 @@ export function renderManagement(){
       header.textContent=`⏳ 승인 대기 ${pendingUsers.length}명`;
       sl.appendChild(header);
       pendingUsers.forEach(u=>{
-        const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;background:#fffbeb;border-color:#fde68a;';
-        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${u.role||'입력자'} ${u.team?'· '+u.team:''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div><div style="display:flex;gap:6px;"><button class="btn" onclick="approveStaff('${escAttr(u.id)}')" style="font-size:12px;padding:5px 12px;background:#10b981;border:none;">✓ 승인</button></div>`;
+        const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fffbeb;border-color:#fde68a;flex-wrap:wrap;';
+        const roles=['입력자','담당자','팀장','센터장'];
+        const roleOpts=roles.map(r=>`<option value="${r}"${(u.role||'입력자')===r?' selected':''}>${r}</option>`).join('');
+        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${escAttr(u.userId||'')} ${u.team?'· '+escAttr(u.team):''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div><div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="승인할 역할(권한)을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn" onclick="approveStaff('${escAttr(u.id)}')" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">✓ 승인</button></div>`;
         sl.appendChild(d);
       });
       const divider=document.createElement('div'); divider.style.cssText='height:1px;background:var(--border);margin:8px 0;'; sl.appendChild(divider);
@@ -167,10 +170,11 @@ export function confirmDelete(type,id){
 export async function loadSettings(){
   const isArchive=can('settings.archive');
   const isResetAdmin=can('settings.reset');
-  const archSec=document.getElementById('archive-section');
-  if(archSec)archSec.style.display=isArchive?'block':'none';
-  const resetSec=document.getElementById('reset-section');
-  if(resetSec)resetSec.style.display=isResetAdmin?'block':'none';
+  // 권한 없는 탭 버튼은 아예 숨김 (누르면 alert만 뜨는 '유령 탭' 제거)
+  const archiveTabBtn=document.querySelector('.settings-tab-btn[data-tab="archive"]');
+  if(archiveTabBtn)archiveTabBtn.style.display=isArchive?'':'none';
+  const permTabBtn=document.querySelector('.settings-tab-btn[data-tab="permissions"]');
+  if(permTabBtn)permTabBtn.style.display=isResetAdmin?'':'none';
   if(isArchive){
     const ySel=document.getElementById('archive-year');
     if(ySel&&!ySel.options.length){const cy=new Date().getFullYear();for(let y=cy-1;y>=cy-6;y--)ySel.add(new Option(y+'년',y));}
@@ -204,8 +208,6 @@ export async function loadSettings(){
       S.activeClient=cid; openModal('fixed-item');
     });
   }
-  const permSec=document.getElementById('permission-section');
-  if(permSec)permSec.style.display=isResetAdmin?'block':'none';
   // 이미 패널이 렌더링된 경우 재호출 금지 (편집 중 draft 초기화 방지)
   if(isResetAdmin&&!document.getElementById('btn-perm-save'))renderPermissionPanel();
   initBudgetSection();
@@ -732,8 +734,13 @@ export function initSettingsTabs(){
 }
 
 export function switchSettingsTab(tab){
-  if(['archive','permissions'].includes(tab)&&!can('settings.reset')){
-    alert('관리자만 접근 가능합니다.');
+  // 마감은 settings.archive(센터장·관리자), 권한 관리는 settings.reset(관리자)로 각각 게이트
+  if(tab==='archive'&&!can('settings.archive')){
+    alert('데이터 마감은 센터장·관리자만 사용할 수 있습니다.');
+    return;
+  }
+  if(tab==='permissions'&&!can('settings.reset')){
+    alert('권한 관리는 관리자만 사용할 수 있습니다.');
     return;
   }
   document.querySelectorAll('.settings-tab-btn').forEach(b=>b.classList.remove('active'));
@@ -754,9 +761,19 @@ export function switchCategorySubtab(subtab){
 // ─────────────────────────────────────────────
 window.approveStaff = async (docId) => {
   const { doc, updateDoc } = fb();
+  const sel = document.getElementById('pending-role-' + docId);
+  const role = sel?.value || '입력자';
   try {
-    await updateDoc(doc(fdb(), COLS.USERS, docId), { approved: true });
-    toast('승인 완료. 해당 직원이 로그인 가능합니다.', 'success');
-    await refetchUsers(); renderManagement();
+    await updateDoc(doc(fdb(), COLS.USERS, docId), { approved: true, role });
+    toast(`승인 완료 — ${role} 권한으로 로그인할 수 있습니다.`, 'success');
+    await refetchUsers(); renderManagement(); updateSignupBadge();
   } catch(e) { toast('승인 오류: '+e.message, 'error'); }
 };
+
+// 설정 네비게이션의 회원가입 승인 대기 뱃지 갱신 (관리 권한자에게만 표시)
+export function updateSignupBadge(){
+  const badge=document.getElementById('nav-settings-badge');
+  if(!badge)return;
+  const n=(can('nav.staff')&&Array.isArray(S.users))?S.users.filter(u=>u.approved===false).length:0;
+  if(n>0){badge.textContent=n;badge.style.display='inline';}else badge.style.display='none';
+}

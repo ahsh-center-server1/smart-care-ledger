@@ -868,11 +868,23 @@ export async function doApprovalAsLeader(action){
 
 export async function doReject(){
   if(!S.reportData){toast('먼저 조회하세요.','error');return;}
+  // 반려 사유 필수화 — 역할별 의견란(팀장/센터장) 값을 읽어 비어 있으면 반려를 막고 해당 칸으로 안내
+  const role=S.user?.role||'';
+  const commentKey=role==='팀장'?'leaderComment':'centerComment';
+  const commentLabel=role==='팀장'?'팀장':'센터장';
+  const ta=document.getElementById('comment-'+commentKey);
+  const reason=(ta?.value||'').trim();
+  if(!reason){
+    toast(`반려하려면 아래 "${commentLabel} 의견"란에 반려 사유를 입력해 주세요.`,'error',4000);
+    if(ta){ta.style.borderColor='#dc2626';ta.focus();ta.scrollIntoView({behavior:'smooth',block:'center'});}
+    return;
+  }
   const{clientId,year,month,report,summary}=S.reportData;
   const{doc,updateDoc,addDoc,collection}=fb();
   const now=new Date().toISOString();
   const summaryStr=JSON.stringify({totalIn:summary.totalIn,totalOut:summary.totalOut,balance:summary.balance});
-  const update={status:'rejected',summary:summaryStr,rejectedAt:now,rejectedBy:String(S.user.userId),rejectedByName:S.user.name||''};
+  // 사유를 반려와 함께 기록 (별도 저장 버튼을 누르지 않아도 반영)
+  const update={status:'rejected',summary:summaryStr,rejectedAt:now,rejectedBy:String(S.user.userId),rejectedByName:S.user.name||'',[commentKey]:reason};
   if(report?.id)await updateDoc(doc(fdb(),COLS.REPORTS,report.id),update);
   else{const data={clientId,year,month,createdAt:now,...update};const ref=await addDoc(collection(fdb(),COLS.REPORTS),data);S.reportData.report={id:ref.id,...data};}
   toast('보고서가 반려되었습니다.','info',4000);
@@ -945,6 +957,42 @@ export async function recallReport(reportId){
   },'회수');
 }
 
+// 현재 사용자가 결재해야 하는 대기 보고서만 추림 (팀장=담당 입주자의 submitted, 센터장/관리자=team_approved)
+function filterPendingForUser(list){
+  const role=S.user?.role||'';
+  const userId=String(S.user?.userId||'');
+  return list.filter(r=>{
+    const client=(S.allClients||S.clients).find(c=>c.id===r.clientId);
+    const tlId=String(client?.teamLeader||'');
+    if(role==='팀장'&&userId===tlId&&r.status==='submitted')return true;
+    if((role==='센터장'||role==='관리자')&&r.status==='team_approved')return true;
+    return false;
+  });
+}
+
+// 대시보드 진입/로그인 시 결재 대기 신호 갱신 (보고서 탭을 열지 않아도 표시)
+// 대기 보고서(submitted/team_approved)만 조회해 read 비용 최소화.
+export async function refreshPendingApprovalBadge(){
+  const isApprover=can('report.approve.team')||can('report.approve.center');
+  const badge=document.getElementById('nav-rpt-badge');
+  const banner=document.getElementById('dash-approval-banner');
+  if(!isApprover){ if(badge)badge.style.display='none'; if(banner)banner.style.display='none'; return; }
+  let list=[];
+  try{
+    const{getDocs,collection,query,where}=fb();
+    const snap=await getDocs(query(collection(fdb(),COLS.REPORTS),where('status','in',['submitted','team_approved'])));
+    list=snap.docs.map(d=>({id:d.id,...d.data()}));
+  }catch(e){ return; }
+  const pending=filterPendingForUser(list);
+  if(badge){ if(pending.length){badge.textContent=pending.length;badge.style.display='inline';}else badge.style.display='none'; }
+  if(banner){
+    if(pending.length){
+      banner.style.display='flex';
+      banner.textContent=`⏳ 결재 대기 ${pending.length}건 — 눌러서 보고서로 이동`;
+    }else banner.style.display='none';
+  }
+}
+
 export async function loadReportList(){
   const{getDocs,collection}=fb();
   const snap=await getDocs(collection(fdb(),COLS.REPORTS));
@@ -956,13 +1004,7 @@ export async function loadReportList(){
   const userId=String(S.user?.userId||'');
   const pendingEl=document.getElementById('rpt-pending-list');
   if(pendingEl){
-    const pending=list.filter(r=>{
-      const client=S.clients.find(c=>c.id===r.clientId);
-      const tlId=String(client?.teamLeader||'');
-      if(role==='팀장'&&userId===tlId&&r.status==='submitted')return true;
-      if((role==='센터장'||role==='관리자')&&r.status==='team_approved')return true;
-      return false;
-    });
+    const pending=filterPendingForUser(list);
     const pendingCountEl=document.getElementById('rpt-pending-count');
     if(pendingCountEl)pendingCountEl.textContent=pending.length?pending.length+'건':'없음';
     pendingEl.innerHTML='';

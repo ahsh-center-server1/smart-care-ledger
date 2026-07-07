@@ -134,6 +134,8 @@ export async function fetchBaseData(opts) {
   }
 
   rebuildSelectors();
+  // 로그인/갱신 시 회원가입 승인 대기 뱃지 갱신
+  if (snapMap.users) Settings.updateSignupBadge();
 }
 
 // 부분 갱신 헬퍼 (CRUD 후 호출)
@@ -239,7 +241,7 @@ export function changeView(view) {
   };
   const [t,s]=titles[view]||['',''];
   setText('view-title',t); setText('view-sub',s);
-  if (view==='dashboard') Dash.renderDashboard();
+  if (view==='dashboard') { Dash.renderDashboard(); Rpt.refreshPendingApprovalBadge(); }
   if (view==='settings')  {
     // 캐시된 데이터로 즉시 렌더 (CRUD 시 부분 갱신으로 최신 상태 유지)
     Settings.renderManagement(); Settings.loadSettings();

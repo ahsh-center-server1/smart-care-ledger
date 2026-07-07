@@ -786,6 +786,7 @@ Object.assign(window, {
   doDeleteReport: Rpt.doDeleteReport,
   recallReport: Rpt.recallReport,
   loadReportList: Rpt.loadReportList,
+  refreshPendingApprovalBadge: Rpt.refreshPendingApprovalBadge,
   exportReportExcel: Rpt.exportReportExcel,
   // settings
   renderManagement: Settings.renderManagement,
