@@ -158,7 +158,7 @@ export function confirmDelete(type,id){
     await (refetchByType[type]||fetchBaseData)();
     renderManagement();
     toast('삭제됨','success');
-  },'삭제');
+  },'삭제','btn btn-danger');
 }
 
 // ─────────────────────────────────────────────
@@ -305,7 +305,7 @@ export function renderCatTags(type){
         toast('순서 저장됨','success',1500);
       });
     }
-    if(cat!=='확인필요'&&!isCommonReadOnly)tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${cat}" 카테고리를 삭제하시겠습니까?`,()=>deleteCategory(type,cat,catDoc.clientId||''),'삭제'));
+    if(cat!=='확인필요'&&!isCommonReadOnly)tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${cat}" 카테고리를 삭제하시겠습니까?`,()=>deleteCategory(type,cat,catDoc.clientId||''),'삭제','btn btn-danger'));
     el.appendChild(tag);
   });
 }
@@ -326,7 +326,7 @@ export function renderRuleTags(){
     tag.innerHTML=`<span style="font-size:13px;font-weight:700;color:var(--sub);">"${r.keyword}"</span><span style="font-size:11px;color:var(--muted);">→</span><span style="font-size:13px;font-weight:700;color:${tc};">${r.category}</span>`
       +(isPersonal?`<span style="font-size:10px;background:${tc}22;color:${tc};padding:1px 5px;border-radius:4px;">${settingsClientName||r.clientId}</span>`:'')
       +`<button class="cat-del">×</button>`;
-    tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${r.keyword}" 규칙을 삭제하시겠습니까?`,()=>deleteRule(r.id||r.keyword),'삭제'));
+    tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${r.keyword}" 규칙을 삭제하시겠습니까?`,()=>deleteRule(r.id||r.keyword),'삭제','btn btn-danger'));
     el.appendChild(tag);
   });
 }
@@ -416,7 +416,7 @@ export async function resetCategories(){
     const toAdd=defaults.map(d=>({col:COLS.CATEGORIES,data:d}));
     if(toAdd.length)await batchAddDocs(toAdd);
     await refetchCategories(); loadSettings(); toast('기본값으로 초기화됨','success');
-  },'초기화');
+  },'초기화','btn btn-danger');
 }
 
 // ─────────────────────────────────────────────
@@ -440,7 +440,7 @@ export async function loadArchiveHistory(){
 export async function confirmArchive(){
   const year=Number(document.getElementById('archive-year')?.value);
   if(!year){toast('연도를 선택하세요.','error');return;}
-  showConfirm(`${year}년 데이터 마감`,`${year}년 거래 데이터를 보관하고 계좌 기초잔액을 업데이트합니다.\n영수증·통장사진은 삭제하지 않고 저해상도로 압축 보관됩니다.\n이 작업은 되돌릴 수 없습니다.`,()=>executeArchive(year),'마감 실행');
+  showConfirm(`${year}년 데이터 마감`,`${year}년 거래 데이터를 보관하고 계좌 기초잔액을 업데이트합니다.\n영수증·통장사진은 삭제하지 않고 저해상도로 압축 보관됩니다.\n이 작업은 되돌릴 수 없습니다.`,()=>executeArchive(year),'마감 실행','btn btn-danger');
 }
 // Phase 3 최적화: 배치 처리 + 500개 단위 자동 분할
 export async function executeArchive(year){
@@ -611,7 +611,7 @@ export async function executeFirebaseReset(){
       toast(`초기화 완료. 모든 데이터가 삭제되었습니다. (첨부 파일 ${storageUrls.length}건 정리)`,'success',5000);
     }catch(e){toast('초기화 오류: '+e.message,'error');}
     showLoading(false);
-  },'초기화 실행');
+  },'초기화 실행','btn btn-danger');
 }
 
 // ─────────────────────────────────────────────

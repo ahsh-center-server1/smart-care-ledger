@@ -66,6 +66,7 @@ export function renderTrxForm(t){
         </select></div>
         <div><label class="label">금액</label><input type="number" id="f-amount" class="input" value="${editAmount}" placeholder="0" min="0" style="text-align:right;"></div>
       </div>
+      <div id="f-type-hint" style="font-size:12px;color:var(--sub);background:#f1f5f9;border-radius:8px;padding:8px 11px;line-height:1.5;"></div>
       <div id="f-to-acc-row" style="display:none;">
         <label class="label">입금 계좌 (자산이동 시)</label>
         <select id="f-to-acc" class="input" style="padding:8px 12px;width:100%;"></select>
@@ -104,8 +105,9 @@ export function renderTrxForm(t){
   const showToAcc=()=>{const type=document.getElementById('f-type').value;if(toAccRow)toAccRow.style.display=type==='자산이동'?'block':'none';};
   showToAcc();
   updateTrxCatSel();
+  updateTrxTypeHint();
   if(isEdit&&t.category)document.getElementById('f-cat').value=t.category;
-  document.getElementById('f-type').addEventListener('change',()=>{updateTrxCatSel();showToAcc();});
+  document.getElementById('f-type').addEventListener('change',()=>{updateTrxCatSel();showToAcc();updateTrxTypeHint();});
   document.getElementById('f-save-btn').addEventListener('click',async()=>{
     const accId=document.getElementById('f-acc').value;
     const amount=Number(document.getElementById('f-amount').value);
@@ -121,7 +123,7 @@ export function renderTrxForm(t){
     // 최종 결재 완료 월 잠금 (자산이동은 출금/입금 계좌 입주자 모두 검사)
     const toAccIdChk=document.getElementById('f-to-acc')?.value||'';
     const toAccChk=S.accounts.find(a=>a.id===toAccIdChk);
-    if(isConfirmedLocked(acc?.clientId,date)||(type==='자산이동'&&toAccChk&&isConfirmedLocked(toAccChk.clientId,date))){toast('최종 결재 완료된 월에는 거래를 추가/수정할 수 없습니다.','error');return;}
+    if(isConfirmedLocked(acc?.clientId,date)||(type==='자산이동'&&toAccChk&&isConfirmedLocked(toAccChk.clientId,date))){toast('최종 결재 완료된 월에는 거래를 추가/수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
     if(type==='자산이동'){
       const toAccId=document.getElementById('f-to-acc').value;
       if(!toAccId){toast('입금 계좌를 선택하세요.','error');return;}
@@ -252,7 +254,8 @@ export function renderTrxForm(t){
     dropEl.addEventListener('dragleave',()=>{dropEl.style.background='var(--bg)';});
     dropEl.addEventListener('drop',e=>{
       e.preventDefault();dropEl.style.background='var(--bg)';
-      const f=e.dataTransfer.files[0]; if(!f||!f.type.startsWith('image/'))return;
+      const f=e.dataTransfer.files[0]; if(!f)return;
+      if(!f.type.startsWith('image/')){toast('이미지 파일만 첨부할 수 있어요. (사진을 올려 주세요)','error');return;}
       const fi=document.getElementById('trx-receipt-file');
       if(fi){
         const dt=new DataTransfer(); dt.items.add(f); fi.files=dt.files;
@@ -260,6 +263,19 @@ export function renderTrxForm(t){
       }
     });
   }
+}
+// 구분(유형)별 한 줄 안내 — 엑셀만 써온 사용자가 낯선 항목을 이해하도록 돕는다
+export function updateTrxTypeHint(){
+  const el=document.getElementById('f-type-hint'); if(!el)return;
+  const type=document.getElementById('f-type')?.value||'지출';
+  const hints={
+    '지출':'💸 돈이 나간 거래예요.',
+    '수입':'💰 돈이 들어온 거래예요.',
+    '자산이동':'🔁 출금 계좌에서 입금 계좌로 옮기는 거래예요. 출금·입금 2건이 함께 만들어지고, 수입/지출 합계에는 포함되지 않아요.',
+    '취소-지출':'↩️ 카드 승인취소 등 지출 취소예요. 수입/지출 합계와 잔액에서 제외돼요.',
+    '취소-수입':'↩️ 받았던 수입을 되돌리는(환수) 거래예요. 수입/지출 합계와 잔액에서 제외돼요.',
+  };
+  el.textContent=hints[type]||'';
 }
 export function updateTrxCatSel(){
   const type=document.getElementById('f-type')?.value||'지출';
@@ -518,7 +534,7 @@ export function onReceiptFileSelect(file){
 export async function doReceiptUpload(trxId){
   if(!_receiptSelectedFile){toast('파일을 선택하세요.','error');return;}
   const _lk=S.transactions.find(x=>x.id===trxId);
-  if(_lk&&isConfirmedLocked(_lk.clientId,_lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다.','error');return;}
+  if(_lk&&isConfirmedLocked(_lk.clientId,_lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   const btn=document.getElementById('ru-btn'), status=document.getElementById('ru-status');
   btn.disabled=true; btn.textContent='압축 중...';
   if(status){status.textContent='이미지 압축 중...';status.style.display='block';}

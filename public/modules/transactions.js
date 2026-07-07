@@ -7,7 +7,7 @@
 
 import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
-import { toast, showConfirm, showLoading, setText, escAttr, emptyState } from '../utils/ui.js';
+import { toast, toastAction, showConfirm, showLoading, setText, escAttr, emptyState } from '../utils/ui.js';
 import { fb, fdb, batchDeleteDocs, batchUpdateDocs } from '../services/firestore.js';
 import { deleteFromStorage } from '../services/storage.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
@@ -169,8 +169,8 @@ export function renderHistoryTable() {
         t.type==='자산이동'?'<span style="color:#0ea5e9;">'+Math.abs(t.amountOut).toLocaleString()+'원</span>':
         t.type==='취소'&&t.amountOut>0?'<span style="color:#a1a1aa;text-decoration:line-through;">'+t.amountOut.toLocaleString()+'원</span>':
         t.type==='취소'?'':
-        t.amountOut<0?'<span style="color:#059669;font-size:12px;">-'+Math.abs(t.amountOut).toLocaleString()+'원</span>':
-        (t.amountOut>0?t.amountOut.toLocaleString()+'원':'')
+        t.amountOut<0?'<span style="color:#059669;font-size:12px;">+'+Math.abs(t.amountOut).toLocaleString()+'원 (환불)</span>':
+        (t.amountOut>0?'-'+t.amountOut.toLocaleString()+'원':'')
       }</td>
       <td style="text-align:center;">
         ${t.receiptUrl
@@ -183,16 +183,22 @@ export function renderHistoryTable() {
                 :(t.receiptMissing?'<span style="font-size:10px;font-weight:700;color:#b91c1c;background:#fee2e2;padding:1px 6px;border-radius:4px;border:1px solid #fecaca;">분실</span>':'')
             }</span>`}
       </td>
-      <td style="text-align:center;"><div style="display:flex;justify-content:center;gap:4px;">${(()=>{
+      <td style="text-align:center;"><div style="display:flex;justify-content:center;gap:4px;flex-wrap:wrap;">${(()=>{
         const canEdit=can('trx.edit')&&(!isInputOnly||(t.createdBy===S.user?.userId));
+        const moveBtns=!isInputOnly
+          ?`<button class="icon-btn trx-up-btn" data-id="${t.id}" title="위로 이동" style="color:#94a3b8;font-size:12px;" onmouseover="this.style.background='#e0f2fe';this.style.color='#0369a1';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">▲</button>
+        <button class="icon-btn trx-down-btn" data-id="${t.id}" title="아래로 이동" style="color:#94a3b8;font-size:12px;" onmouseover="this.style.background='#e0f2fe';this.style.color='#0369a1';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">▼</button>`
+          :'';
         return canEdit
-          ?`<button class="icon-btn trx-edit-btn" data-id="${t.id}" title="수정" style="color:#64748b;" onmouseover="this.style.background='#dbeafe';this.style.color='#2563eb';" onmouseout="this.style.background='transparent';this.style.color='#64748b';">✏️</button>
+          ?`${moveBtns}<button class="icon-btn trx-edit-btn" data-id="${t.id}" title="수정" style="color:#64748b;" onmouseover="this.style.background='#dbeafe';this.style.color='#2563eb';" onmouseout="this.style.background='transparent';this.style.color='#64748b';">✏️</button>
         <button class="icon-btn trx-del-btn"  data-id="${t.id}" data-acc="${t.accountId}" title="삭제" style="color:#94a3b8;" onmouseover="this.style.background='#fee2e2';this.style.color='#dc2626';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">🗑️</button>`
           :'';
       })()}</div></td>`;
     tr.querySelector('.trx-edit')?.addEventListener('click',    ()=>editTrx(t.id));
     tr.querySelector('.trx-edit-btn')?.addEventListener('click', ()=>editTrx(t.id));
     tr.querySelector('.trx-del-btn')?.addEventListener('click',  ()=>delTrx(t.id,t.accountId));
+    tr.querySelector('.trx-up-btn')?.addEventListener('click',   ()=>moveTrxRow(t.id,-1));
+    tr.querySelector('.trx-down-btn')?.addEventListener('click', ()=>moveTrxRow(t.id,1));
     tr.querySelector('.cat-chip').addEventListener('click',     e=>{e.stopPropagation();openCatDropdown(t.id,tr.querySelector('.cat-chip'),t.type);});
     // ⑧ 드래그앤드롭 순서 변경
     tr.addEventListener('dragstart', e=>{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',t.id);tr.style.opacity='0.4';});
@@ -324,7 +330,7 @@ export function moveCalendar(dir){
 
 export async function saveCatChange(trxId, newCat, chipEl) {
   const lk=S.transactions.find(x=>x.id===trxId);
-  if(lk&&isConfirmedLocked(lk.clientId,lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다.','error');return;}
+  if(lk&&isConfirmedLocked(lk.clientId,lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   const {doc,updateDoc}=fb();
   await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{category:newCat});
   [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t)t.category=newCat;});
@@ -343,12 +349,50 @@ export function renderPagination(){
   const el=document.getElementById('h-pages'); if(!el)return;
   const pages=Math.ceil(S.filteredTrx.length/S.pageSize);
   if(pages<=1){el.innerHTML='';return;} el.innerHTML='';
-  for(let p=1;p<=pages;p++){
-    const btn=document.createElement('button'); btn.textContent=p;
-    btn.style.cssText=`padding:6px 12px;border-radius:7px;font-size:13px;font-weight:700;border:1px solid var(--bm);cursor:pointer;background:${p===S.page?'var(--blue)':'#fff'};color:${p===S.page?'#fff':'var(--sub)'};`;
-    btn.addEventListener('click',()=>{S.page=p;renderHistoryTable();renderPagination();});
-    el.appendChild(btn);
-  }
+  const cur=S.page;
+  const go=p=>{
+    if(p<1||p>pages||p===cur)return;
+    S.page=p; renderHistoryTable(); renderPagination();
+    // 페이지 이동 시 표 상단이 보이도록 스크롤 (아래에 머무는 문제 방지)
+    document.getElementById('h-body')?.closest('.card')?.scrollIntoView({behavior:'smooth',block:'start'});
+  };
+  const mkBtn=(label,p,opts={})=>{
+    const b=document.createElement('button'); b.textContent=label;
+    const active=!!opts.active, disabled=!!opts.disabled;
+    b.disabled=disabled;
+    b.style.cssText=`min-width:40px;padding:8px 12px;border-radius:7px;font-size:13px;font-weight:700;border:1px solid var(--bm);cursor:${disabled?'not-allowed':'pointer'};background:${active?'var(--blue)':'#fff'};color:${active?'#fff':'var(--sub)'};opacity:${disabled?'.4':'1'};`;
+    if(!disabled&&!active&&p!=null)b.addEventListener('click',()=>go(p));
+    el.appendChild(b);
+  };
+  mkBtn('‹ 이전',cur-1,{disabled:cur===1});
+  // 처음/끝 + 현재 주변만 노출, 나머지는 … 생략
+  const nums=new Set([1,pages]);
+  for(let p=cur-2;p<=cur+2;p++){if(p>=1&&p<=pages)nums.add(p);}
+  let prev=0;
+  [...nums].sort((a,b)=>a-b).forEach(p=>{
+    if(p-prev>1){const s=document.createElement('span');s.textContent='…';s.style.cssText='padding:0 4px;color:var(--muted);align-self:center;';el.appendChild(s);}
+    mkBtn(String(p),p,{active:p===cur}); prev=p;
+  });
+  mkBtn('다음 ›',cur+1,{disabled:cur===pages});
+  const info=document.createElement('span');
+  info.textContent=`${cur} / ${pages} 페이지`;
+  info.style.cssText="align-self:center;margin-left:8px;font-size:12px;color:var(--muted);font-family:'JetBrains Mono',monospace;";
+  el.appendChild(info);
+}
+
+// 모든 필터를 한 번에 초기화 (입주자 선택은 유지, 기간은 이번 달로 복원)
+export function resetFilters(){
+  const defaults={'h-search':'','h-type':'all','h-receipt':'all','h-account':''};
+  Object.entries(defaults).forEach(([id,v])=>{const el=document.getElementById(id);if(el)el.value=v;});
+  const now=new Date();
+  const fmt=dt=>dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+  const s=document.getElementById('h-start'),e=document.getElementById('h-end');
+  if(s)s.value=fmt(new Date(now.getFullYear(),now.getMonth(),1));
+  if(e)e.value=fmt(new Date(now.getFullYear(),now.getMonth()+1,0));
+  document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));
+  S.page=1;
+  applyFilters();
+  toast('필터를 초기화했습니다.','success',1500);
 }
 
 export function applyPeriod(p){
@@ -368,9 +412,9 @@ export function applyPeriod(p){
 // 거래 CRUD
 // ─────────────────────────────────────────────
 export async function saveTrx(data){
-  if(isConfirmedLocked(data.clientId,data.date)){toast('최종 결재 완료된 월의 거래는 추가/수정할 수 없습니다.','error');return;}
+  if(isConfirmedLocked(data.clientId,data.date)){toast('최종 결재 완료된 월의 거래는 추가/수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   // 편집 시: 원본 거래가 확정 월에 있으면 다른 월로 이동/수정 금지
-  if(data.id){const prev=S.transactions.find(x=>x.id===data.id);if(prev&&isConfirmedLocked(prev.clientId,prev.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다.','error');return;}}
+  if(data.id){const prev=S.transactions.find(x=>x.id===data.id);if(prev&&isConfirmedLocked(prev.clientId,prev.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}}
   const {doc,addDoc,collection,updateDoc}=fb();
   const isEdit=!!data.id;
   if(isEdit){
@@ -395,7 +439,7 @@ export async function saveTrx(data){
 // 영수증 분실 표시 토글
 export async function toggleReceiptMissing(id){
   const t=S.transactions.find(x=>x.id===id); if(!t)return;
-  if(isConfirmedLocked(t.clientId,t.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다.','error');return;}
+  if(isConfirmedLocked(t.clientId,t.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   const newVal=!t.receiptMissing;
   const{doc,updateDoc}=fb();
   try{
@@ -408,22 +452,54 @@ export async function toggleReceiptMissing(id){
 
 export async function delTrx(id,accId){
   const trxCheck=S.transactions.find(x=>x.id===id);
-  if(trxCheck&&isConfirmedLocked(trxCheck.clientId,trxCheck.date)){toast('최종 결재 완료된 월의 거래는 삭제할 수 없습니다.','error');return;}
-  showConfirm('거래 삭제','이 거래 내역을 삭제하시겠습니까?',async()=>{
-    const{doc,deleteDoc}=fb();
-    const trx=S.transactions.find(x=>x.id===id);
-    await deleteDoc(doc(fdb(),COLS.TRANSACTIONS,id));
-    // 증빙 파일도 Storage에서 삭제(고아 파일 방지)
-    if(trx?.receiptUrl)await deleteFromStorage(trx.receiptUrl);
-    await updateAccBalance(accId);
-    // B001: 자산이동 연결 거래 함께 삭제
-    if(trx?.type==='자산이동'&&trx.linkedTrxId){
-      await deleteDoc(doc(fdb(),COLS.TRANSACTIONS,trx.linkedTrxId));
-      if(trx.linkedAccountId)await updateAccBalance(trx.linkedAccountId);
-    }
-    if(S.activeClient)await loadTransactions(S.activeClient);
-    toast('삭제되었습니다.','success');
+  if(trxCheck&&isConfirmedLocked(trxCheck.clientId,trxCheck.date)){toast('최종 결재 완료된 월의 거래는 삭제할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
+  showConfirm('거래 삭제','이 거래 내역을 삭제하시겠습니까?\n삭제 후 잠시 동안 되돌릴 수 있습니다.',()=>{
+    scheduleTrxDeletion([id]);
+  },'삭제','btn btn-danger');
+}
+
+// 삭제 예약 — 화면에서 즉시 제거하고 '되돌리기' 유예(약 8초) 후 실제 Firestore 삭제.
+// 엑셀 사용자에게 익숙한 실행취소(Ctrl+Z) 경험을 제공해 오클릭에 의한 영구 손실을 방지한다.
+function scheduleTrxDeletion(ids){
+  // 연결된 자산이동 거래도 함께 삭제 대상에 포함
+  const allIds=new Set(ids);
+  ids.forEach(id=>{
+    const t=S.transactions.find(x=>x.id===id);
+    if(t?.type==='자산이동'&&t.linkedTrxId)allIds.add(t.linkedTrxId);
   });
+  // 영향받는 계좌 + 삭제 대상 스냅샷 수집(되돌리기 복원용)
+  const accIds=new Set();
+  const removed=[];
+  S.transactions.forEach(t=>{
+    if(allIds.has(t.id)){
+      removed.push(t);
+      accIds.add(t.accountId);
+      if(t.linkedAccountId)accIds.add(t.linkedAccountId);
+    }
+  });
+  if(!removed.length)return;
+  // 로컬 캐시에서 즉시 제거 후 재렌더 (화면상 삭제된 것처럼 보임)
+  S.transactions=S.transactions.filter(t=>!allIds.has(t.id));
+  S.filteredTrx=S.filteredTrx.filter(t=>!allIds.has(t.id));
+  const checkAll=document.getElementById('check-all');
+  if(checkAll)checkAll.checked=false;
+  renderHistoryTable(); renderPagination();
+  toastAction(`${removed.length}건을 삭제했습니다.`,'되돌리기',
+    ()=>{ // 되돌리기: 캐시 복원 (applyFilters가 sortKey 기준 재정렬하므로 순서 자동 복원)
+      removed.forEach(t=>{ if(!S.transactions.find(x=>x.id===t.id))S.transactions.push(t); });
+      applyFilters();
+      toast('삭제가 취소되었습니다.','success',2000);
+    },
+    8000,
+    async()=>{ // 유예 만료: 실제 Firestore 삭제 커밋
+      try{
+        await batchDeleteDocs([...allIds].map(docId=>({col:COLS.TRANSACTIONS,docId})));
+        // 증빙 파일도 Storage에서 제거(고아 파일 방지, best-effort)
+        removed.forEach(t=>{ if(t.receiptUrl)deleteFromStorage(t.receiptUrl); });
+        for(const a of accIds)await updateAccBalance(a);
+      }catch(e){toast('삭제 중 오류가 발생했습니다: '+e.message,'error');}
+    }
+  );
 }
 
 // I002: 거래내역 CSV 내보내기 (현재 필터 기준)
@@ -442,49 +518,20 @@ export function exportFilteredCSV(){
   a.href=url; a.download=client.name+'_거래내역_'+new Date().toISOString().split('T')[0]+'.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  toast('CSV 다운로드 완료','success');
+  toast('엑셀 파일로 저장했습니다.','success');
 }
 
-// ★ 버그4 수정 — 일괄 삭제 후 check-all 체크박스 초기화
-// Phase 1 최적화: 배치 삭제 + 로컬 캐시 업데이트
+// 일괄 삭제 — 되돌리기 유예 후 배치 삭제 (scheduleTrxDeletion 재사용)
 export async function confirmBulkDelete(){
   const checked=Array.from(document.querySelectorAll('.row-check:checked'));
   if(!checked.length){toast('삭제할 항목을 선택하세요.','info');return;}
   // confirmed 월 거래 포함 여부 체크
   const lockedChecked=checked.filter(cb=>{const t=S.transactions.find(x=>x.id===cb.value);return t&&isConfirmedLocked(t.clientId,t.date);});
   if(lockedChecked.length){toast(`최종 결재 완료된 월의 거래 ${lockedChecked.length}건이 포함되어 있습니다. 해당 거래는 삭제할 수 없습니다.`,'error');return;}
-  showConfirm('일괄 삭제',`선택한 ${checked.length}건을 삭제하시겠��니까?`,async()=>{
-    const checkedIds=new Set(checked.map(c=>c.value));
-    const toDelete=[]; // 배치 삭제 목록
-    const linkedToDelete=[]; // 연결 거래 배치 삭제
-    const linkedAccIds=new Set();
-    // 삭제할 거래와 연결된 거래 수집
-    for(const cb of checked){
-      toDelete.push({col:COLS.TRANSACTIONS,docId:cb.value});
-      // B001: 자산이동 연결 거래 수집
-      const trx=S.transactions.find(x=>x.id===cb.value);
-      if(trx?.type==='자산이동'&&trx.linkedTrxId&&!checkedIds.has(trx.linkedTrxId)){
-        linkedToDelete.push({col:COLS.TRANSACTIONS,docId:trx.linkedTrxId});
-        if(trx.linkedAccountId)linkedAccIds.add(trx.linkedAccountId);
-      }
-    }
-    // 배치 삭제: 선택 거래 + 연결 거래
-    await batchDeleteDocs(toDelete);
-    if(linkedToDelete.length)await batchDeleteDocs(linkedToDelete);
-    // 삭제된 거래의 증빙 파일도 Storage에서 제거(고아 파일 방지, best-effort)
-    checkedIds.forEach(cid=>{const t=S.transactions.find(x=>x.id===cid);if(t?.receiptUrl)deleteFromStorage(t.receiptUrl);});
-    // 로컬 캐시 업데이트 (모든 삭제 거래 제거)
-    const allDeletedIds=new Set([...checkedIds,...linkedToDelete.map(d=>d.docId)]);
-    S.transactions=S.transactions.filter(t=>!allDeletedIds.has(t.id));
-    // 캐시 업데이트된 상태로 계좌 잔액 계산
-    const accIds=[...new Set([...checked.map(c=>c.dataset.acc),...linkedAccIds])];
-    for(const a of accIds) await updateAccBalance(a);
-    // ★ 체크박스 전체 초기화
-    const checkAll=document.getElementById('check-all');
-    if(checkAll)checkAll.checked=false;
-    if(S.activeClient)await loadTransactions(S.activeClient);
-    toast(`${checked.length}건 삭제.`,'success');
-  });
+  const ids=checked.map(c=>c.value);
+  showConfirm('일괄 삭제',`선택한 ${ids.length}건을 삭제하시겠습니까?\n삭제 후 잠시 동안 되돌릴 수 있습니다.`,()=>{
+    scheduleTrxDeletion(ids);
+  },'삭제','btn btn-danger');
 }
 
 export function editTrx(id){const t=S.transactions.find(x=>x.id===id);if(!t)return;openModal('trx',t);}
@@ -514,6 +561,17 @@ export async function updateAccBalance(accId){
 // ─────────────────────────────────────────────
 // 거래내역 정렬/순서
 // ─────────────────────────────────────────────
+// 드래그 대안: ▲/▼ 버튼으로 한 칸씩 이동 (현재 페이지 내에서만, reorderTrx 재사용)
+export function moveTrxRow(id,dir){
+  const base=(S.page-1)*S.pageSize;
+  const pageEnd=Math.min(base+S.pageSize,S.filteredTrx.length);
+  const i=S.filteredTrx.findIndex(x=>x.id===id);
+  if(i<0)return;
+  const target=i+dir;
+  if(target<base||target>=pageEnd){toast(dir<0?'이 페이지의 맨 위입니다.':'이 페이지의 맨 아래입니다.','info',1500);return;}
+  reorderTrx(id,S.filteredTrx[target].id);
+}
+
 // Phase 2 최적화: 배치 업데이트 사용
 export async function reorderTrx(fromId,toId){
   if(fromId===toId)return;
@@ -521,7 +579,7 @@ export async function reorderTrx(fromId,toId){
   const toIdx  =S.filteredTrx.findIndex(x=>x.id===toId);
   if(fromIdx<0||toIdx<0)return;
   const movedItem=S.filteredTrx[fromIdx];
-  if(movedItem&&isConfirmedLocked(movedItem.clientId,movedItem.date)){toast('최종 결재 완료된 월의 거래는 순서를 변경할 수 없습니다.','error');return;}
+  if(movedItem&&isConfirmedLocked(movedItem.clientId,movedItem.date)){toast('최종 결재 완료된 월의 거래는 순서를 변경할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   const arr=[...S.filteredTrx];
   const [moved]=arr.splice(fromIdx,1);
   arr.splice(toIdx,0,moved);

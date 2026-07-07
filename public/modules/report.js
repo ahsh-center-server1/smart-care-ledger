@@ -307,7 +307,7 @@ export function renderReportView(){
     const row=document.createElement('div');
     row.style.cssText='display:grid;grid-template-columns:minmax(120px,1fr) repeat(4,minmax(86px,auto));align-items:center;padding:7px 0;border-bottom:1px solid #f3f4f6;gap:8px;';
     row.innerHTML=`<span style="font-size:14px;color:#374151;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${a.label}</span>`
-      +`<span style="font-size:12px;color:#9ca3af;text-align:right;white-space:nowrap;">전월 ${a.prevBal.toLocaleString()}원</span>`
+      +`<span style="font-size:12px;color:#6b7280;text-align:right;white-space:nowrap;">전월 ${a.prevBal.toLocaleString()}원</span>`
       +`<span style="font-size:12px;color:#15803d;text-align:right;white-space:nowrap;">수입 +${a.monthlyIn.toLocaleString()}원</span>`
       +`<span style="font-size:12px;color:#b91c1c;text-align:right;white-space:nowrap;">지출 ${a.monthlyOut.toLocaleString()}원</span>`
       +`<span style="font-size:14px;font-weight:700;color:${a.bal>=0?'#111827':'#dc2626'};text-align:right;white-space:nowrap;">${a.bal.toLocaleString()}원</span>`;
@@ -322,10 +322,10 @@ export function renderReportView(){
     let tbl='<table style="width:100%;border-collapse:collapse;table-layout:fixed;">'
       +'<colgroup><col style="width:100px"><col style="width:200px"><col style="width:46px"><col></colgroup>'
       +'<thead><tr style="border-bottom:1px solid #e5e7eb;">'
-      +'<th style="padding:6px 4px;text-align:left;font-size:12px;font-weight:700;color:#9ca3af;text-transform:uppercase;">분류</th>'
-      +'<th style="padding:6px 4px;text-align:right;font-size:12px;font-weight:700;color:#9ca3af;text-transform:uppercase;">금액</th>'
-      +'<th style="padding:6px 4px;text-align:right;font-size:12px;font-weight:700;color:#9ca3af;text-transform:uppercase;">비율</th>'
-      +'<th style="padding:6px 4px;font-size:12px;font-weight:700;color:#9ca3af;text-transform:uppercase;"></th>'
+      +'<th style="padding:6px 4px;text-align:left;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;">분류</th>'
+      +'<th style="padding:6px 4px;text-align:right;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;">금액</th>'
+      +'<th style="padding:6px 4px;text-align:right;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;">비율</th>'
+      +'<th style="padding:6px 4px;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;"></th>'
       +'</tr></thead><tbody>';
     sortedCatKeys.forEach((k,i)=>{
       const v=summary.catStats[k], pct=summary.totalOut>0?Math.round(v.total/summary.totalOut*100):0;
@@ -344,7 +344,7 @@ export function renderReportView(){
         +'</tr>';
     });
     catEl.innerHTML=tbl+'</tbody></table>';
-  } else { catEl.innerHTML='<div style="color:#9ca3af;font-size:13px;padding:10px 0;">지출 내역 없음</div>'; }
+  } else { catEl.innerHTML='<div style="color:#6b7280;font-size:13px;padding:10px 0;">지출 내역 없음</div>'; }
   // F002: 거래내역 테이블 렌더링 + 드래그 순서 변경 (정렬 초기화 후 렌더)
   S.rptSortKey='date'; S.rptSortDir='asc';
   renderRptTrxTable(trxList);
@@ -364,7 +364,7 @@ export function renderRptTrxTable(trxList){
   tbody.innerHTML='';
   if(!trxList||!trxList.length){
     const tr=document.createElement('tr');
-    tr.innerHTML='<td colspan="6" style="text-align:center;color:#9ca3af;padding:16px;font-size:13px;">거래 내역이 없습니다.</td>';
+    tr.innerHTML='<td colspan="6" style="text-align:center;color:#6b7280;padding:16px;font-size:13px;">거래 내역이 없습니다.</td>';
     tbody.appendChild(tr); return;
   }
   const confirmedLocked=isConfirmedLocked(S.reportData?.clientId, S.reportData?.trxList?.[0]?.date||'');
@@ -485,7 +485,7 @@ export function syncReportTrxList(){
 export async function reorderRptTrx(fromId,toId){
   if(!S.reportData)return;
   const rd=S.reportData;
-  if(isConfirmedLocked(rd.clientId,`${rd.year}-${String(rd.month).padStart(2,'0')}-01`)){toast('최종 결재 완료된 월의 거래는 순서를 변경할 수 없습니다.','error');return;}
+  if(isConfirmedLocked(rd.clientId,`${rd.year}-${String(rd.month).padStart(2,'0')}-01`)){toast('최종 결재 완료된 월의 거래는 순서를 변경할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   const arr=[...S.reportData.trxList];
   const fi=arr.findIndex(x=>x.id===fromId), ti=arr.findIndex(x=>x.id===toId);
   if(fi<0||ti<0)return;
@@ -635,7 +635,7 @@ export function renderComments(report,curStatus){
   const client=S.clients.find(c=>c.id===S.reportData?.clientId);
   const teamLeaderId=String(client?.teamLeader||'');
   const isThisLeader=role==='팀장'&&userId===teamLeaderId;
-  el.innerHTML='<div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">의견</div>';
+  el.innerHTML='<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">의견</div>';
   const sections=[
     {key:'staffComment',  label:'담당자 의견', editable: role==='담당자'&&(!curStatus||curStatus==='draft'||curStatus==='rejected')},
     {key:'leaderComment', label:'팀장 의견',   editable: isThisLeader},
@@ -645,7 +645,7 @@ export function renderComments(report,curStatus){
     const val=report?.[s.key]||'';
     const div=document.createElement('div');
     div.style.cssText='margin-bottom:12px;';
-    div.innerHTML='<div style="font-size:11px;font-weight:700;color:#9ca3af;margin-bottom:6px;">'+s.label+'</div>';
+    div.innerHTML='<div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:6px;">'+s.label+'</div>';
     if(s.editable){
       div.innerHTML+='<textarea id="comment-'+s.key+'" style="width:100%;min-height:60px;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font-size:14px;font-family:inherit;resize:vertical;" placeholder="'+s.label+'을 입력하세요...">'+val+'</textarea>'
         +'<button onclick="saveComment(\''+s.key+'\')" style="margin-top:4px;font-size:12px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:4px 12px;border-radius:6px;cursor:pointer;">저장</button>';
@@ -730,7 +730,7 @@ export function renderApproval(report,curStatus){
   [{label:'담당',name:report?.submittedByName||'',date:report?.submittedAt||''},{label:'팀장',name:report?.teamApprovedByName||'',date:report?.teamApprovedAt||''},{label:'센터장',name:report?.centerApprovedByName||'',date:report?.centerApprovedAt||''}].forEach((s,i,arr)=>{
     const cell=document.createElement('div'); cell.style.cssText='width:88px;'+(i<arr.length-1?'border-right:1px solid #d1d5db;':'');
     const dStr=s.date?new Date(s.date).toLocaleDateString('ko-KR',{month:'2-digit',day:'2-digit'}):'';
-    cell.innerHTML='<div style="background:#f9fafb;padding:6px 8px;text-align:center;font-size:11px;font-weight:700;color:#6b7280;border-bottom:1px solid #d1d5db;">'+s.label+'</div><div style="height:58px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:7px;">'+(s.name?'<div style="font-size:12px;font-weight:700;color:#374151;">'+s.name+'</div><div style="font-size:10px;color:#9ca3af;">'+dStr+'</div>':'')+'</div>';
+    cell.innerHTML='<div style="background:#f9fafb;padding:6px 8px;text-align:center;font-size:11px;font-weight:700;color:#6b7280;border-bottom:1px solid #d1d5db;">'+s.label+'</div><div style="height:58px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:7px;">'+(s.name?'<div style="font-size:12px;font-weight:700;color:#374151;">'+s.name+'</div><div style="font-size:10px;color:#6b7280;">'+dStr+'</div>':'')+'</div>';
     grid.appendChild(cell);
   });
 
@@ -747,7 +747,18 @@ export function renderApproval(report,curStatus){
 
   // 상단: 인쇄/엑셀 버튼
   const btns=document.getElementById('rpt-action-btns'); btns.innerHTML='';
-  const mkBtnTo=(container,lbl,style,fn)=>{const b=document.createElement('button');b.className='btn-sub';b.style.cssText=style+'font-size:13px;';b.textContent=lbl;b.addEventListener('click',fn);container.appendChild(b);};
+  // 결재 액션별 설명 (버튼에 마우스를 올리면 표시) — 회수/반려/결재취소/수정(초안) 구분이 헷갈리지 않도록
+  const ACTION_TIP={
+    '💾 임시저장':'제출하지 않고 작성 중인 상태로 저장합니다.',
+    '📤 제출':'담당자가 팀장에게 결재를 요청합니다. 제출 후에는 회수하기 전까지 수정할 수 없어요.',
+    '📤 직접 제출':'담당 팀장으로서 제출과 팀장 결재를 한 번에 처리합니다.',
+    '↩ 회수':'내가 제출한 보고서를 다시 가져와 작성 상태로 되돌립니다. (팀장 결재 전)',
+    '↩️ 반려':'담당자에게 되돌려 보내 수정을 요청합니다. 사유를 의견란에 적어 주세요.',
+    '↩️ 결재 취소':'이미 한 결재를 취소하고 바로 이전 단계로 되돌립니다.',
+    '✏️ 수정(초안)':'보고서를 작성 초안 상태로 되돌려 다시 수정할 수 있게 합니다.',
+    '🗑️ 삭제':'보고서를 완전히 삭제합니다.',
+  };
+  const mkBtnTo=(container,lbl,style,fn)=>{const b=document.createElement('button');b.className='btn-sub';b.style.cssText=style+'font-size:13px;';b.textContent=lbl;if(ACTION_TIP[lbl])b.title=ACTION_TIP[lbl];b.addEventListener('click',fn);container.appendChild(b);};
   mkBtnTo(btns,'🖨️ 인쇄/PDF','color:var(--blue);border-color:#bfdbfe;',()=>{if(!S.reportData){toast('먼저 조회하세요.','error');return;}window.print();});
   mkBtnTo(btns,'📊 엑셀 저장','color:#059669;border-color:#a7f3d0;',exportReportExcel);
 
@@ -783,7 +794,7 @@ export function renderApproval(report,curStatus){
       mkBtn('↩️ 반려','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 반려','담당자에게 반려합니다.\n반려 사유를 팀장 의견란에 입력해 주세요.',()=>doReject(),'반려'));
       mkBtn('↩ 회수','color:#7c3aed;border-color:#ddd6fe;',()=>recallReport(report.id));
       mkBtn('✏️ 수정(초안)','color:#64748b;border-color:#cbd5e1;',()=>doRevertToDraft('팀장'));
-      mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제'));
+      mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제','btn btn-danger'));
     }
     if(isThisLeader&&curStatus==='team_approved'){
       showSb();
@@ -799,12 +810,12 @@ export function renderApproval(report,curStatus){
       mkBtn('↩️ 반려','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 반려','반려합니다.\n반려 사유를 센터장 의견란에 입력해 주세요.',()=>doReject(),'반려'));
       mkBtn('↩ 회수','color:#7c3aed;border-color:#ddd6fe;',()=>recallReport(report.id));
       mkBtn('✏️ 수정(초안)','color:#64748b;border-color:#cbd5e1;',()=>doRevertToDraft('센터장'));
-      mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제'));
+      mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제','btn btn-danger'));
     }
     if((role==='센터장'||role==='관리자')&&curStatus==='confirmed'){
       showSb();
       mkBtn('↩️ 결재 취소','color:#64748b;border-color:#cbd5e1;',()=>showConfirm('결재 취소','최종 결재를 취소하고 팀장결재 상태로 되돌립니다.',()=>doRevertToDraft('센터장'),'취소'));
-      mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제'));
+      mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제','btn btn-danger'));
     }
   }
 }

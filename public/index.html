@@ -74,7 +74,7 @@
       --bm:             #cbd5e1;
       --text:           #1e293b;
       --sub:            #475569;
-      --muted:          #64748b;
+      --muted:          #556070;
       --blue:           #0ea5e9;
       --blue2:          #0284c7;
       --green:          #10b981;
@@ -118,6 +118,8 @@
     .btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none;}
     .btn-dark{background:var(--navy)!important;}
     .btn-dark:hover{background:#1e293b!important;}
+    .btn-danger{background:#dc2626!important;}
+    .btn-danger:hover{background:#b91c1c!important;box-shadow:0 4px 12px rgba(220,38,38,.25)!important;}
     .btn-sub{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:9px;font-weight:700;font-size:13px;cursor:pointer;transition:var(--tr);border:1.5px solid;background:transparent;}
     .icon-btn{width:30px;height:30px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;border:none;transition:var(--tr);background:transparent;}
     .icon-btn:hover.edit{background:#dbeafe;color:var(--blue);}
@@ -304,6 +306,25 @@
     .category-subtab-btn.active{color:var(--blue);border-bottom-color:var(--blue);}
     .subtab-content{display:none;}
     .subtab-content.active{display:block;}
+    /* 큰 글씨 모드 — 40~60대 사용자 가독성 향상 (토글 시 body.large-text) */
+    body.large-text{font-size:17px;}
+    body.large-text table tbody td{font-size:16px;}
+    body.large-text table thead th{font-size:14px;}
+    body.large-text .col-in,body.large-text .col-out{font-size:17px;}
+    body.large-text .label{font-size:14px;}
+    body.large-text .btn{font-size:16px;min-height:50px;}
+    body.large-text .btn-sub{font-size:15px;padding:9px 15px;}
+    body.large-text .input{font-size:16px;min-height:50px;}
+    body.large-text .badge,body.large-text .period-btn,body.large-text .cat-chip,body.large-text .cat-dd-item{font-size:14px;}
+    body.large-text .nav-item{font-size:16px;}
+    body.large-text .nav-sub{font-size:15px;}
+    body.large-text .mobile-nav-item{font-size:12px;}
+    body.large-text .mobile-nav-item .nav-icon{font-size:24px;}
+    body.large-text #view-title{font-size:23px;}
+    body.large-text #btn-csv-export,body.large-text #btn-bulk-del,body.large-text #btn-trx-view-toggle,body.large-text #btn-filter-reset{font-size:14px;}
+    #btn-large-text{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9px;font-size:13px;font-weight:700;color:var(--sub);background:#fff;border:1.5px solid var(--bm);cursor:pointer;transition:var(--tr);white-space:nowrap;}
+    #btn-large-text:hover{border-color:var(--blue);color:var(--blue);}
+    #btn-large-text.on{background:var(--blue);color:#fff;border-color:var(--blue);}
   </style>
 </head>
 <body>
@@ -434,6 +455,7 @@
           <h2 id="view-title" style="font-size:20px;font-weight:900;color:var(--text);letter-spacing:-0.02em;">대시보드</h2>
           <p  id="view-sub"   style="color:var(--muted);font-size:13px;margin-top:3px;">관리 중인 입주자를 선택하세요</p>
         </div>
+        <button id="btn-large-text" onclick="toggleLargeText()" title="글씨 크기를 크게/작게 전환합니다" aria-pressed="false">🔎 큰 글씨</button>
       </header>
 
       <div style="flex:1;padding:22px 28px 28px;">
@@ -484,7 +506,7 @@
                   <option value="all">전체</option>
                   <option value="지출">지출</option>
                   <option value="수입">수입</option>
-                  <option value="자산이동">자산이동</option>
+                  <option value="자산이동">자산이동 (계좌 간 이체)</option>
                   <option value="취소">취소</option>
                 </select>
               </div>
@@ -510,6 +532,7 @@
               <input id="h-start" type="date" class="input" style="width:140px;padding:5px 10px;">
               <span style="color:var(--muted);align-self:center;">~</span>
               <input id="h-end" type="date" class="input" style="width:140px;padding:5px 10px;">
+              <button id="btn-filter-reset" class="period-btn" style="margin-left:auto;color:var(--red);border-color:#fecaca;" title="검색·구분·계좌·증빙·기간 필터를 모두 초기화합니다">↺ 필터 초기화</button>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:12px;">
               <div style="display:flex;gap:8px;align-items:center;">
@@ -521,7 +544,7 @@
               </div>
               <div style="display:flex;gap:6px;align-items:center;">
                 <button id="btn-trx-view-toggle" title="달력/목록 전환" style="font-size:12px;font-weight:700;color:#6366f1;border:1px solid #c7d2fe;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;">🗓️ 달력</button>
-                <button id="btn-csv-export" style="font-size:12px;font-weight:700;color:#059669;border:1px solid #a7f3d0;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;">⬇️ CSV</button>
+                <button id="btn-csv-export" title="현재 목록을 엑셀에서 열 수 있는 파일로 저장합니다" style="font-size:12px;font-weight:700;color:#059669;border:1px solid #a7f3d0;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;">⬇️ 엑셀 저장</button>
                 <button id="btn-bulk-del" style="font-size:12px;font-weight:700;color:var(--red);border:1px solid #fecaca;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;">🗑️ 일괄 삭제</button>
               </div>
             </div>
@@ -619,45 +642,45 @@
               <div style="padding:20px 24px 16px;border-bottom:2px solid #e5e7eb;">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;">
                   <div>
-                    <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Care Ledger</div>
+                    <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Care Ledger</div>
                     <h1 style="font-size:22px;font-weight:900;color:#111827;">월별 금전관리 보고서</h1>
                     <p id="rpt-period" style="font-size:14px;color:#6b7280;margin-top:4px;"></p>
                   </div>
                   <div style="text-align:right;">
-                    <div id="rpt-created" style="font-size:12px;color:#9ca3af;"></div>
+                    <div id="rpt-created" style="font-size:12px;color:#6b7280;"></div>
                     <div id="rpt-status-label" style="margin-top:4px;"></div>
                   </div>
                 </div>
               </div>
               <div style="padding:12px 24px;background:#f9fafb;border-bottom:1px solid #e5e7eb;">
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
-                  <div><div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:3px;">입주자</div><div id="rpt-client-name" style="font-size:15px;font-weight:800;color:#111827;"></div></div>
-                  <div><div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:3px;">기간</div><div id="rpt-month-label" style="font-size:15px;font-weight:800;color:#111827;"></div></div>
-                  <div><div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;margin-bottom:3px;">담당자</div><div id="rpt-staff-name" style="font-size:15px;font-weight:800;color:#111827;"></div></div>
+                  <div><div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:3px;">입주자</div><div id="rpt-client-name" style="font-size:15px;font-weight:800;color:#111827;"></div></div>
+                  <div><div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:3px;">기간</div><div id="rpt-month-label" style="font-size:15px;font-weight:800;color:#111827;"></div></div>
+                  <div><div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:3px;">담당자</div><div id="rpt-staff-name" style="font-size:15px;font-weight:800;color:#111827;"></div></div>
                 </div>
               </div>
               <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
-                <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">수입 / 지출 요약</div>
+                <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">수입 / 지출 요약</div>
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
                   <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;font-weight:700;color:#16a34a;margin-bottom:3px;">총 수입</div><div id="rpt-total-in" style="font-size:18px;font-weight:900;color:#15803d;"></div></div>
                   <div style="background:#fff1f2;border:1px solid #fecaca;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;font-weight:700;color:#dc2626;margin-bottom:3px;">총 지출</div><div id="rpt-total-out" style="font-size:18px;font-weight:900;color:#b91c1c;"></div></div>
                   <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;font-weight:700;color:#2563eb;margin-bottom:3px;">잔액</div><div id="rpt-balance" style="font-size:18px;font-weight:900;color:#1d4ed8;"></div></div>
                 </div>
               </div>
-              <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;"><div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">계좌 현황</div><div id="rpt-accounts"></div></div>
+              <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;"><div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">계좌 현황</div><div id="rpt-accounts"></div></div>
               <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
-                <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">분류별 지출</div>
+                <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">분류별 지출</div>
                 <div id="rpt-cat-table" style="width:100%;"></div>
               </div>
               <!-- AI 요약 인쇄 영역 -->
               <div id="rpt-summary-print-area" style="padding:14px 24px;border-bottom:1px solid #e5e7eb;display:none;">
-                <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">🤖 지출 분석 요약</div>
+                <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">🤖 지출 분석 요약</div>
                 <div id="rpt-summary-print-text" style="font-size:14px;color:#374151;line-height:1.7;"></div>
               </div>
               <!-- 통장 사진 섹션 -->
               <div id="rpt-bank-stmt-section" style="padding:14px 24px;border-bottom:1px solid #e5e7eb;display:none;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                  <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;">통장 사진</div>
+                  <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">통장 사진</div>
                   <div style="display:flex;gap:6px;" class="no-print">
                     <button id="btn-view-bank-stmts" style="font-size:11px;font-weight:700;color:#059669;border:1px solid #a7f3d0;background:#ecfdf5;padding:3px 10px;border-radius:6px;cursor:pointer;">🔍 전체보기</button>
                     <button id="btn-upload-bank-stmt" style="font-size:11px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:3px 10px;border-radius:6px;cursor:pointer;">📸 사진 추가</button>
@@ -667,7 +690,7 @@
               </div>
 
               <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
-                <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">거래 내역</div>
+                <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">거래 내역</div>
                 <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
                   <colgroup>
                     <col style="width:62px;"><!-- 날짜 -->
@@ -695,9 +718,9 @@
                 </table>
               </div>
               <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
-                <div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px;">결재</div>
+                <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px;">결재</div>
                 <div id="rpt-approval-grid" style="display:flex;border:1px solid #d1d5db;border-radius:10px;overflow:hidden;width:fit-content;"></div>
-                <p style="font-size:11px;color:#9ca3af;margin-top:12px;">작성일: <span id="rpt-created-bottom"></span></p>
+                <p style="font-size:11px;color:#6b7280;margin-top:12px;">작성일: <span id="rpt-created-bottom"></span></p>
               </div>
               <!-- ⑦ 의견란 -->
               <div id="rpt-comments-area" style="padding:14px 24px;"></div>
