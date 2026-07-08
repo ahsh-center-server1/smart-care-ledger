@@ -29,6 +29,7 @@ import { can, savePermissions, DEFAULT_PERMISSIONS } from './permissions.js';
 // window 경유로 해석되므로 import된 심볼명으로 교체하면 런타임 오류 발생
 export function renderManagement(){
   const isAdmin=can('nav.staff');
+  updateSignupBadge();
   // B005: admin-staff 섹션 및 등록 버튼 역할별 표시/숨김
   const adminStaff=document.getElementById('admin-staff');
   if(adminStaff)adminStaff.style.display=isAdmin?'block':'none';
@@ -57,16 +58,28 @@ export function renderManagement(){
       header.textContent=`⏳ 승인 대기 ${pendingUsers.length}명`;
       sl.appendChild(header);
       pendingUsers.forEach(u=>{
-        const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;background:#fffbeb;border-color:#fde68a;';
-        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${u.role||'입력자'} ${u.team?'· '+u.team:''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div><div style="display:flex;gap:6px;"><button class="btn" onclick="approveStaff('${escAttr(u.id)}')" style="font-size:12px;padding:5px 12px;background:#10b981;border:none;">✓ 승인</button></div>`;
+        const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fffbeb;border-color:#fde68a;flex-wrap:wrap;';
+        const roles=['입력자','담당자','팀장','센터장'];
+        const roleOpts=roles.map(r=>`<option value="${r}"${(u.role||'입력자')===r?' selected':''}>${r}</option>`).join('');
+        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${escAttr(u.userId||'')} ${u.team?'· '+escAttr(u.team):''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div><div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="승인할 역할(권한)을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn" onclick="approveStaff('${escAttr(u.id)}')" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">✓ 승인</button></div>`;
         sl.appendChild(d);
       });
       const divider=document.createElement('div'); divider.style.cssText='height:1px;background:var(--border);margin:8px 0;'; sl.appendChild(divider);
     }
-    // 승인된 직원
-    S.users.filter(u=>u.approved!==false).forEach(u=>{
-      const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;';
-      d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:6px;"><button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button></div>`;
+    // 승인된 직원 — 재직(활성)→퇴사(비활성) 순, 비활성 흐리게 + 재직/퇴사 토글
+    const approvedUsers=S.users.filter(u=>u.approved!==false);
+    const activeUsers=approvedUsers.filter(u=>u.active!==false);
+    const inactiveUsers=approvedUsers.filter(u=>u.active===false);
+    [...activeUsers,...inactiveUsers].forEach(u=>{
+      const isActive=u.active!==false;
+      const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:12px 14px;display:flex;justify-content:space-between;align-items:center;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
+      const toggleSwitch=`<div onclick="toggleStaffActive('${escAttr(u.id)}',${!isActive})" title="${isActive?'퇴사 등으로 비활성화(로그인 차단)':'다시 재직 상태로 전환'}" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+        <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;flex-shrink:0;">
+          <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
+        </span>
+        <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'재직':'퇴사'}</span>
+      </div>`;
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button></div>`;
       sl.appendChild(d);
     });
   }
@@ -147,6 +160,23 @@ export async function toggleAccountActive(id,makeActive){
     await refetchAccounts(); renderManagement();
   }catch(e){ toast('저장 오류: '+e.message,'error'); }
 }
+// 직원 재직/퇴사(비활성) 토글 — 비활성 시 로그인 차단, 데이터·결재 이력은 보존
+export async function toggleStaffActive(id,makeActive){
+  // 본인 계정 비활성화 방지 (셀프 잠금 방지)
+  const self=S.users.find(u=>String(u.userId)===String(S.user?.userId));
+  if(!makeActive&&self&&String(self.id)===String(id)){toast('본인 계정은 비활성화할 수 없습니다.','error');return;}
+  try{
+    const{doc,updateDoc}=fb();
+    await updateDoc(doc(fdb(),COLS.USERS,id),{active:makeActive});
+    // 비활성화 대상이 어느 입주자의 팀장이면 안내 (결재 공백 방지)
+    if(!makeActive){
+      const asLeader=(S.allClients||S.clients).filter(c=>String(c.teamLeader)===String(id));
+      if(asLeader.length)toast(`이 직원은 입주자 ${asLeader.length}명의 팀장입니다. 팀장을 재지정하거나, 공석 시 센터장이 팀장 결재를 대행할 수 있어요.`,'info',5000);
+    }
+    toast(makeActive?'재직 상태로 전환했습니다.':'퇴사(비활성) 처리했습니다. 해당 계정은 로그인할 수 없습니다.','success');
+    await refetchUsers(); renderManagement();
+  }catch(e){ toast('저장 오류: '+e.message,'error'); }
+}
 
 export function confirmDelete(type,id){
   const labels={client:'입주자',account:'계좌',staff:'직원'};
@@ -158,7 +188,7 @@ export function confirmDelete(type,id){
     await (refetchByType[type]||fetchBaseData)();
     renderManagement();
     toast('삭제됨','success');
-  },'삭제');
+  },'삭제','btn btn-danger');
 }
 
 // ─────────────────────────────────────────────
@@ -167,10 +197,11 @@ export function confirmDelete(type,id){
 export async function loadSettings(){
   const isArchive=can('settings.archive');
   const isResetAdmin=can('settings.reset');
-  const archSec=document.getElementById('archive-section');
-  if(archSec)archSec.style.display=isArchive?'block':'none';
-  const resetSec=document.getElementById('reset-section');
-  if(resetSec)resetSec.style.display=isResetAdmin?'block':'none';
+  // 권한 없는 탭 버튼은 아예 숨김 (누르면 alert만 뜨는 '유령 탭' 제거)
+  const archiveTabBtn=document.querySelector('.settings-tab-btn[data-tab="archive"]');
+  if(archiveTabBtn)archiveTabBtn.style.display=isArchive?'':'none';
+  const permTabBtn=document.querySelector('.settings-tab-btn[data-tab="permissions"]');
+  if(permTabBtn)permTabBtn.style.display=isResetAdmin?'':'none';
   if(isArchive){
     const ySel=document.getElementById('archive-year');
     if(ySel&&!ySel.options.length){const cy=new Date().getFullYear();for(let y=cy-1;y>=cy-6;y--)ySel.add(new Option(y+'년',y));}
@@ -204,8 +235,6 @@ export async function loadSettings(){
       S.activeClient=cid; openModal('fixed-item');
     });
   }
-  const permSec=document.getElementById('permission-section');
-  if(permSec)permSec.style.display=isResetAdmin?'block':'none';
   // 이미 패널이 렌더링된 경우 재호출 금지 (편집 중 draft 초기화 방지)
   if(isResetAdmin&&!document.getElementById('btn-perm-save'))renderPermissionPanel();
   initBudgetSection();
@@ -305,7 +334,7 @@ export function renderCatTags(type){
         toast('순서 저장됨','success',1500);
       });
     }
-    if(cat!=='확인필요'&&!isCommonReadOnly)tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${cat}" 카테고리를 삭제하시겠습니까?`,()=>deleteCategory(type,cat,catDoc.clientId||''),'삭제'));
+    if(cat!=='확인필요'&&!isCommonReadOnly)tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${cat}" 카테고리를 삭제하시겠습니까?`,()=>deleteCategory(type,cat,catDoc.clientId||''),'삭제','btn btn-danger'));
     el.appendChild(tag);
   });
 }
@@ -326,7 +355,7 @@ export function renderRuleTags(){
     tag.innerHTML=`<span style="font-size:13px;font-weight:700;color:var(--sub);">"${r.keyword}"</span><span style="font-size:11px;color:var(--muted);">→</span><span style="font-size:13px;font-weight:700;color:${tc};">${r.category}</span>`
       +(isPersonal?`<span style="font-size:10px;background:${tc}22;color:${tc};padding:1px 5px;border-radius:4px;">${settingsClientName||r.clientId}</span>`:'')
       +`<button class="cat-del">×</button>`;
-    tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${r.keyword}" 규칙을 삭제하시겠습니까?`,()=>deleteRule(r.id||r.keyword),'삭제'));
+    tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${r.keyword}" 규칙을 삭제하시겠습니까?`,()=>deleteRule(r.id||r.keyword),'삭제','btn btn-danger'));
     el.appendChild(tag);
   });
 }
@@ -416,7 +445,7 @@ export async function resetCategories(){
     const toAdd=defaults.map(d=>({col:COLS.CATEGORIES,data:d}));
     if(toAdd.length)await batchAddDocs(toAdd);
     await refetchCategories(); loadSettings(); toast('기본값으로 초기화됨','success');
-  },'초기화');
+  },'초기화','btn btn-danger');
 }
 
 // ─────────────────────────────────────────────
@@ -440,7 +469,7 @@ export async function loadArchiveHistory(){
 export async function confirmArchive(){
   const year=Number(document.getElementById('archive-year')?.value);
   if(!year){toast('연도를 선택하세요.','error');return;}
-  showConfirm(`${year}년 데이터 마감`,`${year}년 거래 데이터를 보관하고 계좌 기초잔액을 업데이트합니다.\n영수증·통장사진은 삭제하지 않고 저해상도로 압축 보관됩니다.\n이 작업은 되돌릴 수 없습니다.`,()=>executeArchive(year),'마감 실행');
+  showConfirm(`${year}년 데이터 마감`,`${year}년 거래 데이터를 보관하고 계좌 기초잔액을 업데이트합니다.\n영수증·통장사진은 삭제하지 않고 저해상도로 압축 보관됩니다.\n이 작업은 되돌릴 수 없습니다.`,()=>executeArchive(year),'마감 실행','btn btn-danger');
 }
 // Phase 3 최적화: 배치 처리 + 500개 단위 자동 분할
 export async function executeArchive(year){
@@ -611,7 +640,7 @@ export async function executeFirebaseReset(){
       toast(`초기화 완료. 모든 데이터가 삭제되었습니다. (첨부 파일 ${storageUrls.length}건 정리)`,'success',5000);
     }catch(e){toast('초기화 오류: '+e.message,'error');}
     showLoading(false);
-  },'초기화 실행');
+  },'초기화 실행','btn btn-danger');
 }
 
 // ─────────────────────────────────────────────
@@ -732,8 +761,13 @@ export function initSettingsTabs(){
 }
 
 export function switchSettingsTab(tab){
-  if(['archive','permissions'].includes(tab)&&!can('settings.reset')){
-    alert('관리자만 접근 가능합니다.');
+  // 마감은 settings.archive(센터장·관리자), 권한 관리는 settings.reset(관리자)로 각각 게이트
+  if(tab==='archive'&&!can('settings.archive')){
+    alert('데이터 마감은 센터장·관리자만 사용할 수 있습니다.');
+    return;
+  }
+  if(tab==='permissions'&&!can('settings.reset')){
+    alert('권한 관리는 관리자만 사용할 수 있습니다.');
     return;
   }
   document.querySelectorAll('.settings-tab-btn').forEach(b=>b.classList.remove('active'));
@@ -754,9 +788,19 @@ export function switchCategorySubtab(subtab){
 // ─────────────────────────────────────────────
 window.approveStaff = async (docId) => {
   const { doc, updateDoc } = fb();
+  const sel = document.getElementById('pending-role-' + docId);
+  const role = sel?.value || '입력자';
   try {
-    await updateDoc(doc(fdb(), COLS.USERS, docId), { approved: true });
-    toast('승인 완료. 해당 직원이 로그인 가능합니다.', 'success');
-    await refetchUsers(); renderManagement();
+    await updateDoc(doc(fdb(), COLS.USERS, docId), { approved: true, role });
+    toast(`승인 완료 — ${role} 권한으로 로그인할 수 있습니다.`, 'success');
+    await refetchUsers(); renderManagement(); updateSignupBadge();
   } catch(e) { toast('승인 오류: '+e.message, 'error'); }
 };
+
+// 설정 네비게이션의 회원가입 승인 대기 뱃지 갱신 (관리 권한자에게만 표시)
+export function updateSignupBadge(){
+  const badge=document.getElementById('nav-settings-badge');
+  if(!badge)return;
+  const n=(can('nav.staff')&&Array.isArray(S.users))?S.users.filter(u=>u.approved===false).length:0;
+  if(n>0){badge.textContent=n;badge.style.display='inline';}else badge.style.display='none';
+}

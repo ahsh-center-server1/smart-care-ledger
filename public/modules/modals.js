@@ -66,6 +66,7 @@ export function renderTrxForm(t){
         </select></div>
         <div><label class="label">금액</label><input type="number" id="f-amount" class="input" value="${editAmount}" placeholder="0" min="0" style="text-align:right;"></div>
       </div>
+      <div id="f-type-hint" style="font-size:12px;color:var(--sub);background:#f1f5f9;border-radius:8px;padding:8px 11px;line-height:1.5;"></div>
       <div id="f-to-acc-row" style="display:none;">
         <label class="label">입금 계좌 (자산이동 시)</label>
         <select id="f-to-acc" class="input" style="padding:8px 12px;width:100%;"></select>
@@ -104,8 +105,9 @@ export function renderTrxForm(t){
   const showToAcc=()=>{const type=document.getElementById('f-type').value;if(toAccRow)toAccRow.style.display=type==='자산이동'?'block':'none';};
   showToAcc();
   updateTrxCatSel();
+  updateTrxTypeHint();
   if(isEdit&&t.category)document.getElementById('f-cat').value=t.category;
-  document.getElementById('f-type').addEventListener('change',()=>{updateTrxCatSel();showToAcc();});
+  document.getElementById('f-type').addEventListener('change',()=>{updateTrxCatSel();showToAcc();updateTrxTypeHint();});
   document.getElementById('f-save-btn').addEventListener('click',async()=>{
     const accId=document.getElementById('f-acc').value;
     const amount=Number(document.getElementById('f-amount').value);
@@ -121,7 +123,7 @@ export function renderTrxForm(t){
     // 최종 결재 완료 월 잠금 (자산이동은 출금/입금 계좌 입주자 모두 검사)
     const toAccIdChk=document.getElementById('f-to-acc')?.value||'';
     const toAccChk=S.accounts.find(a=>a.id===toAccIdChk);
-    if(isConfirmedLocked(acc?.clientId,date)||(type==='자산이동'&&toAccChk&&isConfirmedLocked(toAccChk.clientId,date))){toast('최종 결재 완료된 월에는 거래를 추가/수정할 수 없습니다.','error');return;}
+    if(isConfirmedLocked(acc?.clientId,date)||(type==='자산이동'&&toAccChk&&isConfirmedLocked(toAccChk.clientId,date))){toast('최종 결재 완료된 월에는 거래를 추가/수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
     if(type==='자산이동'){
       const toAccId=document.getElementById('f-to-acc').value;
       if(!toAccId){toast('입금 계좌를 선택하세요.','error');return;}
@@ -252,7 +254,8 @@ export function renderTrxForm(t){
     dropEl.addEventListener('dragleave',()=>{dropEl.style.background='var(--bg)';});
     dropEl.addEventListener('drop',e=>{
       e.preventDefault();dropEl.style.background='var(--bg)';
-      const f=e.dataTransfer.files[0]; if(!f||!f.type.startsWith('image/'))return;
+      const f=e.dataTransfer.files[0]; if(!f)return;
+      if(!f.type.startsWith('image/')){toast('이미지 파일만 첨부할 수 있어요. (사진을 올려 주세요)','error');return;}
       const fi=document.getElementById('trx-receipt-file');
       if(fi){
         const dt=new DataTransfer(); dt.items.add(f); fi.files=dt.files;
@@ -260,6 +263,19 @@ export function renderTrxForm(t){
       }
     });
   }
+}
+// 구분(유형)별 한 줄 안내 — 엑셀만 써온 사용자가 낯선 항목을 이해하도록 돕는다
+export function updateTrxTypeHint(){
+  const el=document.getElementById('f-type-hint'); if(!el)return;
+  const type=document.getElementById('f-type')?.value||'지출';
+  const hints={
+    '지출':'💸 돈이 나간 거래예요.',
+    '수입':'💰 돈이 들어온 거래예요.',
+    '자산이동':'🔁 출금 계좌에서 입금 계좌로 옮기는 거래예요. 출금·입금 2건이 함께 만들어지고, 수입/지출 합계에는 포함되지 않아요.',
+    '취소-지출':'↩️ 카드 승인취소 등 지출 취소예요. 수입/지출 합계와 잔액에서 제외돼요.',
+    '취소-수입':'↩️ 받았던 수입을 되돌리는(환수) 거래예요. 수입/지출 합계와 잔액에서 제외돼요.',
+  };
+  el.textContent=hints[type]||'';
 }
 export function updateTrxCatSel(){
   const type=document.getElementById('f-type')?.value||'지출';
@@ -518,7 +534,7 @@ export function onReceiptFileSelect(file){
 export async function doReceiptUpload(trxId){
   if(!_receiptSelectedFile){toast('파일을 선택하세요.','error');return;}
   const _lk=S.transactions.find(x=>x.id===trxId);
-  if(_lk&&isConfirmedLocked(_lk.clientId,_lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다.','error');return;}
+  if(_lk&&isConfirmedLocked(_lk.clientId,_lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   const btn=document.getElementById('ru-btn'), status=document.getElementById('ru-status');
   btn.disabled=true; btn.textContent='압축 중...';
   if(status){status.textContent='이미지 압축 중...';status.style.display='block';}
@@ -926,13 +942,13 @@ export async function uploadBankStatements(files,accRef,existing,renderGallery){
 // ─────────────────────────────────────────────
 export function renderClientForm(c){
   const isEdit=!!c, isAdmin=can('nav.staff');
-  const teamLeaders=S.users.filter(u=>u.role==='팀장');
+  const teamLeaders=S.users.filter(u=>u.role==='팀장'&&u.active!==false);
   document.getElementById('modal-body').innerHTML=`
     <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">${isEdit?'입주자 수정':'입주자 등록'}</h3>
     <input type="hidden" id="fc-id" value="${isEdit?c.id:'cli_'+Date.now()}">
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div><label class="label">성명</label><input type="text" id="fc-name" class="input" value="${isEdit?c.name:''}"></div>
-      ${isAdmin?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div><div><label class="label">담당 직원</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:140px;overflow-y:auto;padding:4px;">${S.users.map(u=>{const ex=isEdit?String(c.userIds||'').split(',').map(s=>s.trim()):[];const ch=ex.includes(String(u.userId));return`<label style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${ch?'#eff6ff':'#f8fafc'};border:1px solid ${ch?'#bfdbfe':'var(--border)'};border-radius:8px;cursor:pointer;font-size:13px;"><input type="checkbox" name="fc-staff" value="${u.userId}" ${ch?'checked':''} style="accent-color:var(--blue);"> ${u.name}</label>`;}).join('')}</div></div>`:''}
+      ${isAdmin?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div><div><label class="label">담당 직원</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:140px;overflow-y:auto;padding:4px;">${S.users.filter(u=>u.active!==false).map(u=>{const ex=isEdit?String(c.userIds||'').split(',').map(s=>s.trim()):[];const ch=ex.includes(String(u.userId));return`<label style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${ch?'#eff6ff':'#f8fafc'};border:1px solid ${ch?'#bfdbfe':'var(--border)'};border-radius:8px;cursor:pointer;font-size:13px;"><input type="checkbox" name="fc-staff" value="${u.userId}" ${ch?'checked':''} style="accent-color:var(--blue);"> ${u.name}</label>`;}).join('')}</div></div>`:''}
       <div><label class="label">메모</label><textarea id="fc-memo" class="input" style="height:64px;resize:none;">${isEdit?c.memo||'':''}</textarea></div>
       <button id="fc-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
     </div>`;
@@ -1002,7 +1018,8 @@ export function renderStaffForm(u){
     const data={userId:document.getElementById('fs-uid').value,name:document.getElementById('fs-name').value,role:document.getElementById('fs-role').value,team:document.getElementById('fs-team').value};
     if(pw)data.password=pw;
     const{doc,setDoc}=fb();
-    await setDoc(doc(fdb(),COLS.USERS,id),data);
+    // merge:true — 비밀번호 미입력 시 기존 값 유지, approved/active 등 기존 필드 보존
+    await setDoc(doc(fdb(),COLS.USERS,id),data,{merge:true});
     toast('저장됨','success'); closeModal(); await refetchUsers(); renderManagement();
   });
 }

@@ -59,6 +59,41 @@ export function toast(msg, type='info', duration=3000) {
 }
 
 /**
+ * 액션 버튼이 달린 토스트 (되돌리기 등).
+ * - actionLabel 버튼 클릭: onAction() 실행 후 즉시 닫힘 (onExpire 미실행)
+ * - 시간 만료: onExpire() 실행 후 닫힘
+ * 삭제 등 "실수 복구"용으로 사용. 기본 6초로 넉넉하게 노출.
+ * @returns {Function} 프로그램적으로 즉시 닫는 함수(만료 콜백 실행)
+ */
+export function toastAction(msg, actionLabel, onAction, duration=6000, onExpire) {
+  const c = document.getElementById('toast-wrap');
+  if (!c) { if (onExpire) onExpire(); return () => {}; }
+  const el = document.createElement('div');
+  el.className = 'toast info';
+  const msgSpan = document.createElement('span');
+  msgSpan.textContent = msg;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = actionLabel;
+  btn.style.cssText = 'margin-left:auto;padding:6px 14px;border-radius:8px;border:1.5px solid var(--blue);background:var(--blue);color:#fff;font-weight:700;font-size:14px;cursor:pointer;flex-shrink:0;min-height:36px;';
+  el.appendChild(document.createRange().createContextualFragment('<span aria-hidden="true">↩️</span>'));
+  el.appendChild(msgSpan);
+  el.appendChild(btn);
+  c.appendChild(el);
+  let done = false;
+  const close = (runExpire) => {
+    if (done) return; done = true;
+    clearTimeout(timer);
+    if (runExpire && onExpire) onExpire();
+    el.style.animation = 'toastOut .25s ease forwards';
+    setTimeout(() => el.remove(), 260);
+  };
+  btn.addEventListener('click', () => { close(false); if (onAction) onAction(); });
+  const timer = setTimeout(() => close(true), duration);
+  return () => close(true);
+}
+
+/**
  * 스켈레톤 로더 생성 유틸리티
  * @param {string} type - 'card' | 'row' | 'text'
  * @param {number} count - 생성할 개수

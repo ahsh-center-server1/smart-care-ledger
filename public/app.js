@@ -351,10 +351,30 @@ window.onFirebaseReady = async function() {
 
 // ─────────────────────────────────────────────
 // 모바일 뷰
-// ───────────��─────────────────────────────────
+// ─────────────────────────────────────────────
 let M={clientId:null,clients:[],transactions:[],accounts:[]};
 
 function isMobile(){return window.innerWidth<=768&&('ontouchstart' in window||navigator.maxTouchPoints>0);}
+
+// ─────────────────────────────────────────────
+// 큰 글씨 모드 (40~60대 가독성) — body.large-text 토글 + sessionStorage 기억
+// ─────────────────────────────────────────────
+function setLargeText(on){
+  document.body.classList.toggle('large-text',on);
+  const btn=document.getElementById('btn-large-text');
+  if(btn){
+    btn.classList.toggle('on',on);
+    btn.setAttribute('aria-pressed',on?'true':'false');
+    btn.innerHTML=on?'🔎 작은 글씨':'🔎 큰 글씨';
+  }
+  try{sessionStorage.setItem('scl_largeText',on?'1':'0');}catch(e){}
+}
+function toggleLargeText(){ setLargeText(!document.body.classList.contains('large-text')); }
+function applyLargeTextPref(){
+  let on=false;
+  try{on=sessionStorage.getItem('scl_largeText')==='1';}catch(e){}
+  if(on)setLargeText(true);
+}
 
 function initMobileApp(){
   document.getElementById('app-view').style.display='none';
@@ -707,6 +727,8 @@ Object.assign(window, {
   switchRptSubtab: Core.switchRptSubtab,
   isConfirmedLocked: Core.isConfirmedLocked,
   ExcelParser,
+  // 큰 글씨 모드
+  toggleLargeText,
   // 모바일
   isMobile, initMobileApp, mobileView,
   renderMobileDashboard, mobileSelectClient, renderMobileHistoryView, renderMobileHistory,
@@ -730,6 +752,8 @@ Object.assign(window, {
   saveCatChange: Trx.saveCatChange,
   renderPagination: Trx.renderPagination,
   applyPeriod: Trx.applyPeriod,
+  resetFilters: Trx.resetFilters,
+  moveTrxRow: Trx.moveTrxRow,
   saveTrx: Trx.saveTrx,
   delTrx: Trx.delTrx,
   exportFilteredCSV: Trx.exportFilteredCSV,
@@ -758,10 +782,12 @@ Object.assign(window, {
   doApproval: Rpt.doApproval,
   doApprovalAsLeader: Rpt.doApprovalAsLeader,
   doReject: Rpt.doReject,
+  doTeamApproveProxy: Rpt.doTeamApproveProxy,
   doRevertToDraft: Rpt.doRevertToDraft,
   doDeleteReport: Rpt.doDeleteReport,
   recallReport: Rpt.recallReport,
   loadReportList: Rpt.loadReportList,
+  refreshPendingApprovalBadge: Rpt.refreshPendingApprovalBadge,
   exportReportExcel: Rpt.exportReportExcel,
   // settings
   renderManagement: Settings.renderManagement,
@@ -770,6 +796,7 @@ Object.assign(window, {
   renderAccountManagement: Settings.renderAccountManagement,
   toggleClientActive: Settings.toggleClientActive,
   toggleAccountActive: Settings.toggleAccountActive,
+  toggleStaffActive: Settings.toggleStaffActive,
   confirmDelete: Settings.confirmDelete,
   loadSettings: Settings.loadSettings,
   renderCatTags: Settings.renderCatTags,
@@ -828,6 +855,8 @@ if (window._fbReady) window.onFirebaseReady();
 // 이벤트 바인딩
 // ─────────────────────────────────────────────
 function bindEvents(){
+  // 큰 글씨 모드 저장값 적용
+  applyLargeTextPref();
   // 로그인
   document.getElementById('login-id')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleLogin();});
   document.getElementById('login-pw')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleLogin();});
@@ -884,6 +913,7 @@ function bindEvents(){
     Trx.renderHistoryTable();
   });
   document.getElementById('btn-bulk-del')?.addEventListener('click',Trx.confirmBulkDelete);
+  document.getElementById('btn-filter-reset')?.addEventListener('click',Trx.resetFilters);
   document.getElementById('btn-h-fixed')?.addEventListener('click',Modals.applyFixedItems);
   document.getElementById('btn-h-receipt-print')?.addEventListener('click',Modals.printReceiptSheet);
 
