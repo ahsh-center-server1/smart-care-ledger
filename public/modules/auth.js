@@ -41,6 +41,10 @@ export async function handleLogin() {
     if (userData.approved === false) {
       throw new Error('관리자 승인 대기 중입니다. 담당자에게 문의하세요.');
     }
+    // 퇴사 등으로 비활성화된 계정 로그인 차단 (active 미설정=활성으로 간주, 하위 호환)
+    if (userData.active === false) {
+      throw new Error('비활성화된 계정입니다. 관리자에게 문의하세요.');
+    }
 
     // 세션에 사용자 정보 저장
     S.user = { userId: id, name: userData.name, role: userData.role, team: userData.team };

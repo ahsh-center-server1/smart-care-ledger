@@ -66,10 +66,20 @@ export function renderManagement(){
       });
       const divider=document.createElement('div'); divider.style.cssText='height:1px;background:var(--border);margin:8px 0;'; sl.appendChild(divider);
     }
-    // 승인된 직원
-    S.users.filter(u=>u.approved!==false).forEach(u=>{
-      const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;';
-      d.innerHTML=`<div><div style="font-weight:700;color:var(--text);">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:6px;"><button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button></div>`;
+    // 승인된 직원 — 재직(활성)→퇴사(비활성) 순, 비활성 흐리게 + 재직/퇴사 토글
+    const approvedUsers=S.users.filter(u=>u.approved!==false);
+    const activeUsers=approvedUsers.filter(u=>u.active!==false);
+    const inactiveUsers=approvedUsers.filter(u=>u.active===false);
+    [...activeUsers,...inactiveUsers].forEach(u=>{
+      const isActive=u.active!==false;
+      const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:12px 14px;display:flex;justify-content:space-between;align-items:center;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
+      const toggleSwitch=`<div onclick="toggleStaffActive('${escAttr(u.id)}',${!isActive})" title="${isActive?'퇴사 등으로 비활성화(로그인 차단)':'다시 재직 상태로 전환'}" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+        <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;flex-shrink:0;">
+          <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
+        </span>
+        <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'재직':'퇴사'}</span>
+      </div>`;
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button></div>`;
       sl.appendChild(d);
     });
   }
@@ -148,6 +158,23 @@ export async function toggleAccountActive(id,makeActive){
     await updateDoc(doc(fdb(),COLS.ACCOUNTS,id),{active:makeActive});
     toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
     await refetchAccounts(); renderManagement();
+  }catch(e){ toast('저장 오류: '+e.message,'error'); }
+}
+// 직원 재직/퇴사(비활성) 토글 — 비활성 시 로그인 차단, 데이터·결재 이력은 보존
+export async function toggleStaffActive(id,makeActive){
+  // 본인 계정 비활성화 방지 (셀프 잠금 방지)
+  const self=S.users.find(u=>String(u.userId)===String(S.user?.userId));
+  if(!makeActive&&self&&String(self.id)===String(id)){toast('본인 계정은 비활성화할 수 없습니다.','error');return;}
+  try{
+    const{doc,updateDoc}=fb();
+    await updateDoc(doc(fdb(),COLS.USERS,id),{active:makeActive});
+    // 비활성화 대상이 어느 입주자의 팀장이면 안내 (결재 공백 방지)
+    if(!makeActive){
+      const asLeader=(S.allClients||S.clients).filter(c=>String(c.teamLeader)===String(id));
+      if(asLeader.length)toast(`이 직원은 입주자 ${asLeader.length}명의 팀장입니다. 팀장을 재지정하거나, 공석 시 센터장이 팀장 결재를 대행할 수 있어요.`,'info',5000);
+    }
+    toast(makeActive?'재직 상태로 전환했습니다.':'퇴사(비활성) 처리했습니다. 해당 계정은 로그인할 수 없습니다.','success');
+    await refetchUsers(); renderManagement();
   }catch(e){ toast('저장 오류: '+e.message,'error'); }
 }
 

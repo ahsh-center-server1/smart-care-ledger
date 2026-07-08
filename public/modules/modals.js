@@ -942,13 +942,13 @@ export async function uploadBankStatements(files,accRef,existing,renderGallery){
 // ─────────────────────────────────────────────
 export function renderClientForm(c){
   const isEdit=!!c, isAdmin=can('nav.staff');
-  const teamLeaders=S.users.filter(u=>u.role==='팀장');
+  const teamLeaders=S.users.filter(u=>u.role==='팀장'&&u.active!==false);
   document.getElementById('modal-body').innerHTML=`
     <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">${isEdit?'입주자 수정':'입주자 등록'}</h3>
     <input type="hidden" id="fc-id" value="${isEdit?c.id:'cli_'+Date.now()}">
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div><label class="label">성명</label><input type="text" id="fc-name" class="input" value="${isEdit?c.name:''}"></div>
-      ${isAdmin?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div><div><label class="label">담당 직원</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:140px;overflow-y:auto;padding:4px;">${S.users.map(u=>{const ex=isEdit?String(c.userIds||'').split(',').map(s=>s.trim()):[];const ch=ex.includes(String(u.userId));return`<label style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${ch?'#eff6ff':'#f8fafc'};border:1px solid ${ch?'#bfdbfe':'var(--border)'};border-radius:8px;cursor:pointer;font-size:13px;"><input type="checkbox" name="fc-staff" value="${u.userId}" ${ch?'checked':''} style="accent-color:var(--blue);"> ${u.name}</label>`;}).join('')}</div></div>`:''}
+      ${isAdmin?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div><div><label class="label">담당 직원</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:140px;overflow-y:auto;padding:4px;">${S.users.filter(u=>u.active!==false).map(u=>{const ex=isEdit?String(c.userIds||'').split(',').map(s=>s.trim()):[];const ch=ex.includes(String(u.userId));return`<label style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${ch?'#eff6ff':'#f8fafc'};border:1px solid ${ch?'#bfdbfe':'var(--border)'};border-radius:8px;cursor:pointer;font-size:13px;"><input type="checkbox" name="fc-staff" value="${u.userId}" ${ch?'checked':''} style="accent-color:var(--blue);"> ${u.name}</label>`;}).join('')}</div></div>`:''}
       <div><label class="label">메모</label><textarea id="fc-memo" class="input" style="height:64px;resize:none;">${isEdit?c.memo||'':''}</textarea></div>
       <button id="fc-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
     </div>`;
@@ -1018,7 +1018,8 @@ export function renderStaffForm(u){
     const data={userId:document.getElementById('fs-uid').value,name:document.getElementById('fs-name').value,role:document.getElementById('fs-role').value,team:document.getElementById('fs-team').value};
     if(pw)data.password=pw;
     const{doc,setDoc}=fb();
-    await setDoc(doc(fdb(),COLS.USERS,id),data);
+    // merge:true — 비밀번호 미입력 시 기존 값 유지, approved/active 등 기존 필드 보존
+    await setDoc(doc(fdb(),COLS.USERS,id),data,{merge:true});
     toast('저장됨','success'); closeModal(); await refetchUsers(); renderManagement();
   });
 }

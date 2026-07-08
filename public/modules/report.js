@@ -718,9 +718,14 @@ export function handleGenSummary(){
 export function renderApproval(report,curStatus){
   const role=S.user?.role||'';
   const userId=String(S.user?.userId||'');
-  const client=S.clients.find(c=>c.id===S.reportData?.clientId);
+  const client=(S.allClients||S.clients).find(c=>c.id===S.reportData?.clientId);
   const teamLeaderId=String(client?.teamLeader||'');
-  const isThisLeader=role==='팀장'&&userId===teamLeaderId;
+  // teamLeader는 저장 경로에 따라 doc id 또는 userId로 들어올 수 있어 양쪽 모두로 매칭 (불일치 완화)
+  const me=S.users.find(u=>String(u.id)===userId||String(u.userId)===userId);
+  const isThisLeader=role==='팀장'&&(teamLeaderId===userId||(me&&teamLeaderId===String(me.id)));
+  // 배정 팀장이 공석/삭제/역할변경/퇴사(비활성)면 vacant으로 간주 → 센터장·관리자가 대행
+  const leaderUser=S.users.find(u=>String(u.id)===teamLeaderId||String(u.userId)===teamLeaderId);
+  const leaderVacant=!teamLeaderId||!leaderUser||leaderUser.role!=='팀장'||leaderUser.active===false;
   const staffIds=String(client?.userIds||'').split(',').map(s=>s.trim());
   const isDirectStaff=staffIds.includes(userId);
   const isLeaderDirectSubmit=isThisLeader&&isDirectStaff;
@@ -795,6 +800,16 @@ export function renderApproval(report,curStatus){
       mkBtn('↩ 회수','color:#7c3aed;border-color:#ddd6fe;',()=>recallReport(report.id));
       mkBtn('✏️ 수정(초안)','color:#64748b;border-color:#cbd5e1;',()=>doRevertToDraft('팀장'));
       mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제','btn btn-danger'));
+    }
+    // 팀장 공석/무효 시: 센터장·관리자가 팀장 결재를 대행 (데스크톱에서도 보고서가 멈추지 않도록)
+    if(!isThisLeader&&(role==='센터장'||role==='관리자')&&curStatus==='submitted'&&leaderVacant){
+      showSb();
+      const bProxy=document.createElement('button');bProxy.className='btn';bProxy.style.cssText='background:var(--green);font-size:13px;padding:8px 14px;';
+      bProxy.textContent='✅ 팀장 결재 (대행)';
+      bProxy.title='배정된 팀장이 없거나 퇴사/역할변경 상태여서, 센터장·관리자가 팀장 결재를 대행합니다.';
+      bProxy.addEventListener('click',()=>showConfirm('팀장 결재 대행','배정된 팀장이 공석입니다. 센터장·관리자로서 팀장 결재를 대행할까요?',()=>{openBankStatementsForApproval();doTeamApproveProxy();},'대행 결재'));
+      sbEl.appendChild(bProxy);
+      mkBtn('↩️ 반려','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 반려','담당자에게 반려합니다.\n반려 사유를 의견란에 입력해 주세요.',()=>doReject(),'반려'));
     }
     if(isThisLeader&&curStatus==='team_approved'){
       showSb();
@@ -888,6 +903,22 @@ export async function doReject(){
   if(report?.id)await updateDoc(doc(fdb(),COLS.REPORTS,report.id),update);
   else{const data={clientId,year,month,createdAt:now,...update};const ref=await addDoc(collection(fdb(),COLS.REPORTS),data);S.reportData.report={id:ref.id,...data};}
   toast('보고서가 반려되었습니다.','info',4000);
+  await loadReport(); loadReportList();
+}
+
+// 팀장 공석 대행 결재 — 센터장·관리자가 submitted→team_approved로 전진 (팀장 부재로 멈춘 보고서 해소)
+// doApproval의 rules는 센터장/관리자를 confirmed로 보내므로 재사용 불가 → 전용 처리
+export async function doTeamApproveProxy(){
+  if(!S.reportData){toast('먼저 조회하세요.','error');return;}
+  const{report,summary}=S.reportData;
+  if(!report?.id){toast('저장된 보고서가 없습니다.','error');return;}
+  const{doc,updateDoc}=fb();
+  const now=new Date().toISOString();
+  const summaryStr=JSON.stringify({totalIn:summary.totalIn,totalOut:summary.totalOut,balance:summary.balance});
+  // 대행 사실을 결재 기록에 남김
+  const name=(S.user.name||S.user.userId||'')+' (팀장 대행)';
+  await updateDoc(doc(fdb(),COLS.REPORTS,report.id),{status:'team_approved',summary:summaryStr,teamApprovedAt:now,teamApprovedBy:String(S.user.userId),teamApprovedByName:name});
+  toast('팀장 결재를 대행 처리했습니다. 센터장 최종 결재 대기 중.','success');
   await loadReport(); loadReportList();
 }
 
