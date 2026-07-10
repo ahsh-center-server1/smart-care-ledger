@@ -53,6 +53,7 @@ const ExcelParser = {
     NH_CARD_AP: { DATE:'거래일자',  DESC:'가맹점명',        AMT:'거래금액'                             },
     WOORI_BANK: { DATE:'거래일시',  DESC:'기재내용',        WITHDRAW:'찾으신금액', DEPOSIT:'맡기신금액'},
     SH_BANK:    { DATE:'거래일자',  DESC:'내용',            WITHDRAW:'출금(원)',   DEPOSIT:'입금(원)'  },
+    MANUAL:     { DATE:'날짜',      DESC:'내용',            WITHDRAW:'지출금액',   DEPOSIT:'입금금액'  },
   },
   get CONFIG() {
     const extra = window.BANK_CONFIGS || {};
@@ -198,6 +199,7 @@ const ExcelParser = {
       else if (rc.includes('이용일자')&&(rc.includes('가맹점명')||rc.includes('이용금액')))   detected='NH_CARD';
       else if (rc.includes('찾으신금액')&&rc.includes('맡기신금액'))                           detected='WOORI_BANK';
       else if (rc.includes('거래일자')&&rc.includes('출금(원)'))                               detected='SH_BANK';
+      else if (rc.includes('날짜')&&(rc.includes('지출금액')||rc.includes('입금금액')))         detected='MANUAL';
       else {
         for (const key of Object.keys(cfg)) {
           const c=cfg[key]; if (!c.DATE) continue;
@@ -303,8 +305,15 @@ const ExcelParser = {
   },
   fixDate(val) {
     if (!val) return null;
-    let s=val.replace(/[\.\/]/g,'-').trim();
+    let s=String(val).replace(/[\.\/]/g,'-').trim();
     if (s.includes(' ')) s=s.split(' ')[0];
+    // Excel 날짜 일련번호 처리 (CSV/xlsx 파싱 시 '2026-07-10'이 46213 같은 숫자로 변환됨)
+    const serialM=s.match(/^(\d{5})(\.\d+)?$/);
+    if (serialM) {
+      const dt=new Date(Date.UTC(1899,11,30)+parseInt(serialM[1],10)*86400000);
+      if (!isNaN(dt.getTime())&&dt.getUTCFullYear()>=2000)
+        return dt.getUTCFullYear()+'-'+String(dt.getUTCMonth()+1).padStart(2,'0')+'-'+String(dt.getUTCDate()).padStart(2,'0');
+    }
     if (!isNaN(s)&&s.length===8) s=s.substring(0,4)+'-'+s.substring(4,6)+'-'+s.substring(6,8);
     const d=new Date(s);
     if (isNaN(d.getTime())||d.getFullYear()<2000) return null;

@@ -732,10 +732,9 @@ export function renderApproval(report,curStatus){
 
   // 결재란
   const grid=document.getElementById('rpt-approval-grid'); grid.innerHTML='';
-  [{label:'담당',name:report?.submittedByName||'',date:report?.submittedAt||''},{label:'팀장',name:report?.teamApprovedByName||'',date:report?.teamApprovedAt||''},{label:'센터장',name:report?.centerApprovedByName||'',date:report?.centerApprovedAt||''}].forEach((s,i,arr)=>{
+  [{label:'담당',name:report?.submittedByName||''},{label:'팀장',name:report?.teamApprovedByName||''},{label:'센터장',name:report?.centerApprovedByName||''}].forEach((s,i,arr)=>{
     const cell=document.createElement('div'); cell.style.cssText='width:88px;'+(i<arr.length-1?'border-right:1px solid #d1d5db;':'');
-    const dStr=s.date?new Date(s.date).toLocaleDateString('ko-KR',{month:'2-digit',day:'2-digit'}):'';
-    cell.innerHTML='<div style="background:#f9fafb;padding:6px 8px;text-align:center;font-size:11px;font-weight:700;color:#6b7280;border-bottom:1px solid #d1d5db;">'+s.label+'</div><div style="height:58px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:7px;">'+(s.name?'<div style="font-size:12px;font-weight:700;color:#374151;">'+s.name+'</div><div style="font-size:10px;color:#6b7280;">'+dStr+'</div>':'')+'</div>';
+    cell.innerHTML='<div style="background:#f9fafb;padding:6px 8px;text-align:center;font-size:11px;font-weight:700;color:#6b7280;border-bottom:1px solid #d1d5db;">'+s.label+'</div><div style="height:58px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:7px;">'+(s.name?'<div style="font-size:12px;font-weight:700;color:#374151;">'+s.name+'</div>':'')+'</div>';
     grid.appendChild(cell);
   });
 
