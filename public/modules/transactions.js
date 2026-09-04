@@ -479,10 +479,25 @@ export async function delTrx(id,accId){
 function scheduleTrxDeletion(ids){
   // 연결된 자산이동 거래도 함께 삭제 대상에 포함
   const allIds=new Set(ids);
+  const linkedOnly=[];   // 체크되지 않았는데 연결 때문에 딸려오는 상대편
   ids.forEach(id=>{
     const t=S.transactions.find(x=>x.id===id);
-    if(t?.type==='자산이동'&&t.linkedTrxId)allIds.add(t.linkedTrxId);
+    if(t?.type==='자산이동'&&t.linkedTrxId&&!allIds.has(t.linkedTrxId)){
+      allIds.add(t.linkedTrxId);
+      linkedOnly.push(t.linkedTrxId);
+    }
   });
+  // 딸려오는 상대편도 결재 잠금을 확인한다.
+  // 예전에는 체크한 항목만 확인하고 뒤에 추가되는 linkedTrxId는 재확인하지 않아
+  // **최종 결재 완료된 월의 거래가 삭제됐다.**
+  const lockedLinked=linkedOnly
+    .map(id=>S.transactions.find(x=>x.id===id))
+    .filter(t=>t&&isConfirmedLocked(t.clientId,t.date));
+  if(lockedLinked.length){
+    toast('연결된 자산이동 상대편이 최종 결재 완료된 월에 있어 삭제할 수 없습니다. '
+      +'(센터장이 결재를 취소하면 다시 삭제할 수 있어요.)','error',6000);
+    return;
+  }
   // 영향받는 계좌 + 삭제 대상 스냅샷 수집(되돌리기 복원용)
   const accIds=new Set();
   const removed=[];
@@ -494,6 +509,9 @@ function scheduleTrxDeletion(ids){
     }
   });
   if(!removed.length)return;
+  // 상대편이 화면 캐시 밖(다른 입주자·다른 기간)이면 스냅샷이 없다.
+  // 삭제는 되지만 증빙 파일이 고아로 남으므로, 커밋 시점에 문서를 읽어 정리한다.
+  const uncachedIds=[...allIds].filter(id=>!removed.some(t=>t.id===id));
   // 로컬 캐시에서 즉시 제거 후 재렌더 (화면상 삭제된 것처럼 보임)
   S.transactions=S.transactions.filter(t=>!allIds.has(t.id));
   S.filteredTrx=S.filteredTrx.filter(t=>!allIds.has(t.id));
@@ -509,9 +527,22 @@ function scheduleTrxDeletion(ids){
     8000,
     async()=>{ // 유예 만료: 실제 Firestore 삭제 커밋
       try{
+        // 캐시 밖 상대편의 증빙 URL을 먼저 읽어둔다 (삭제하면 못 읽는다)
+        const extraUrls=[];
+        if(uncachedIds.length){
+          const{getDoc,doc}=fb();
+          for(const id of uncachedIds){
+            try{
+              const snap=await getDoc(doc(fdb(),COLS.TRANSACTIONS,id));
+              const url=snap.exists()?snap.data().receiptUrl:'';
+              if(url)extraUrls.push(url);
+            }catch{ /* 못 읽어도 삭제는 진행한다 */ }
+          }
+        }
         await batchDeleteDocs([...allIds].map(docId=>({col:COLS.TRANSACTIONS,docId})));
         // 증빙 파일도 Storage에서 제거(고아 파일 방지, best-effort)
         removed.forEach(t=>{ if(t.receiptUrl)deleteFromStorage(t.receiptUrl); });
+        extraUrls.forEach(u=>deleteFromStorage(u));
         for(const a of accIds)await updateAccBalance(a);
       }catch(e){toast('삭제 중 오류가 발생했습니다: '+e.message,'error');}
     }

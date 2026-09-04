@@ -202,6 +202,26 @@ export async function batchAddDocs(adds) {
   return addedIds;
 }
 
+/**
+ * 문서 ID를 지정해 다중 저장 (배치, 500개 단위 자동 분할).
+ *
+ * batchAddDocs와 달리 ID를 호출부가 정하므로 **같은 작업을 다시 돌려도
+ * 같은 문서에 덮어쓴다.** 연도 마감처럼 중간에 끊길 수 있는 작업에서
+ * 재시도가 사본을 복제하지 않도록 하는 데 쓴다.
+ */
+export async function batchSetDocs(items) {
+  if(!items.length)return;
+  const { writeBatch, doc } = fb();
+  for(let i=0;i<items.length;i+=500){
+    const chunk=items.slice(i,i+500);
+    const batch = writeBatch(fdb());
+    chunk.forEach(({col, docId, data}) => {
+      batch.set(doc(fdb(), col, docId), data);
+    });
+    await batch.commit();
+  }
+}
+
 /** 복합 배치 작업 (추가/수정/삭제 동시, 500개 단위 자동 분할) */
 export async function batchMixedOps(operations) {
   const { writeBatch, doc, collection, serverTimestamp } = fb();

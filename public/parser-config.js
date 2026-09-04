@@ -1,36 +1,53 @@
 /**
- * Smart Care Ledger — 파서 설정 파일 v1.0
+ * parser-config.js — Smart Care Ledger 은행별 파서 설정
  *
- * 새 은행/카드사 추가 방법:
- * 1. 아래 BANK_CONFIGS 객체에 새 항목을 추가합니다.
- * 2. app.js는 건드릴 필요가 없습니다.
+ * 새 은행/카드사 추가 방법
+ *   아래 BANK_CONFIGS에 항목 하나를 추가하면 끝입니다. 다른 파일은 건드리지 않습니다.
  *
- * 각 항목 설명:
- *   DATE     : 날짜 컬럼 헤더 텍스트 (필수)
- *   DESC     : 거래내용/가맹점명 컬럼 헤더 텍스트 (필수)
- *   WITHDRAW : 출금 컬럼 헤더 텍스트 (은행 계좌용)
- *   DEPOSIT  : 입금 컬럼 헤더 텍스트 (은행 계좌용)
- *   AMT      : 이용금액 컬럼 헤더 텍스트 (카드용, 출금만 있는 경우)
+ * 각 항목
+ *   DATE     : 날짜 컬럼 헤더 (필수)
+ *   DESC     : 거래내용/가맹점명 컬럼 헤더 (필수)
+ *   WITHDRAW : 출금 컬럼 헤더 (은행 계좌용)
+ *   DEPOSIT  : 입금 컬럼 헤더 (은행 계좌용)
+ *   AMT      : 이용금액 컬럼 헤더 (카드용, 출금만 있는 경우)
+ *   MATCH    : (선택) 이 은행으로 판정할 헤더 조건.
+ *              바깥 배열은 AND, 안쪽 배열은 OR.
+ *              [['거래일자'], ['가맹점명','이용금액']]
+ *                → '거래일자'가 있고, ('가맹점명' 또는 '이용금액')이 있으면 이 은행.
+ *              생략하면 DATE + (AMT 또는 WITHDRAW)로 자동 판정합니다.
+ *   SKIP_IF  : (선택) 이 컬럼에 값이 있으면 그 행을 건너뜁니다(예: 취소여부).
  *
- * 추가 예시:
+ * 추가 예시
  *   HANA_BANK: { DATE:'거래일시', DESC:'내용', WITHDRAW:'출금', DEPOSIT:'입금' },
  *   IBK_BANK:  { DATE:'거래일',   DESC:'적요', WITHDRAW:'출금금액', DEPOSIT:'입금금액' },
+ *
+ * ⚠️ 순서가 중요합니다 — 위에서부터 먼저 맞는 설정이 채택되므로
+ *    더 구체적인 설정(예: NH_CARD_AP)을 덜 구체적인 것(NH_CARD)보다 위에 둡니다.
+ *
+ * 이 파일은 ES 모듈입니다. 예전에는 classic script였는데 `app.js`가 지연 모듈이라
+ * 여기서 만든 값이 파서에 도달하지 못했고, 실제로 쓰이는 설정은 `app.js` 안의
+ * 복제본이었습니다. 즉 이 파일 143줄 전체가 아무 효과가 없었습니다.
+ * 지금은 파서가 이 파일을 import하므로 여기가 유일한 설정입니다.
  */
 
-const BANK_CONFIGS = {
+'use strict';
+
+export const BANK_CONFIGS = {
   // ── KB국민은행 ──
   KB_BANK: {
     DATE:     '거래일시',
     DESC:     '보낸분/받는분',
     WITHDRAW: '출금액',
     DEPOSIT:  '입금액',
+    MATCH:    [['거래일시'], ['보낸분/받는분', '보낸분']],
   },
 
   // ── KB국민카드 ──
   KB_CARD: {
-    DATE: '이용일',
-    DESC: '이용하신곳',
-    AMT:  '국내이용금액',
+    DATE:  '이용일',
+    DESC:  '이용하신곳',
+    AMT:   '국내이용금액',
+    MATCH: [['이용일'], ['이용하신곳', '이용한곳']],
   },
 
   // ── NH농협은행 ──
@@ -39,20 +56,25 @@ const BANK_CONFIGS = {
     DESC:     '거래기록사항',
     WITHDRAW: '출금금액',
     DEPOSIT:  '입금금액',
+    MATCH:    [['거래일시'], ['거래기록사항']],
+  },
+
+  // ── NH농협카드 (국내승인내역) ──
+  // NH_CARD보다 위에 있어야 합니다 — 더 구체적입니다.
+  NH_CARD_AP: {
+    DATE:    '거래일자',
+    DESC:    '가맹점명',
+    AMT:     '거래금액',
+    MATCH:   [['거래일자'], ['가맹점명'], ['거래금액']],
+    SKIP_IF: '취소여부',
   },
 
   // ── NH농협카드 (일반) ──
   NH_CARD: {
-    DATE: '이용일자',
-    DESC: '가맹점명',
-    AMT:  '이용금액',
-  },
-
-  // ── NH농협카드 (국내승인내역) ──
-  NH_CARD_AP: {
-    DATE: '거래일자',
-    DESC: '가맹점명',
-    AMT:  '거래금액',
+    DATE:  '이용일자',
+    DESC:  '가맹점명',
+    AMT:   '이용금액',
+    MATCH: [['이용일자'], ['가맹점명', '이용금액']],
   },
 
   // ── 우리은행 ──
@@ -61,6 +83,7 @@ const BANK_CONFIGS = {
     DESC:     '기재내용',
     WITHDRAW: '찾으신금액',
     DEPOSIT:  '맡기신금액',
+    MATCH:    [['찾으신금액'], ['맡기신금액']],
   },
 
   // ── 신한은행 ──
@@ -69,76 +92,43 @@ const BANK_CONFIGS = {
     DESC:     '내용',
     WITHDRAW: '출금(원)',
     DEPOSIT:  '입금(원)',
+    MATCH:    [['거래일자'], ['출금(원)']],
   },
 
   // ── 수기 입력 양식 (MANUAL) ──
-  // 은행 파일 없을 때: 직접 작성한 CSV/Excel 업로드용
-  // 컬럼: 날짜, 내용, 지출금액, 입금금액
+  // 은행 파일이 없을 때: 직접 작성한 CSV/Excel 업로드용
   MANUAL: {
     DATE:     '날짜',
     DESC:     '내용',
     WITHDRAW: '지출금액',
     DEPOSIT:  '입금금액',
+    MATCH:    [['날짜'], ['지출금액', '입금금액']],
   },
 
   // ────────────────────────────────────────────────────────────
-  // 새 은행/카드사 추가 시 아래에 계속 추가하세요
+  // 새 은행/카드사는 아래에 추가하세요
   // ────────────────────────────────────────────────────────────
 
-  // 예시: 하나은행
-  // HANA_BANK: {
-  //   DATE:     '거래일시',
-  //   DESC:     '내용',
-  //   WITHDRAW: '출금',
-  //   DEPOSIT:  '입금',
-  // },
-
-  // 예시: IBK기업은행
-  // IBK_BANK: {
-  //   DATE:     '거래일',
-  //   DESC:     '적요',
-  //   WITHDRAW: '출금금액',
-  //   DEPOSIT:  '입금금액',
-  // },
-
-  // 예시: 케이뱅크
-  // KBANK: {
-  //   DATE:     '거래일시',
-  //   DESC:     '거래메모',
-  //   WITHDRAW: '출금',
-  //   DEPOSIT:  '입금',
-  // },
+  // HANA_BANK: { DATE:'거래일시', DESC:'내용',  WITHDRAW:'출금',     DEPOSIT:'입금'     },
+  // IBK_BANK:  { DATE:'거래일',   DESC:'적요',  WITHDRAW:'출금금액', DEPOSIT:'입금금액' },
+  // KBANK:     { DATE:'거래일시', DESC:'거래메모', WITHDRAW:'출금',  DEPOSIT:'입금'     },
 };
 
 /**
- * 노이즈 단어 목록
- * 가맹점명/내용에서 제거할 의미없는 단어들
- * 새 단어 추가 시 배열에 문자열만 추가하면 됩니다.
+ * 가맹점명/내용에서 제거할 의미 없는 단어.
+ *
+ * 단어 경계가 있을 때만 지웁니다 — 예전에는 부분 문자열로 지워서
+ * `승인마트` → `마트`, `모바일세상` → `세상`으로 상호명이 훼손됐습니다.
+ * 원본을 저장하지 않으므로 복구할 수 없는 손상이었습니다.
  */
-const PARSER_NOISE_WORDS = [
+export const NOISE_WORDS = [
   '체크카드', 'CD공동', '전자금융', '장기카드', '단기카드', '일시불', '승인',
   '비씨', 'BC', 'NH체크', 'KB체크', '예금인출', '체크우리', '우리체크',
   '타행CD', 'CD이체', '모바일', '신한체', '현금IC', '체크신한',
 ];
 
-/**
- * SMS 설정 (NH농협카드 SMS 백업 XML)
- * 다른 카드사 SMS 형식 추가 시 여기에 추가
- */
-const SMS_CONFIG = {
+/** SMS 백업 XML (NH농협카드) 설정. 다른 카드사 형식을 추가할 때 여기에 둡니다. */
+export const SMS_CONFIG = {
   APPROVAL_KEYWORD: 'NH카드',
   SKIP_KEYWORDS:    ['승인거절', '인증번호', '재충전', '카드사용알림', '패스워드'],
 };
-
-// ─────────────────────────────────────────────
-// 자동 병합 — app.js의 ExcelParser에 추가 설정 반영
-// (이 파일이 app.js보다 먼저 로드되어도 나중에 로드되어도 모두 안전)
-// ─────────────────────────────────────────────
-(function applyParserConfig() {
-  // ExcelParser가 이미 로드된 경우 즉시 적용
-  if (window.ExcelParser && window.ExcelParser._defaultConfig) {
-    Object.assign(window.ExcelParser._defaultConfig, BANK_CONFIGS);
-  }
-  // ExcelParser가 아직 로드 안 된 경우 window.BANK_CONFIGS에 저장해두면
-  // ExcelParser.CONFIG getter가 자동으로 병합함 (이미 구현됨)
-})();

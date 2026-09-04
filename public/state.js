@@ -16,6 +16,7 @@ export const S = {
   sortKey: 'date', sortDir: 'asc',       // 기본 오름차순(과거→최신)
   rptSortKey: 'date', rptSortDir: 'asc', // 보고서 거래내역 정렬
   excelFile: null, excelMonth: '', excelRawRows: [], // 엑셀 업로드 임시 상태(원본 파일/미리보기)
+  excelSkipped: [],  // 파싱에서 제외된 행과 이유 (조용한 삭제를 없애기 위해 화면에 표시)
   page: 1, pageSize: 100,
   trxViewMode: 'list', // 'list' | 'calendar'
   calendarYM: '',      // 달력뷰 표시 연월 (YYYY-MM, 비면 filteredTrx 기준)

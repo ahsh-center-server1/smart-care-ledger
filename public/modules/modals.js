@@ -15,6 +15,7 @@ import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js
 import { renderManagement } from './settings.js';
 import { can } from './permissions.js';
 import { refreshSetupAfterChange } from './setup.js';
+import * as ExcelParser from '../services/excel-parser.js';
 
 // ─────────────────────────────────────────────
 // 모달
@@ -130,51 +131,21 @@ export function renderTrxForm(t){
       if(!toAccId){toast('입금 계좌를 선택하세요.','error');return;}
       if(toAccId===accId){toast('출금 계좌와 입금 계좌가 같습니다.','error');return;}
       const toAcc=S.accounts.find(a=>a.id===toAccId);
+      if(!toAcc){toast('입금 계좌를 찾을 수 없습니다.','error');return;}
+      try{
+        await saveTransfer({existing:isEdit?t:null,existId,acc,toAcc,accId,toAccId,date,time,desc,amount});
+      }catch(e){toast('자산이동 저장 실패: '+e.message,'error',6000);return;}
       closeModal();
-      if(existId){
-        const outData={clientId:acc.clientId,accountId:accId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:0,amountOut:amount,receiptUrl:t.receiptUrl||'',linkedAccountId:toAccId};
-        outData.id=existId; await saveTrx(outData);
-        // B003: 연결 입금 거래 동기화
-        if(t.linkedTrxId){
-          const toAcc2=S.accounts.find(a=>a.id===toAccId);
-          const{doc:d2,updateDoc:ud2}=fb();
-          await ud2(d2(fdb(),COLS.TRANSACTIONS,t.linkedTrxId),{clientId:toAcc2?.clientId||acc.clientId,accountId:toAccId,date,time,description:desc,amountIn:amount,amountOut:0,linkedAccountId:accId});
-          await updateAccBalance(toAccId);
-          if(S.activeClient)await loadTransactions(S.activeClient);
-        } else {
-          // Feature 5: 반대편 거래 자동 매칭 (엑셀 업로드된 단일 거래를 자산이동으로 변환)
-          const candidates=S.transactions.filter(x=>
-            x.id!==existId &&
-            x.accountId===toAccId &&
-            (x.date||'')===date &&
-            x.type!=='자산이동' &&
-            Number(x.amountIn||0)===amount &&
-            Number(x.amountOut||0)===0
-          );
-          if(candidates.length===1){
-            const cand=candidates[0];
-            const{doc:d3,updateDoc:ud3}=fb();
-            await ud3(d3(fdb(),COLS.TRANSACTIONS,cand.id),{type:'자산이동',category:'자산이동',amountIn:amount,amountOut:0,linkedAccountId:accId,linkedTrxId:existId,clientId:toAcc?.clientId||acc.clientId});
-            await ud3(d3(fdb(),COLS.TRANSACTIONS,existId),{linkedTrxId:cand.id});
-            await updateAccBalance(toAccId);
-            if(S.activeClient)await loadTransactions(S.activeClient);
-            toast('반대편 거래 자동 매칭 완료','success');
-          } else if(candidates.length>1){
-            toast('반대편 후보 '+candidates.length+'건 — 입금 계좌에서 직접 정리 필요','info',4000);
-          } else {
-            toast('반대편 거래 미발견 — 입금 계좌에서 별도 입력 필요','info',4000);
-          }
-        }
-      } else {
-        const{addDoc,collection,updateDoc,doc}=fb();
-        const outRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:acc.clientId,accountId:accId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:0,amountOut:amount,receiptUrl:'',linkedAccountId:toAccId});
-        const inRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:toAcc.clientId,accountId:toAccId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:amount,amountOut:0,receiptUrl:'',linkedAccountId:accId,linkedTrxId:outRef.id});
-        await updateDoc(doc(fdb(),COLS.TRANSACTIONS,outRef.id),{linkedTrxId:inRef.id});
-        await updateAccBalance(accId); await updateAccBalance(toAccId);
-        if(S.activeClient===acc.clientId||S.activeClient===toAcc?.clientId)await loadTransactions(S.activeClient);
-        toast('자산이동 저장됨','success');
-      }
     } else {
+      // 자산이동을 다른 유형으로 바꾸면 상대편이 짝 없이 남는다.
+      // 예전에는 linkedTrxId가 그대로 남아 한쪽은 지출, 다른 쪽은 여전히
+      // 자산이동인 짝이 만들어졌다. 조용히 상대편을 고치는 것은 다른 입주자의
+      // 장부를 말없이 바꾸는 일이라, 삭제 후 재입력을 안내한다.
+      if(isEdit&&t.type==='자산이동'&&t.linkedTrxId){
+        toast('자산이동은 다른 유형으로 바꿀 수 없습니다.\n'
+          +'이 거래를 삭제하면 상대편도 함께 지워집니다. 그 뒤에 다시 입력해 주세요.','error',7000);
+        return;
+      }
       // 영수증 업로드 처리
       const oldReceiptUrl=isEdit?(t.receiptUrl||''):'';
       let receiptUrl=oldReceiptUrl;
@@ -195,7 +166,9 @@ export function renderTrxForm(t){
       const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,
         amountIn:(type==='수입'||isCancelIn)?amount:0,
         amountOut:(type==='지출'||isCancelOut)?amount:0,
-        receiptUrl};
+        receiptUrl,
+        // 자산이동이 아닌 거래에 연결 정보가 남아 있으면 안 된다(짝 없는 링크 방지)
+        linkedAccountId:'',linkedTrxId:''};
       if(existId)trxData.id=existId;
       closeModal(); await saveTrx(trxData);
     }
@@ -354,6 +327,93 @@ export function downloadManualTemplate(){
   URL.revokeObjectURL(a.href);
   toast('양식 다운로드 완료. 내용 작성 후 업로드하세요.','success');
 }
+/**
+ * 자산이동 저장 — **양쪽 다리를 한 배치로 쓴다.**
+ *
+ * 예전에는 세 가지 방식으로 한쪽만 남는 상태가 만들어졌다.
+ *   1. 생성이 addDoc → addDoc → updateDoc 3회 연속 쓰기였다(트랜잭션 아님).
+ *      두 번째에서 끊기면 출금만 남고 입금이 없다 → 장부에서 돈이 증발한다.
+ *   2. 지출 → 자산이동으로 바꿀 때 상대편을 못 찾으면 토스트만 띄우고
+ *      그대로 '자산이동'으로 저장했다. 상대편 탐색이 S.transactions
+ *      (당월·활성 입주자)만 훑었으므로 이게 사실상 기본 동작이었다.
+ *   3. 자산이동 → 지출로 바꾸면 linkedTrxId가 남아 짝이 어긋났다.
+ *
+ * 지금은 자산이동에 다리가 하나뿐인 상태를 만들지 않는다.
+ * 상대편이 없으면 **만든다.** 후보가 여럿이면 저장을 막고 사람이 정리하게 한다.
+ */
+async function saveTransfer({existing,existId,acc,toAcc,accId,toAccId,date,time,desc,amount}){
+  const{writeBatch,doc,collection,getDocs,query,where}=fb();
+  const db=fdb();
+  const base={date,time,type:'자산이동',category:'자산이동',description:desc};
+  const outData={...base,clientId:acc.clientId,accountId:accId,
+    amountIn:0,amountOut:amount,receiptUrl:existing?.receiptUrl||'',linkedAccountId:toAccId,
+    createdBy:existing?.createdBy||String(S.user?.userId||'')};
+  const inData={...base,clientId:toAcc.clientId,accountId:toAccId,
+    amountIn:amount,amountOut:0,receiptUrl:'',linkedAccountId:accId,
+    createdBy:String(S.user?.userId||'')};
+
+  const batch=writeBatch(db);
+
+  // ── 신규 ──
+  if(!existId){
+    const outRef=doc(collection(db,COLS.TRANSACTIONS));
+    const inRef=doc(collection(db,COLS.TRANSACTIONS));
+    batch.set(outRef,{...outData,linkedTrxId:inRef.id});
+    batch.set(inRef ,{...inData ,linkedTrxId:outRef.id});
+    await batch.commit();
+    await afterTransfer(acc,toAcc,'자산이동 저장됨');
+    return;
+  }
+
+  // ── 이미 짝이 있는 자산이동 수정 ──
+  if(existing?.linkedTrxId){
+    batch.update(doc(db,COLS.TRANSACTIONS,existId),{...outData,linkedTrxId:existing.linkedTrxId});
+    batch.update(doc(db,COLS.TRANSACTIONS,existing.linkedTrxId),
+      {...inData,linkedTrxId:existId});
+    await batch.commit();
+    await afterTransfer(acc,toAcc,'자산이동 수정됨');
+    return;
+  }
+
+  // ── 일반 거래를 자산이동으로 바꾸는 경우: 상대편을 찾거나 만든다 ──
+  // 화면 캐시가 아니라 Firestore에서 그 계좌·그 날짜를 직접 본다.
+  // 예전에는 S.transactions만 훑어서 다른 입주자·다른 기간 상대편을 놓쳤다.
+  const snap=await getDocs(query(collection(db,COLS.TRANSACTIONS),
+    where('accountId','==',toAccId),where('date','>=',date),where('date','<=',date)));
+  const candidates=snap.docs
+    .map(d=>({id:d.id,...d.data()}))
+    .filter(x=>x.id!==existId&&x.type!=='자산이동'
+      &&Number(x.amountIn||0)===amount&&Number(x.amountOut||0)===0);
+
+  if(candidates.length>1){
+    throw new Error(`입금 계좌에 같은 날짜·금액 거래가 ${candidates.length}건 있습니다. `
+      +'어느 것이 상대편인지 알 수 없으니 입금 계좌에서 먼저 정리한 뒤 다시 시도하세요.');
+  }
+
+  if(candidates.length===1){
+    const cand=candidates[0];
+    batch.update(doc(db,COLS.TRANSACTIONS,existId),{...outData,linkedTrxId:cand.id});
+    batch.update(doc(db,COLS.TRANSACTIONS,cand.id),{...inData,linkedTrxId:existId});
+    await batch.commit();
+    await afterTransfer(acc,toAcc,'반대편 거래를 찾아 자산이동으로 연결했습니다.');
+    return;
+  }
+
+  // 상대편이 없으면 만든다 — 돈이 한쪽에서만 빠지는 상태를 만들지 않는다
+  const inRef=doc(collection(db,COLS.TRANSACTIONS));
+  batch.update(doc(db,COLS.TRANSACTIONS,existId),{...outData,linkedTrxId:inRef.id});
+  batch.set(inRef,{...inData,linkedTrxId:existId});
+  await batch.commit();
+  await afterTransfer(acc,toAcc,'입금 계좌에 상대편 거래를 새로 만들었습니다.');
+}
+
+async function afterTransfer(acc,toAcc,msg){
+  await updateAccBalance(acc.id); await updateAccBalance(toAcc.id);
+  if(S.activeClient===acc.clientId||S.activeClient===toAcc.clientId)
+    await loadTransactions(S.activeClient);
+  toast(msg,'success',4000);
+}
+
 export function onXlFileSelect(){
   const fi=document.getElementById('xl-file'), btn=document.getElementById('xl-btn');
   if(fi.files.length){
@@ -361,42 +421,129 @@ export function onXlFileSelect(){
     if(btn)btn.textContent=`📊 분석 시작 (${fi.files[0].name})`;
   }
 }
-export function analyzeXlFile(){
-  const fi=document.getElementById('xl-file'); if(!fi?.files?.length){toast('파일을 선택하세요.','error');return;}
-  const btn=document.getElementById('xl-btn'); btn.disabled=true; btn.textContent='분석 중...';
-  const clientId=S.activeClient||'';
-  // C002: 입주자별 규칙 우선, 공통 규칙 후순위로 정렬
-  const parserCats=S.categories.filter(c=>c.keyword&&c.keyword!==''&&(!c.clientId||c.clientId===clientId)).sort((a,b)=>(a.clientId===clientId?0:1)-(b.clientId===clientId?0:1)).map(c=>({keyword:c.keyword,category:c.category,subcategory:c.subcategory||''}));
-  ExcelParser.parseFile(fi.files[0],parserCats)
-    .then(parsed=>{
-      if(!parsed.length){toast('인식된 거래 데이터가 없습니다.','error');btn.disabled=false;btn.textContent='파일 분석 시작';return;}
-      const existSet=new Set(S.transactions.map(t=>`${t.date}_${Math.abs(t.amountIn||0)}_${Math.abs(t.amountOut||0)}`));
-      const existingMaxOrder=S.transactions.length>0?Math.max(...S.transactions.map(t=>t.sortOrder??0)):0;
-      S.excelTemp=parsed.map((p,i)=>{
-        const rawIn=p.in||0, rawOut=p.out||0;
-        let amIn=0, amOut=0, type='지출';
-        if(rawIn>0){amIn=rawIn;type='수입';}
-        else if(rawOut>0){amOut=rawOut;type='지출';}
-        else if(rawOut<0){amOut=rawOut;type='지출';}
-        else if(rawIn<0){amOut=Math.abs(rawIn);type='취소';}
-        const isDup=existSet.has(`${p.date}_${Math.abs(amIn)}_${Math.abs(amOut)}`);
-        return {date:p.date,description:p.desc,amountIn:amIn,amountOut:amOut,type,category:p.cat||'확인필요',subcategory:p.sub||'',receiptUrl:'',_dup:isDup,sortOrder:existingMaxOrder+i+1};
-      });
-      // 원본 행 임시 보관 (미리보기/중복 대조용, Firestore에는 저장하지 않음)
-      S.excelRawRows=parsed.map(p=>({date:p.date,desc:p.desc,amountIn:p.in>0?p.in:0,amountOut:p.out>0?p.out:0}));
-      // 가장 빈번한 연월 자동 감지
-      const mCount={};parsed.forEach(p=>{const m=(p.date||'').substring(0,7);if(m)mCount[m]=(mCount[m]||0)+1;});
-      S.excelMonth=Object.entries(mCount).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
-      const dupCount=S.excelTemp.filter(x=>x._dup).length;
-      btn.disabled=false; btn.textContent=`분석 완료 (${S.excelTemp.length}건)`;
-      if(dupCount>0)toast(`⚠️ ${dupCount}건이 기존 거래와 중복됩니다. 저장 시 자동 제외됩니다.`,'info',5000);
-      renderXlPreview();
-    })
-    .catch(err=>{btn.disabled=false;btn.textContent='파일 분석 시작';toast('파싱 오류: '+err.message,'error');});
+// 중복 판정 키는 services/excel-parser.js의 transactionKey — 거기서 테스트한다
+const dupKey=ExcelParser.transactionKey;
+
+/**
+ * 중복 대조용 기존 거래를 Firestore에서 직접 읽는다.
+ * 화면 캐시가 아니라 **파일에 들어 있는 날짜 범위 전체**를 본다.
+ */
+async function fetchExistingForDup(accId,rows){
+  const dates=rows.map(r=>r.date).filter(Boolean).sort();
+  if(!dates.length)return new Set();
+  const{getDocs,collection,query,where}=fb();
+  const snap=await getDocs(query(collection(fdb(),COLS.TRANSACTIONS),
+    where('accountId','==',accId),
+    where('date','>=',dates[0]),
+    where('date','<=',dates[dates.length-1])));
+  return new Set(snap.docs.map(d=>dupKey({accountId:accId,...d.data()})));
 }
+
+export async function analyzeXlFile(){
+  const fi=document.getElementById('xl-file');
+  if(!fi?.files?.length){toast('파일을 선택하세요.','error');return;}
+  // 계좌를 먼저 받는다 — 계좌를 모르면 중복 여부를 판정할 수 없다
+  const accId=document.getElementById('xl-acc')?.value;
+  const acc=S.accounts.find(a=>a.id===accId);
+  if(!acc){toast('먼저 계좌를 선택하세요. 계좌를 알아야 중복 여부를 판정할 수 있습니다.','error',4000);return;}
+  const btn=document.getElementById('xl-btn'); btn.disabled=true; btn.textContent='분석 중...';
+  const reset=()=>{btn.disabled=false;btn.textContent='📊 파일 분석 시작';};
+  const clientId=acc.clientId;
+  // 입주자별 규칙 우선, 공통 규칙 후순위
+  const parserCats=S.categories
+    .filter(c=>c.keyword&&c.keyword!==''&&(!c.clientId||c.clientId===clientId))
+    .sort((a,b)=>(a.clientId===clientId?0:1)-(b.clientId===clientId?0:1))
+    .map(c=>({keyword:c.keyword,category:c.category,subcategory:c.subcategory||''}));
+
+  try{
+    const parsed=await ExcelParser.parseFile(fi.files[0],parserCats);
+    S.excelSkipped=parsed.skipped||[];
+    S.excelTemp=[];
+
+    if(!parsed.rows.length){
+      // 예전에는 "인식된 거래 데이터가 없습니다" 한 줄이 전부였다.
+      // 제외 사유가 있으면 그걸 보여준다 — 원인을 알 수 있는 유일한 단서다.
+      renderXlPreview();
+      toast(S.excelSkipped.length
+        ? `인식된 거래가 없습니다. 제외된 행 ${S.excelSkipped.length}건의 이유를 아래에서 확인하세요.`
+        : '인식된 거래가 없습니다. 지원하지 않는 형식이거나 헤더를 찾지 못했습니다.','error',6000);
+      reset(); return;
+    }
+
+    const existSet=await fetchExistingForDup(accId,parsed.rows);
+    const existingMaxOrder=S.transactions.length>0
+      ? Math.max(...S.transactions.map(t=>t.sortOrder??0)) : 0;
+
+    S.excelTemp=parsed.rows.map((p,i)=>{
+      const rawIn=p.in||0, rawOut=p.out||0;
+      let amIn=0, amOut=0, type='지출';
+      if(rawIn>0){amIn=rawIn;type='수입';}
+      else if(rawOut>0){amOut=rawOut;type='지출';}
+      else if(rawOut<0){amOut=rawOut;type='지출';}       // 음수 지출 = 환불
+      else if(rawIn<0){amOut=Math.abs(rawIn);type='취소';}
+      const item={date:p.date,description:p.desc,descRaw:p.descRaw||p.desc,
+        amountIn:amIn,amountOut:amOut,type,
+        category:p.cat||'확인필요',subcategory:p.sub||'',receiptUrl:'',
+        sortOrder:existingMaxOrder+i+1};
+      item._dup=existSet.has(dupKey({...item,accountId:accId}));
+      return item;
+    });
+
+    // 가장 빈번한 연월 자동 감지
+    const mCount={};
+    parsed.rows.forEach(p=>{const m=(p.date||'').substring(0,7);if(m)mCount[m]=(mCount[m]||0)+1;});
+    S.excelMonth=Object.entries(mCount).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
+
+    const dupCount=S.excelTemp.filter(x=>x._dup).length;
+    btn.disabled=false; btn.textContent=`분석 완료 (${S.excelTemp.length}건)`;
+    if(parsed.encoding&&parsed.encoding!=='utf-8')
+      toast(`${parsed.encoding} 인코딩으로 읽었습니다.`,'info',3000);
+    if(dupCount>0)
+      toast(`⚠️ ${dupCount}건이 이미 등록된 거래와 같습니다. 저장 시 제외됩니다.`,'info',5000);
+    if(S.excelSkipped.length)
+      toast(`${S.excelSkipped.length}건이 제외되었습니다. 아래 "제외된 행"을 확인하세요.`,'info',5000);
+    renderXlPreview();
+  }catch(err){
+    reset(); toast('파싱 오류: '+err.message,'error',5000);
+  }
+}
+
+/** 제외된 행 목록 — 조용히 사라지지 않도록 이유와 원문을 함께 보여준다 */
+function renderXlSkipped(){
+  const list=S.excelSkipped||[];
+  if(!list.length)return '';
+  const byReason={};
+  list.forEach(x=>{(byReason[x.reason]=byReason[x.reason]||[]).push(x);});
+  const summary=Object.entries(byReason).map(([r,v])=>`${r} ${v.length}건`).join(' · ');
+  const rows=list.slice(0,50).map(x=>
+    `<tr style="border-top:1px solid #fde68a;">
+       <td style="padding:5px 8px;font-size:11px;color:#92400e;white-space:nowrap;">${x.row}행</td>
+       <td style="padding:5px 8px;font-size:11px;color:#92400e;white-space:nowrap;">${escAttr(x.reason)}</td>
+       <td style="padding:5px 8px;font-size:11px;color:#a16207;overflow:hidden;text-overflow:ellipsis;">${escAttr(x.text)}</td>
+     </tr>`).join('');
+  const more=list.length>50?`<div style="padding:5px 8px;font-size:11px;color:#a16207;">… 외 ${list.length-50}건</div>`:'';
+  return `
+    <details style="margin-bottom:10px;border:1px solid #fde68a;border-radius:9px;background:#fffbeb;">
+      <summary style="padding:8px 10px;font-size:12px;font-weight:700;color:#92400e;cursor:pointer;">
+        ⚠️ 제외된 행 ${list.length}건 — ${escAttr(summary)}
+      </summary>
+      <div style="max-height:160px;overflow-y:auto;">
+        <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+          <colgroup><col style="width:52px;"><col style="width:130px;"><col></colgroup>
+          <tbody>${rows}</tbody>
+        </table>${more}
+      </div>
+    </details>`;
+}
+
 export function renderXlPreview(){
   const el=document.getElementById('xl-preview'); if(!el)return;
-  if(!S.excelTemp.length){el.style.display='none';return;}
+  const skippedHtml=renderXlSkipped();
+  if(!S.excelTemp.length){
+    // 인식된 거래가 없어도 제외 사유는 보여준다
+    if(!skippedHtml){el.style.display='none';el.innerHTML='';return;}
+    el.style.display='block'; el.innerHTML=skippedHtml; return;
+  }
   const dupCount=S.excelTemp.filter(x=>x._dup).length;
   el.style.display='block';
   el.innerHTML=`
@@ -406,6 +553,7 @@ export function renderXlPreview(){
         <input type="month" id="xl-month-label" class="input" value="${S.excelMonth}" style="padding:4px 8px;font-size:12px;width:130px;">
       </label>
     </div>
+    ${skippedHtml}
     <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:9px;background:#f8fafc;margin-bottom:10px;">
       <table style="width:100%;border-collapse:collapse;">
         <thead style="background:#fff;position:sticky;top:0;"><tr>
@@ -423,14 +571,17 @@ export function renderXlPreview(){
   S.excelTemp.forEach((t,i)=>{
     const isIn=t.amountIn>0, amt=isIn?t.amountIn:Math.abs(t.amountOut), c=cs(t.category);
     const tr=document.createElement('tr'); tr.style.cssText='border-top:1px solid var(--border);';
-    const dupBadge=t._dup?'<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;margin-left:4px;">중복의심</span>':'';
+    const dupBadge=t._dup?'<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;margin-left:4px;">이미 등록됨</span>':'';
     tr.style.background=t._dup?'#fffbeb':'';
-    tr.innerHTML=`<td style="padding:6px 10px;font-size:12px;color:var(--sub);white-space:nowrap;">${t.date}</td><td style="padding:6px 10px;font-size:13px;color:var(--text);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.description}">${t.description}${dupBadge}</td><td style="padding:6px 10px;"><span style="background:${c.bg};color:${c.text};padding:2px 7px;border-radius:6px;font-size:11px;font-weight:700;">${t.category}</span></td><td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${isIn?'#059669':t.type==='취소'?'#71717a':'#dc2626'};">${isIn?'+':''}${amt.toLocaleString()}원${t.type==='취소'?' (취소)':''}</td><td style="padding:6px 10px;text-align:center;"><button style="font-size:12px;color:#94a3b8;background:none;border:none;cursor:pointer;">✕</button></td>`;
+    // 노이즈 단어를 떼기 전 원문을 툴팁에 남긴다 (상호명이 잘렸는지 확인할 수 있도록)
+    const title=escAttr(t.descRaw&&t.descRaw!==t.description?`${t.description}  (원문: ${t.descRaw})`:t.description||'');
+    tr.innerHTML=`<td style="padding:6px 10px;font-size:12px;color:var(--sub);white-space:nowrap;">${escAttr(t.date)}</td><td style="padding:6px 10px;font-size:13px;color:var(--text);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${title}">${escAttr(t.description)}${dupBadge}</td><td style="padding:6px 10px;"><span style="background:${c.bg};color:${c.text};padding:2px 7px;border-radius:6px;font-size:11px;font-weight:700;">${escAttr(t.category)}</span></td><td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${isIn?'#059669':t.type==='취소'?'#71717a':'#dc2626'};">${isIn?'+':''}${amt.toLocaleString()}원${t.type==='취소'?' (취소)':''}</td><td style="padding:6px 10px;text-align:center;"><button style="font-size:12px;color:#94a3b8;background:none;border:none;cursor:pointer;">✕</button></td>`;
     tr.querySelector('button').addEventListener('click',()=>removeXlItem(i));
     tbody.appendChild(tr);
   });
   document.getElementById('xl-save-btn').addEventListener('click',saveExcelData);
 }
+
 export function removeXlItem(idx){
   S.excelTemp.splice(idx,1);
   if(!S.excelTemp.length){document.getElementById('xl-preview').style.display='none';toast('모든 항목이 제거되었습니다.','info');return;}
@@ -445,18 +596,29 @@ export async function saveExcelData(){
   const lockedRows=S.excelTemp.filter(item=>!item._dup&&isConfirmedLocked(acc.clientId,item.date));
   if(lockedRows.length){toast(`최종 결재 완료된 월의 거래 ${lockedRows.length}건이 포함되어 있습니다. 해당 행을 제거한 뒤 저장하세요.`,'error',6000);return;}
   const btn=document.getElementById('xl-save-btn'); if(btn){btn.disabled=true;btn.textContent='저장 중...';}
-  // 중복(_dup) 행 제외하고 저장
-  const toSave=S.excelTemp.filter(item=>!item._dup);
-  const dupCount=S.excelTemp.length-toSave.length;
-  const{addDoc,collection}=fb();
-  for(const item of toSave){
-    await addDoc(collection(fdb(),COLS.TRANSACTIONS),{
-      clientId:acc.clientId,accountId:accId,date:item.date,type:item.type,
-      category:item.category,subcategory:item.subcategory||'',
-      description:item.description,amountIn:item.amountIn||0,amountOut:item.amountOut||0,
-      receiptUrl:'',sortOrder:item.sortOrder??null
-    });
+  // 저장 직전에 중복을 한 번 더 확인한다.
+  // 분석 이후 계좌를 바꿨거나 동료가 같은 파일을 먼저 올렸을 수 있다.
+  let toSave, dupCount;
+  try{
+    const existSet=await fetchExistingForDup(accId,S.excelTemp);
+    toSave=S.excelTemp.filter(item=>!existSet.has(dupKey({...item,accountId:accId})));
+    dupCount=S.excelTemp.length-toSave.length;
+  }catch(e){
+    if(btn){btn.disabled=false;btn.textContent='✅ 최종 저장 (원본 파일 백업 포함)';}
+    toast('중복 확인 실패: '+e.message,'error',5000); return;
   }
+  if(!toSave.length){
+    if(btn){btn.disabled=false;btn.textContent='✅ 최종 저장 (원본 파일 백업 포함)';}
+    toast(`${dupCount}건 모두 이미 등록된 거래입니다. 저장할 것이 없습니다.`,'info',5000); return;
+  }
+  // 한 건씩 addDoc하면 중간에 끊겼을 때 절반만 들어간다 → 배치로 묶는다
+  await batchAddDocs(toSave.map(item=>({col:COLS.TRANSACTIONS,data:{
+    clientId:acc.clientId,accountId:accId,date:item.date,type:item.type,
+    category:item.category,subcategory:item.subcategory||'',
+    description:item.description,amountIn:item.amountIn||0,amountOut:item.amountOut||0,
+    receiptUrl:'',sortOrder:item.sortOrder??null,
+    createdBy:String(S.user?.userId||''),
+  }})));
   await updateAccBalance(accId);
   const msg=dupCount>0?`${toSave.length}건 저장됨 (중복 ${dupCount}건 제외)`:toSave.length+'건 저장됨';
   toast(msg,'success'); closeModal();
@@ -466,7 +628,7 @@ export async function saveExcelData(){
     const uploadFile=S.excelFile;
     const uploadMonth=document.getElementById('xl-month-label')?.value||S.excelMonth;
     const savedCount=toSave.length;
-    S.excelFile=null; S.excelRawRows=[]; S.excelMonth='';
+    S.excelFile=null; S.excelRawRows=[]; S.excelMonth=''; S.excelSkipped=[];
     try{
       toast('원본 파일 저장 중...','info',3000);
       const url=await uploadExcelOriginal(uploadFile,`excel/${acc.clientId}/${accId}/${Date.now()}_${uploadFile.name}`);

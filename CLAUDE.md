@@ -26,10 +26,10 @@
 | `app.js` | `public/app.js` | 전역 초기화 및 이벤트 바인딩 |
 | `constants.js` | `public/constants.js` | 상수(COLS, 색상 등) 정의 |
 | `state.js` | `public/state.js` | 전역 상태(S) |
-| `parser-config.js` | `public/parser-config.js` | 은행별 엑셀 파서 설정 |
+| `parser-config.js` | `public/parser-config.js` | 은행별 엑셀 파서 설정 (ES 모듈, 유일한 설정) |
 | `manifest.json` / `sw.js` | `public/` | PWA 매니페스트 / 서비스 워커 |
 | 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions |
-| 서비스 | `public/services/*.js` | firestore, image(이미지 압축), storage |
+| 서비스 | `public/services/*.js` | firestore, image(이미지 압축), storage, balance(잔액 계산), excel-parser |
 | 유틸 | `public/utils/ui.js` | UI 유틸리티 |
 | `firestore.rules` | `firestore.rules` (루트) | Firestore 보안 규칙 |
 
@@ -290,6 +290,28 @@ const firebaseConfig = { apiKey, authDomain, projectId,
 
 ---
 
+## 10-1. 엑셀 파서에 은행 추가하기
+
+`public/parser-config.js`의 `BANK_CONFIGS`에 항목 하나를 추가하면 끝이다.
+다른 파일은 건드리지 않는다.
+
+```javascript
+HANA_BANK: {
+  DATE:'거래일시', DESC:'내용', WITHDRAW:'출금', DEPOSIT:'입금',
+  MATCH: [['거래일시'], ['출금','입금']],   // 생략 가능(DATE+WITHDRAW로 자동 판정)
+},
+```
+
+- `MATCH`는 바깥 배열이 AND, 안쪽이 OR.
+- 순서가 중요하다 — 위에서부터 먼저 맞는 설정이 채택되므로 더 구체적인 것을 위에 둔다.
+- 추가한 뒤 `test/excel-parser.test.mjs`의 `HEADERS`에도 헤더 예시를 넣는다
+  (넣지 않으면 "헤더 목록과 설정 목록이 일치한다" 테스트가 실패한다).
+
+파싱에서 제외된 행은 미리보기에 행 번호·이유·원문과 함께 표시된다.
+"인식된 거래가 없습니다"만 뜨면 그 목록이 원인을 알려준다.
+
+---
+
 ## 11. 코드 작성 규칙
 
 1. **함수 중복 절대 금지** — 수정 전 `grep -n "function 함수명"` 확인
@@ -313,11 +335,11 @@ firebase deploy
 - `index.html` — 메인 HTML + CSS
 - `app.js` — 전역 초기화 및 이벤트 바인딩
 - `modules/*.js` — 기능별 모듈 (auth, core, dashboard, transactions, report, settings, modals, permissions)
-- `services/*.js` — firestore, image(이미지 압축), storage
+- `services/*.js` — firestore, image(이미지 압축), storage, balance, excel-parser
 - `utils/ui.js` — UI 유틸리티 함수
 - `constants.js` — 상수 정의
 - `state.js` — 전역 상태
-- `parser-config.js` — 엑셀 파서 설정
+- `parser-config.js` — 엑셀 파서 설정 (ES 모듈)
 - `manifest.json`, `sw.js`, `icons/` — PWA 매니페스트/서비스 워커/아이콘
 - `firestore.rules` — Firestore 보안 규칙 (루트)
 
