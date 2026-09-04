@@ -27,7 +27,10 @@ import { can } from './permissions.js';
  */
 export async function fetchBaseData(opts) {
   const { getDocs, collection, query, where } = fb();
-  const db=fdb(), isAdmin=can('nav.staff');
+  // 담당 입주자만 볼지 전체를 볼지 — 네비게이션 메뉴 권한이 아니라 전용 키로 판정한다.
+  // 예전에는 can('nav.staff')를 썼기 때문에 팀장의 메뉴 표시를 끄면
+  // 팀장이 전 입주자를 못 보게 되는 숨은 부작용이 있었다.
+  const db=fdb(), viewAllClients=can('client.view.all');
   const only = opts && Array.isArray(opts.only) ? new Set(opts.only) : null;
   const need = key => !only || only.has(key);
 
@@ -62,11 +65,12 @@ export async function fetchBaseData(opts) {
     const showInactive=S.settings?.showInactive||false;
     const activeClients=showInactive?S.allClients:S.allClients.filter(c=>c.active!==false);
     const activeAccounts=showInactive?S.allAccounts:S.allAccounts.filter(a=>a.active!==false);
-    S.clients  = isAdmin ? activeClients : activeClients.filter(c=>{
-      const ids=String(c.userIds||'').split(',').map(s=>s.trim());
-      const myUserId=String(S.user.userId);
-      const myDocId=String(S.users.find(u=>String(u.userId)===myUserId)?.id||'');
-      return ids.includes(myUserId)||(myDocId&&ids.includes(myDocId));
+    S.clients  = viewAllClients ? activeClients : activeClients.filter(c=>{
+      // 마이그레이션 후 userId가 곧 users 문서 ID이므로 키 공간이 하나다.
+      // (예전에는 userIds에 로그인 아이디, teamLeader에 문서 ID가 들어가 있어
+      //  S.users에서 문서 ID를 되찾아 양쪽을 대조해야 했다)
+      const ids=String(c.userIds||'').split(',').map(x=>x.trim());
+      return ids.includes(String(S.user.userId));
     });
     S.accounts = activeAccounts.filter(a=>S.clients.some(c=>c.id===a.clientId));
   }
@@ -146,8 +150,9 @@ export const refetchCategories = () => fetchBaseData({ only: ['categories'] });
 export const refetchReports    = () => fetchBaseData({ only: ['reports'] });
 
 export function isConfirmedLocked(clientId, dateStr){
-  // 관리자는 최종 결재 완료 월도 추가/수정/삭제 가능 (잠금 우회)
-  if(S.user?.role==='관리자')return false;
+  // 관리자는 최종 결재 완료 월도 추가/수정/삭제 가능 (잠금 우회).
+  // 마이그레이션 후 관리자는 role='센터장' + isAdmin=true 이므로 플래그로 판정한다.
+  if(S.user?.isAdmin===true)return false;
   const ym=(dateStr||'').substring(0,7);
   return !!(S.confirmedMonths?.has(`${clientId}_${ym}`));
 }
@@ -165,12 +170,22 @@ export async function loadTransactions(clientId, opts) {
     const { getDocs, collection, query, where } = fb();
     const range = (opts && opts.range) ? opts.range : 'month';
     const db = fdb();
+
+    // 입력자는 본인이 작성한 거래만 볼 수 있다.
+    // ⚠️ 이 조건은 **쿼리에** 걸어야 한다. 보안 규칙이 본인 작성분만 허용하므로,
+    //    조건 없이 조회하면 규칙 엔진이 결과 전체의 충족을 증명할 수 없어
+    //    쿼리가 통째로 거부된다(가져온 뒤 걸러내는 방식으로는 안 된다).
+    //    필요한 복합 인덱스는 firestore.indexes.json에 등록되어 있다.
+    const ownOnly = !can('trx.view.all');
+    const scope = ownOnly
+      ? [where('clientId','==',clientId), where('createdBy','==',String(S.user.userId))]
+      : [where('clientId','==',clientId)];
+
     let q;
     if (range === 'all') {
-      q = query(collection(db,COLS.TRANSACTIONS), where('clientId','==',clientId));
+      q = query(collection(db,COLS.TRANSACTIONS), ...scope);
     } else if (range && typeof range === 'object' && range.start && range.end) {
-      q = query(collection(db,COLS.TRANSACTIONS),
-                where('clientId','==',clientId),
+      q = query(collection(db,COLS.TRANSACTIONS), ...scope,
                 where('date','>=',range.start),
                 where('date','<=',range.end));
     } else {
@@ -179,14 +194,12 @@ export async function loadTransactions(clientId, opts) {
       const ymStart = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
       const lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
       const ymEnd = ymStart.substring(0,8)+String(lastDay).padStart(2,'0');
-      q = query(collection(db,COLS.TRANSACTIONS),
-                where('clientId','==',clientId),
+      q = query(collection(db,COLS.TRANSACTIONS), ...scope,
                 where('date','>=',ymStart),
                 where('date','<=',ymEnd));
     }
     const snap = await getDocs(q);
-    let allTrx = snap.docs.map(d=>({id:d.id,...d.data()}));
-    if(!can('trx.view.all')) allTrx=allTrx.filter(t=>t.createdBy===S.user.userId);
+    const allTrx = snap.docs.map(d=>({id:d.id,...d.data()}));
     S.transactions = allTrx.sort((a,b)=>{
       const oA=a.sortOrder!=null?a.sortOrder:99999;
       const oB=b.sortOrder!=null?b.sortOrder:99999;

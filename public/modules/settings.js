@@ -166,8 +166,9 @@ export async function toggleStaffActive(id,makeActive){
   const self=S.users.find(u=>String(u.userId)===String(S.user?.userId));
   if(!makeActive&&self&&String(self.id)===String(id)){toast('본인 계정은 비활성화할 수 없습니다.','error');return;}
   try{
-    const{doc,updateDoc}=fb();
-    await updateDoc(doc(fdb(),COLS.USERS,id),{active:makeActive});
+    // users 쓰기는 보안 규칙이 막는다. 서버가 등급을 확인하고,
+    // 마지막 관리자를 비활성화해 영구 잠금되는 것도 막아 준다.
+    await window._fbFn.call('setStaffActive')({ userId:id, active:makeActive });
     // 비활성화 대상이 어느 입주자의 팀장이면 안내 (결재 공백 방지)
     if(!makeActive){
       const asLeader=(S.allClients||S.clients).filter(c=>String(c.teamLeader)===String(id));
@@ -666,7 +667,9 @@ const PERM_LABELS={
   'settings.staff':'직원 등록/수정/삭제','settings.client':'입주자 관리','settings.account':'계좌 관리',
   'settings.fixed':'고정항목 관리','settings.archive':'연도 마감','settings.reset':'전체 초기화',
 };
-const ROLES=['입력자','담당자','팀장','센터장','관리자'];
+// 관리자는 역할이 아니라 users.isAdmin 플래그다 (직원 폼의 체크박스로 부여).
+// 4단계에서 이 목록은 등급표(ROLE_RANK)로 대체된다.
+const ROLES=['입력자','담당자','팀장','센터장'];
 
 export function renderPermissionPanel(){
   const container=document.getElementById('permission-panel-content');
@@ -786,15 +789,16 @@ export function switchCategorySubtab(subtab){
 // ─────────────────────────────────────────────
 // 회원가입 승인 (inline onclick에서 호출)
 // ─────────────────────────────────────────────
-window.approveStaff = async (docId) => {
-  const { doc, updateDoc } = fb();
-  const sel = document.getElementById('pending-role-' + docId);
+window.approveStaff = async (userId) => {
+  const sel = document.getElementById('pending-role-' + userId);
   const role = sel?.value || '입력자';
   try {
-    await updateDoc(doc(fdb(), COLS.USERS, docId), { approved: true, role });
+    // users 쓰기는 보안 규칙이 막는다. 서버가 호출자 등급을 확인하고 처리한다
+    // (예전에는 팀장이 신규 가입자를 센터장으로 승인할 수 있었다).
+    await window._fbFn.call('approveStaff')({ userId, role, isAdmin: false });
     toast(`승인 완료 — ${role} 권한으로 로그인할 수 있습니다.`, 'success');
     await refetchUsers(); renderManagement(); updateSignupBadge();
-  } catch(e) { toast('승인 오류: '+e.message, 'error'); }
+  } catch(e) { toast('승인 오류: '+(e.message||'다시 시도하세요.'), 'error'); }
 };
 
 // 설정 네비게이션의 회원가입 승인 대기 뱃지 갱신 (관리 권한자에게만 표시)

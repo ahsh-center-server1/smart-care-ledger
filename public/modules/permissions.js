@@ -27,7 +27,7 @@ import { COLS } from '../constants.js';
 
 export const DEFAULT_PERMISSIONS = {
   입력자: {
-    'nav.report': false, 'nav.settings': false, 'nav.staff': false,
+    'nav.report': false, 'nav.settings': false, 'nav.staff': false, 'client.view.all': false,
     'trx.view.all': false, 'trx.create': true, 'trx.edit': true,
     'trx.delete': true, 'trx.delete.bulk': false, 'trx.reorder': false,
     'trx.transfer': false, 'trx.category.edit': false, 'trx.csv': false,
@@ -40,7 +40,7 @@ export const DEFAULT_PERMISSIONS = {
     'settings.fixed': false, 'settings.archive': false, 'settings.reset': false,
   },
   담당자: {
-    'nav.report': true, 'nav.settings': true, 'nav.staff': false,
+    'nav.report': true, 'nav.settings': true, 'nav.staff': false, 'client.view.all': false,
     'trx.view.all': true, 'trx.create': true, 'trx.edit': true,
     'trx.delete': true, 'trx.delete.bulk': true, 'trx.reorder': true,
     'trx.transfer': true, 'trx.category.edit': true, 'trx.csv': true,
@@ -53,7 +53,7 @@ export const DEFAULT_PERMISSIONS = {
     'settings.fixed': true, 'settings.archive': false, 'settings.reset': false,
   },
   팀장: {
-    'nav.report': true, 'nav.settings': true, 'nav.staff': true,
+    'nav.report': true, 'nav.settings': true, 'nav.staff': true, 'client.view.all': true,
     'trx.view.all': true, 'trx.create': true, 'trx.edit': true,
     'trx.delete': true, 'trx.delete.bulk': true, 'trx.reorder': true,
     'trx.transfer': true, 'trx.category.edit': true, 'trx.csv': true,
@@ -66,7 +66,7 @@ export const DEFAULT_PERMISSIONS = {
     'settings.fixed': true, 'settings.archive': false, 'settings.reset': false,
   },
   센터장: {
-    'nav.report': true, 'nav.settings': true, 'nav.staff': true,
+    'nav.report': true, 'nav.settings': true, 'nav.staff': true, 'client.view.all': true,
     'trx.view.all': true, 'trx.create': true, 'trx.edit': true,
     'trx.delete': true, 'trx.delete.bulk': true, 'trx.reorder': true,
     'trx.transfer': true, 'trx.category.edit': true, 'trx.csv': true,
@@ -79,7 +79,7 @@ export const DEFAULT_PERMISSIONS = {
     'settings.fixed': true, 'settings.archive': true, 'settings.reset': false,
   },
   관리자: {
-    'nav.report': true, 'nav.settings': true, 'nav.staff': true,
+    'nav.report': true, 'nav.settings': true, 'nav.staff': true, 'client.view.all': true,
     'trx.view.all': true, 'trx.create': true, 'trx.edit': true,
     'trx.delete': true, 'trx.delete.bulk': true, 'trx.reorder': true,
     'trx.transfer': true, 'trx.category.edit': true, 'trx.csv': true,
@@ -129,6 +129,9 @@ export async function initPermissions() {
  * @returns {boolean}
  */
 export function can(key) {
+  // 관리자는 역할이 아니라 users.isAdmin 플래그다 (마이그레이션 후 role은 '센터장').
+  // 이 처리가 없으면 관리자 전용 키(settings.reset 등)가 전부 false가 된다.
+  if (S.user?.isAdmin === true) return true;
   const role = S.user?.role;
   if (!role) return false;
   return S.permissions?.[role]?.[key] ?? DEFAULT_PERMISSIONS[role]?.[key] ?? false;

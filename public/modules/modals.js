@@ -1003,24 +1003,40 @@ export function renderStaffForm(u){
   const isEdit=!!u;
   document.getElementById('modal-body').innerHTML=`
     <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">${isEdit?'직원 수정':'직원 등록'}</h3>
-    <input type="hidden" id="fs-id" value="${isEdit?u.id:'usr_'+Date.now()}">
+    <!-- 문서 ID는 로그인 아이디를 그대로 쓴다 (별도 usr_xxx 생성 없음) -->
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div><label class="label">이름</label><input type="text" id="fs-name" class="input" value="${isEdit?u.name||'':''}"></div>
       <div><label class="label">아이디</label><input type="text" id="fs-uid" class="input" value="${isEdit?u.userId||'':''}" ${isEdit?'readonly':''}></div>
       <div><label class="label">비밀번호</label><input type="password" id="fs-pw" class="input" placeholder="${isEdit?'변경 시만 입력':''}"></div>
-      <div><label class="label">역할</label><select id="fs-role" class="input" style="padding:8px 12px;"><option value="입력자"${isEdit&&u.role==='입력자'?' selected':''}>입력자 (수기입력 전용)</option><option value="담당자"${isEdit&&u.role==='담당자'?' selected':''}>담당자</option><option value="팀장"${isEdit&&u.role==='팀장'?' selected':''}>팀장</option><option value="센터장"${isEdit&&u.role==='센터장'?' selected':''}>센터장</option><option value="관리자"${isEdit&&u.role==='관리자'?' selected':''}>관리자</option></select></div>
-      <div><label class="label">팀</label><input type="text" id="fs-team" class="input" value="${isEdit?u.team||'':''}"></div>
+      <div><label class="label">역할</label><select id="fs-role" class="input" style="padding:8px 12px;"><option value="입력자"${isEdit&&u.role==='입력자'?' selected':''}>입력자 (수기입력 전용)</option><option value="담당자"${isEdit&&u.role==='담당자'?' selected':''}>담당자</option><option value="팀장"${isEdit&&u.role==='팀장'?' selected':''}>팀장</option><option value="센터장"${isEdit&&u.role==='센터장'?' selected':''}>센터장</option></select></div>
+      <div><label class="label">팀</label><input type="text" id="fs-team" class="input" value="${escAttr(isEdit?u.team||'':'')}"></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;padding:8px 0;">
+        <input type="checkbox" id="fs-admin" ${isEdit&&u.isAdmin===true?'checked':''} style="accent-color:var(--blue);width:18px;height:18px;">
+        관리자 권한 (권한 설정·전체 초기화)
+      </label>
       <button id="fs-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
     </div>`;
   document.getElementById('fs-save').addEventListener('click',async()=>{
-    const id=document.getElementById('fs-id').value;
+    const btn=document.getElementById('fs-save');
     const pw=document.getElementById('fs-pw').value;
-    const data={userId:document.getElementById('fs-uid').value,name:document.getElementById('fs-name').value,role:document.getElementById('fs-role').value,team:document.getElementById('fs-team').value};
-    if(pw)data.password=pw;
-    const{doc,setDoc}=fb();
-    // merge:true — 비밀번호 미입력 시 기존 값 유지, approved/active 등 기존 필드 보존
-    await setDoc(doc(fdb(),COLS.USERS,id),data,{merge:true});
-    toast('저장됨','success'); closeModal(); await refetchUsers(); renderManagement();
+    const payload={
+      userId: (document.getElementById('fs-uid').value||'').trim(),
+      name:   (document.getElementById('fs-name').value||'').trim(),
+      role:   document.getElementById('fs-role').value,
+      team:   (document.getElementById('fs-team').value||'').trim(),
+      isAdmin: document.getElementById('fs-admin')?.checked===true,
+    };
+    if(pw)payload.password=pw;
+    btn.disabled=true; btn.textContent='저장 중...';
+    try{
+      // users 쓰기는 보안 규칙이 막는다. 서버가 등급을 검증하고 비밀번호를 해시한다.
+      // 비밀번호 미입력 시 기존 값이 유지된다(merge).
+      const res=await window._fbFn.call('upsertStaff')(payload);
+      const fail=res.data?.results?.find(r=>!r.ok);
+      if(fail){toast('저장 실패: '+fail.error,'error');return;}
+      toast('저장됨','success'); closeModal(); await refetchUsers(); renderManagement();
+    }catch(e){ toast('저장 오류: '+(e.message||'다시 시도하세요.'),'error'); }
+    finally{ btn.disabled=false; btn.textContent='💾 저장 완료'; }
   });
 }
 
@@ -1132,7 +1148,8 @@ function parseStaffRows(rows){
   if(rows.length<2)return[];
   const h=rows[0].map(v=>String(v).trim());
   const idx={name:h.findIndex(v=>v.includes('이름')),userId:h.findIndex(v=>v.includes('아이디')),password:h.findIndex(v=>v.includes('비밀번호')||v.includes('패스워드')),role:h.findIndex(v=>v.includes('역할')),team:h.findIndex(v=>v.includes('팀'))};
-  const validRoles=['담당자','팀장','센터장','관리자','입력자'];
+  // 관리자는 역할이 아니라 users.isAdmin 플래그다 (직원 폼의 체크박스로 부여)
+  const validRoles=['입력자','담당자','팀장','센터장'];
   const existIds=new Set(S.users.map(u=>u.userId));
   const seenIds=new Set();
   return rows.slice(1).map((row,i)=>{
@@ -1175,9 +1192,19 @@ async function saveBulkStaff(parsed){
   btn.disabled=true; btn.textContent='저장 중...';
   try{
     const valid=parsed.filter(r=>r._errors.length===0);
-    const adds=valid.map(s=>({col:COLS.USERS,data:{userId:s.userId,name:s.name,password:s.password,role:s.role,team:s.team||'',approved:true}}));
-    await batchAddDocs(adds);
-    toast(`직원 ${valid.length}명 등록 완료`,'success',4000);
+    // users 쓰기는 보안 규칙이 막는다. 서버가 건별로 등급·아이디를 검증하고
+    // 비밀번호를 해시한다. 실패한 건은 결과에 사유가 담겨 온다.
+    const res=await window._fbFn.call('upsertStaff')({
+      staff: valid.map(v=>({userId:v.userId,name:v.name,password:v.password,role:v.role,team:v.team||''}))
+    });
+    const {okCount=0,failCount=0,results=[]}=res.data||{};
+    if(failCount){
+      const lines=results.filter(r=>!r.ok).map(r=>`${r.userId}: ${r.error}`).join('\n');
+      toast(`${okCount}명 등록, ${failCount}명 실패`,'error',6000);
+      console.warn('직원 일괄 등록 실패 내역:\n'+lines);
+    } else {
+      toast(`직원 ${okCount}명 등록 완료`,'success',4000);
+    }
     closeModal(); await refetchUsers(); renderManagement();
   }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
 }

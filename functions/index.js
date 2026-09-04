@@ -227,6 +227,145 @@ exports.approveStaff = onCall(async (request) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// upsertStaff — 직원 등록·수정 (관리자 화면에서 호출)
+//
+// users 컬렉션은 보안 규칙이 클라이언트 쓰기를 전면 차단하므로
+// 등록·수정·비밀번호 변경이 모두 이 함수를 거친다.
+// 호출자보다 높은 등급은 부여할 수 없다.
+// ─────────────────────────────────────────────────────────────
+exports.upsertStaff = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
+
+  const myRank = callerRank(auth);
+  if (myRank < 3) throw new HttpsError('permission-denied', '직원 관리 권한이 없습니다.');
+
+  const list = Array.isArray(request.data && request.data.staff)
+    ? request.data.staff
+    : [request.data || {}];
+  if (!list.length) throw new HttpsError('invalid-argument', '등록할 직원이 없습니다.');
+  if (list.length > 200) throw new HttpsError('invalid-argument', '한 번에 200명까지만 처리할 수 있습니다.');
+
+  const isAdminCaller = auth.token && auth.token.isAdmin === true;
+  const results = [];
+
+  for (const raw of list) {
+    const userId = String(raw.userId || '').trim();
+    const name = String(raw.name || '').trim();
+    const role = String(raw.role || '입력자').trim();
+    const team = String(raw.team || '').trim();
+    const password = raw.password ? String(raw.password) : '';
+    const wantAdmin = raw.isAdmin === true;
+
+    if (!validUserId(userId)) {
+      results.push({ userId, ok: false, error: '아이디는 영문·숫자·밑줄만 사용할 수 있습니다.' });
+      continue;
+    }
+    if (!name) {
+      results.push({ userId, ok: false, error: '이름이 비어 있습니다.' });
+      continue;
+    }
+    if (!VALID_ROLES.includes(role)) {
+      results.push({ userId, ok: false, error: `알 수 없는 역할: ${role}` });
+      continue;
+    }
+    if (rankOf(role) > myRank) {
+      results.push({ userId, ok: false, error: '본인보다 높은 등급은 부여할 수 없습니다.' });
+      continue;
+    }
+    if (wantAdmin && !isAdminCaller) {
+      results.push({ userId, ok: false, error: '관리자 권한은 관리자만 부여할 수 있습니다.' });
+      continue;
+    }
+    if (password && password.length < 8) {
+      results.push({ userId, ok: false, error: '비밀번호는 8자 이상이어야 합니다.' });
+      continue;
+    }
+
+    try {
+      const userRef = db.collection(USERS).doc(userId);
+      const existing = await userRef.get();
+
+      // 신규 등록은 비밀번호가 반드시 필요하다 (없으면 로그인할 수 없다)
+      if (!existing.exists && !password) {
+        results.push({ userId, ok: false, error: '신규 등록에는 비밀번호가 필요합니다.' });
+        continue;
+      }
+
+      // merge — approved·active 등 기존 필드를 보존한다
+      await userRef.set(
+        {
+          userId, name, role, team,
+          isAdmin: wantAdmin,
+          ...(existing.exists ? {} : { approved: true, active: true }),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      if (password) {
+        const record = await hashPassword(password);
+        await db.collection(SECRETS).doc(userId).set(
+          { ...record, failedCount: 0, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+          { merge: true }
+        );
+      }
+      results.push({ userId, ok: true, created: !existing.exists });
+    } catch (err) {
+      console.error(`[upsertStaff] ${userId} 처리 실패:`, err);
+      results.push({ userId, ok: false, error: '저장 중 오류가 발생했습니다.' });
+    }
+  }
+
+  const okCount = results.filter((r) => r.ok).length;
+  return { okCount, failCount: results.length - okCount, results };
+});
+
+// ─────────────────────────────────────────────────────────────
+// setStaffActive — 재직·퇴사 전환
+//
+// 마지막 관리자를 비활성화하면 권한 설정·전체 초기화가 영구히 불가능해지므로
+// 서버에서 막는다(로그인 자체가 차단되기 때문에 되돌릴 방법이 없다).
+// ─────────────────────────────────────────────────────────────
+exports.setStaffActive = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
+  if (callerRank(auth) < 3) {
+    throw new HttpsError('permission-denied', '직원 관리 권한이 없습니다.');
+  }
+
+  const d = request.data || {};
+  const userId = String(d.userId || '').trim();
+  const active = d.active === true;
+
+  if (!validUserId(userId)) throw new HttpsError('invalid-argument', '대상 아이디가 올바르지 않습니다.');
+  if (userId === auth.uid && !active) {
+    throw new HttpsError('failed-precondition', '본인 계정은 비활성화할 수 없습니다.');
+  }
+
+  const ref = db.collection(USERS).doc(userId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError('not-found', '해당 직원을 찾을 수 없습니다.');
+
+  // 마지막 관리자 보호
+  if (!active && snap.data().isAdmin === true) {
+    const admins = await db.collection(USERS).where('isAdmin', '==', true).get();
+    const activeAdmins = admins.docs.filter(
+      (x) => x.id !== userId && x.data().active !== false
+    );
+    if (!activeAdmins.length) {
+      throw new HttpsError(
+        'failed-precondition',
+        '마지막 관리자는 비활성화할 수 없습니다. 다른 직원에게 먼저 관리자 권한을 부여하세요.'
+      );
+    }
+  }
+
+  await ref.update({ active });
+  return { ok: true };
+});
+
+// ─────────────────────────────────────────────────────────────
 // changePassword — 본인 또는 관리자가 변경
 // ─────────────────────────────────────────────────────────────
 exports.changePassword = onCall(async (request) => {

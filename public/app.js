@@ -32,7 +32,7 @@ import { compressImage } from './services/image.js';
 import { uploadToStorage } from './services/storage.js';
 
 import * as Auth     from './modules/auth.js';
-import { initPermissions, can } from './modules/permissions.js';
+import { can } from './modules/permissions.js';
 import * as Core     from './modules/core.js';
 import * as Dash     from './modules/dashboard.js';
 import * as Trx      from './modules/transactions.js';
@@ -335,24 +335,23 @@ window.ExcelParser = ExcelParser;
 // ─────────────────────────────────────────────
 // Firebase 준비 훅 (index.html에서 호출)
 // ─────────────────────────────────────────────
-window.onFirebaseReady = async function() {
-  const saved = sessionStorage.getItem('scl_user');
-  if (saved) {
-    try {
-      S.user=JSON.parse(saved);
-      const { auth } = window._fbAuth || {};
-      if (auth && !auth.currentUser) {
-        // Firebase Auth 세션 없음 — 재로그인 필요
-        sessionStorage.removeItem('scl_user');
-        throw new Error('Firebase Auth session expired');
-      }
-      await initPermissions();
+window.onFirebaseReady = function() {
+  // 세션 복원은 Firebase Auth가 담당한다.
+  //
+  // 예전 구현은 sessionStorage의 JSON을 검증 없이 신뢰하면서, 정작 쓰지도 않는
+  // Firebase Auth 세션을 검사했다. signInWithCustomToken을 호출하는 곳이
+  // 없었으므로 auth.currentUser는 항상 null이고 조건이 언제나 참이 되어
+  // **새로고침하면 무조건 로그아웃**됐다.
+  Auth.watchAuthState(async (loggedIn) => {
+    if (loggedIn) {
       await Auth._enterApp();
-      return;
+    } else {
+      document.getElementById('login-view').style.display='flex';
+      document.getElementById('app-view').style.display='none';
+      const mv=document.getElementById('mobile-view');
+      if(mv)mv.style.display='none';
     }
-    catch(e) { sessionStorage.removeItem('scl_user'); }
-  }
-  document.getElementById('login-view').style.display='flex';
+  });
 };
 
 // fetchBaseData, isConfirmedLocked, loadTransactions, rebuildSelectors, changeView, switchRptSubtab
