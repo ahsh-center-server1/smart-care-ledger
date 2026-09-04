@@ -668,7 +668,12 @@
                 저장된 보고서
                 <span id="rpt-list-count" style="font-size:11px;font-weight:600;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:99px;padding:1px 8px;"></span>
               </button>
-              <button id="btn-rpt-list-refresh" style="font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;">↺ 새로고침</button>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;" title="기본은 올해와 작년만 불러옵니다. 그 이전 보고서를 보려면 켜세요.">
+                  <input type="checkbox" id="rpt-list-all-years" style="cursor:pointer;"> 전체 기간
+                </label>
+                <button id="btn-rpt-list-refresh" style="font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;">↺ 새로고침</button>
+              </div>
             </div>
             <div id="rpt-list" style="display:flex;flex-direction:column;gap:8px;"></div>
           </div>

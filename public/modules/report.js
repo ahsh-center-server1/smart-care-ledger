@@ -6,14 +6,15 @@
 'use strict';
 
 import { S } from '../state.js';
-import { COLS, CAT_COLORS, STATUS_LABELS, STATUS_CLASSES, cs } from '../constants.js';
-import { toast, showConfirm, showLoading, setText } from '../utils/ui.js';
+import { COLS, STATUS_LABELS, STATUS_CLASSES, cs } from '../constants.js';
+import { toast, showConfirm, showLoading, setText, makeDraggable } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { can, requiredRank, ROLE_RANK, ADMIN_RANK } from './permissions.js';
 import { calcAccountBalanceAsOf, sumIncomeExpense } from '../services/balance.js';
 import { planTransition, availableActions, actorContext, normalizeStatus } from './report-workflow.js';
 import { getImageUrl } from '../services/storage.js';
-import { getUnpaidMandatoryItems } from './modals.js';
+import { getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
+import { isConfirmedLocked } from './core.js';
 
 // 보고서 필수 고정항목 미납 배너
 function renderRptMandatoryBanner(clientId,year,month,trxList){
@@ -33,23 +34,39 @@ function renderRptMandatoryBanner(clientId,year,month,trxList){
 // ─────────────────────────────────────────────
 /**
  * 보고서/연간 통계용 거래 fetch.
- * 같은 입주자의 전체 거래가 이미 S.transactions에 로드되어 있으면 캐시 재사용.
- * 그렇지 않으면 fetch 후 S.transactions에 저장 (다음 호출 시 재사용 가능).
+ *
+ * **거래내역 탭의 캐시(S.transactions)를 건드리지 않는다.**
+ * 예전에는 여기서 S.transactions·S.activeClient·S.trxRange를 덮어써서,
+ * 보고서를 한 번 열면 거래내역 탭의 조회 범위가 조용히 'all'로 바뀌고
+ * 데이터가 다른 입주자 것으로 교체됐다. 사용자는 거래내역 탭으로 돌아왔을 때
+ * 자기가 보던 것과 다른 화면을 보게 된다.
+ *
+ * 대신 보고서 전용 캐시를 쓴다. 거래내역 탭이 마침 같은 입주자의 전체 이력을
+ * 들고 있으면 그것을 재사용하지만, 쓰지는 않는다.
  */
 async function getClientTrxAll(clientId) {
+  // 거래내역 탭이 이미 같은 입주자의 전체 이력을 갖고 있으면 그대로 쓴다(읽기 절약)
   if (S.activeClient === clientId
       && S.trxRange === 'all'
       && Array.isArray(S.transactions)
       && S.transactions.length) {
     return S.transactions;
   }
+  // 보고서 전용 캐시
+  if (S.rptTrxCache && S.rptTrxCache.clientId === clientId
+      && Array.isArray(S.rptTrxCache.rows)) {
+    return S.rptTrxCache.rows;
+  }
   const { getDocs, collection, query, where } = fb();
   const snap = await getDocs(query(collection(fdb(),COLS.TRANSACTIONS), where('clientId','==',clientId)));
   const trx = snap.docs.map(d => ({ id:d.id, ...d.data() }));
-  S.transactions = trx;
-  S.activeClient = clientId;
-  S.trxRange = 'all';
+  S.rptTrxCache = { clientId, rows: trx };
   return trx;
+}
+
+/** 거래가 바뀌면 보고서 캐시를 버린다 (다음 조회에서 다시 읽는다) */
+export function invalidateReportTrxCache(clientId) {
+  if (!clientId || S.rptTrxCache?.clientId === clientId) S.rptTrxCache = null;
 }
 
 // ─────────────────────────────────────────────
@@ -57,7 +74,7 @@ async function getClientTrxAll(clientId) {
 // ─────────────────────────────────────────────
 export function generateRuleBasedSummary(reportData) {
   const { year, month, trxList, summary } = reportData;
-  const { totalIn, totalOut, balance } = summary;
+  const { totalOut, balance } = summary;
   const catStats = summary.catStats || {};
   const fmt = n => Number(n).toLocaleString();
 
@@ -569,16 +586,9 @@ export function openBankStatementsForApproval(){
   if(!imgs.length){toast('해당 월 통장사진이 없습니다.','info');return;}
   // 기존 패널 제거
   document.getElementById('bank-float-panel')?.remove();
-  let imgIdx=0;
   const panel=document.createElement('div');
   panel.id='bank-float-panel';
   panel.style.cssText='position:fixed;right:16px;top:60px;width:400px;min-height:200px;max-height:90vh;z-index:9998;background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.25);display:flex;flex-direction:column;resize:both;overflow:hidden;border:1px solid var(--border);';
-  const renderImg=()=>{
-    const it=imgs[imgIdx];
-    const src=getImageUrl(it.url,'w800');
-    panel.querySelector('#bfp-img').src=src;
-    panel.querySelector('#bfp-label').textContent=`${it.label} (${imgIdx+1}/${imgs.length})`;
-  };
   panel.innerHTML=`
     <div id="bfp-header" style="padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);cursor:move;display:flex;align-items:center;gap:8px;user-select:none;">
       <span style="font-size:13px;font-weight:700;color:var(--text);flex:1;">📷 통장사진</span>
@@ -602,12 +612,8 @@ export function openBankStatementsForApproval(){
     panel.querySelector('#bfp-label').textContent=`${it.label} (${window._bfpIdx+1}/${window._bfpImgs.length})`;
   };
   panel.__renderImg();
-  // 드래그
-  const hdr=panel.querySelector('#bfp-header');
-  let ox=0,oy=0,dragging=false;
-  hdr.addEventListener('mousedown',e=>{dragging=true;ox=e.clientX-panel.offsetLeft;oy=e.clientY-panel.offsetTop;});
-  document.addEventListener('mousemove',e=>{if(!dragging)return;panel.style.left=(e.clientX-ox)+'px';panel.style.top=(e.clientY-oy)+'px';panel.style.right='auto';});
-  document.addEventListener('mouseup',()=>{dragging=false;});
+  // 드래그 — 누르고 있는 동안에만 문서에 리스너가 붙는다(누수 없음)
+  makeDraggable(panel, panel.querySelector('#bfp-header'));
 }
 
 export async function openBankStatementFromReport(clientId,year,month){
@@ -667,6 +673,8 @@ export async function saveComment(key){
       createdBy:String(S.user?.userId||''),createdByName:S.user?.name||'',[key]:val};
     const ref=await addDoc(collection(fdb(),COLS.REPORTS),data);
     S.reportData.report={id:ref.id,...data};
+    patchReportCache(S.reportData.report);
+    renderReportList();
   }
   toast('의견이 저장되었습니다.','success',2000);
 }
@@ -730,7 +738,7 @@ export function renderApproval(report,curStatus){
   const track=document.getElementById('rpt-track-inner'); track.innerHTML='';
   const ORDER=['','draft','submitted','team_approved','confirmed'], curIdx=ORDER.indexOf(curStatus);
   [{key:'submitted',label:'제출',icon:'✍️',name:report?.submittedByName||'',date:report?.submittedAt||''},{key:'team_approved',label:'팀장 결재',icon:'✔️',name:report?.teamApprovedByName||'',date:report?.teamApprovedAt||''},{key:'confirmed',label:'센터장 최종',icon:'🏁',name:report?.centerApprovedByName||'',date:report?.centerApprovedAt||''}].forEach((s,i,arr)=>{
-    const done=curIdx>=ORDER.indexOf(s.key), dStr=s.date?new Date(s.date).toLocaleDateString('ko-KR',{month:'2-digit',day:'2-digit'}):'';
+    const done=curIdx>=ORDER.indexOf(s.key);
     const el=document.createElement('div'); el.style.cssText='display:flex;align-items:center;';
     el.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;"><div style="width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;background:'+(done?'var(--blue)':'#f1f5f9')+';color:'+(done?'#fff':'#94a3b8')+';">'+(done?s.icon:i+1)+'</div><div style="font-size:11px;font-weight:700;margin-top:5px;color:'+(done?'var(--blue)':'#94a3b8')+';">'+s.label+'</div>'+(s.name&&done?'<div style="font-size:10px;color:#94a3b8;">'+s.name+'</div>':'')+'</div>';
     track.appendChild(el);
@@ -907,7 +915,14 @@ export async function applyReportTransition(action,extraSet){
     }
     const isReject=action==='reject';
     toast(TRANSITION_TOAST[action]||'처리되었습니다.',isReject?'info':'success',isReject?4000:3000);
-    await loadReport(); loadReportList();
+    // 바뀐 것은 이 보고서 한 건이다. 목록 전체를 다시 읽지 않는다.
+    // 지운 도장은 캐시에서도 비운다 — 그러지 않으면 회수한 뒤에도 목록의
+    // '제출자' 칸에 이전 이름이 남는다.
+    const cachePatch={...update};
+    for(const f of plan.clear)cachePatch[f]='';
+    patchReportCache({...(S.reportData.report||{}),clientId,year,month,...cachePatch,
+      id:report?.id||S.reportData.report?.id});
+    await loadReport(); renderReportList();
     return true;
   }catch(e){
     toast('처리 실패: '+e.message,'error',4000);
@@ -967,11 +982,13 @@ export async function doDeleteReport(){
   if(!can('report.delete')){toast('보고서 삭제 권한이 없습니다.','error');return false;}
   if(!S.reportData?.report?.id){toast('저장된 보고서가 없습니다.','error');return false;}
   const{doc,deleteDoc}=fb();
-  await deleteDoc(doc(fdb(),COLS.REPORTS,S.reportData.report.id));
+  const deletedId=S.reportData.report.id;
+  await deleteDoc(doc(fdb(),COLS.REPORTS,deletedId));
   S.reportData.report=null;
   toast('보고서가 삭제되었습니다.','success');
   document.getElementById('report-area').style.display='none';
-  loadReportList();
+  dropReportFromCache(deletedId);
+  renderReportList();
   return true;
 }
 
@@ -1028,14 +1045,74 @@ export async function refreshPendingApprovalBadge(){
   }
 }
 
-export async function loadReportList(){
-  const{getDocs,collection}=fb();
-  const snap=await getDocs(collection(fdb(),COLS.REPORTS));
-  const list=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.year*100+b.month)-(a.year*100+a.month));
-  // confirmed 월 캐시 갱신 (결재 완료 즉시 반영)
-  S.confirmedMonths=new Set(list.filter(r=>r.status==='confirmed').map(r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`));
+/** confirmedMonths 키 */
+const monthKey=r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`;
+
+/**
+ * 보고서 하나가 바뀌었을 때 캐시를 제자리에서 고친다.
+ *
+ * 예전에는 결재 버튼을 누를 때마다 `reports` 컬렉션 **전체**를 다시 읽었다.
+ * 입주자 30명 × 36개월이면 클릭 한 번에 약 1,080문서다. 바뀐 것은 한 건인데.
+ */
+export function patchReportCache(report){
+  if(!report?.id)return;
+  if(!Array.isArray(S.reportList))S.reportList=[];
+  const i=S.reportList.findIndex(r=>r.id===report.id);
+  if(i>=0)S.reportList[i]={...S.reportList[i],...report};
+  else S.reportList.push({...report});
+  S.reportList.sort((a,b)=>(b.year*100+b.month)-(a.year*100+a.month));
+  // 결재 완료 월 잠금도 함께 유지한다.
+  // ⚠️ 목록에서 통째로 다시 만들면 안 된다 — 목록은 최근 연도만 담으므로
+  //    예전 연도의 잠금이 통째로 풀린다.
+  if(!S.confirmedMonths)S.confirmedMonths=new Set();
+  if(report.status==='confirmed')S.confirmedMonths.add(monthKey(report));
+  else S.confirmedMonths.delete(monthKey(report));
+}
+
+/** 보고서가 삭제되면 캐시에서도 뺀다 */
+export function dropReportFromCache(reportId){
+  if(!Array.isArray(S.reportList))return;
+  const r=S.reportList.find(x=>x.id===reportId);
+  if(r)S.confirmedMonths?.delete(monthKey(r));
+  S.reportList=S.reportList.filter(x=>x.id!==reportId);
+}
+
+/** 목록에 담을 최소 연도 — 기본은 작년부터 (그 이전은 "전체 기간"으로 조회) */
+export function reportListMinYear(){
+  return S.rptListAllYears ? 0 : new Date().getFullYear()-1;
+}
+
+/**
+ * 보고서 목록을 불러온다.
+ *
+ * @param {Object|boolean} [opts] `{force:true}`(또는 true)면 캐시를 무시하고 다시 읽는다.
+ *
+ * 캐시가 있으면 읽지 않고 그리기만 한다. 결재 동작은 바뀐 한 건만
+ * patchReportCache로 고치므로, 결재할 때마다 전체를 다시 읽던 비용이 사라진다.
+ */
+export async function loadReportList(opts){
+  const force=opts===true||(opts&&opts.force);
+  if(!force&&Array.isArray(S.reportList)){renderReportList();return;}
+  try{
+    const{getDocs,collection,query,where}=fb();
+    const minYear=reportListMinYear();
+    // 연도 하나에만 부등호를 걸므로 복합 인덱스가 필요 없다
+    const q=minYear>0
+      ? query(collection(fdb(),COLS.REPORTS),where('year','>=',minYear))
+      : collection(fdb(),COLS.REPORTS);
+    const snap=await getDocs(q);
+    S.reportList=snap.docs.map(d=>({id:d.id,...d.data()}))
+      .sort((a,b)=>(b.year*100+b.month)-(a.year*100+a.month));
+  }catch(e){
+    toast('보고서 목록 로드 실패: '+e.message,'error');
+    if(!Array.isArray(S.reportList))S.reportList=[];
+  }
+  renderReportList();
+}
+
+export function renderReportList(){
+  const list=S.reportList||[];
   const el=document.getElementById('rpt-list'); if(!el)return;
-  const userId=String(S.user?.userId||'');
   const pendingEl=document.getElementById('rpt-pending-list');
   if(pendingEl){
     const pending=filterPendingForUser(list);

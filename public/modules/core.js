@@ -163,8 +163,16 @@ export function isConfirmedLocked(clientId, dateStr){
  * @param {Object} [opts]
  * @param {'month'|'all'|{start:string,end:string}} [opts.range='month'] - 조회 범위
  */
+/**
+ * 마지막으로 시작된 거래 조회의 일련번호.
+ * 재진입 가드가 없어서, 입주자를 빠르게 두 번 바꾸면 **늦게 끝난 응답이 이겼다.**
+ * 화면에는 방금 고른 입주자가 표시되는데 표에는 이전 입주자의 거래가 남는다.
+ */
+let trxLoadSeq = 0;
+
 export async function loadTransactions(clientId, opts) {
   if (!clientId) return;
+  const mySeq = ++trxLoadSeq;
   showLoading(true);
   try {
     const { getDocs, collection, query, where } = fb();
@@ -199,6 +207,8 @@ export async function loadTransactions(clientId, opts) {
                 where('date','<=',ymEnd));
     }
     const snap = await getDocs(q);
+    // 내가 시작한 조회가 더 이상 최신이 아니면 결과를 버린다
+    if (mySeq !== trxLoadSeq) return;
     const allTrx = snap.docs.map(d=>({id:d.id,...d.data()}));
     S.transactions = allTrx.sort((a,b)=>{
       const oA=a.sortOrder!=null?a.sortOrder:99999;
@@ -211,9 +221,14 @@ export async function loadTransactions(clientId, opts) {
     S.activeClient=clientId; S.trxRange=range; S.page=1; S.sortKey='date'; S.sortDir='asc';
     Trx.rebuildAccountFilter();
     Trx.applyFilters();
+    // 거래가 다시 로드됐으니 보고서 전용 캐시는 낡았다
+    Rpt.invalidateReportTrxCache(clientId);
     Rpt.syncReportTrxList();
-  } catch(e) { toast('거래 로드 실패: '+e.message,'error'); }
-  showLoading(false);
+  } catch(e) {
+    if (mySeq === trxLoadSeq) toast('거래 로드 실패: '+e.message,'error');
+  }
+  // 뒤늦게 끝난 조회가 로딩 표시를 꺼서 진행 중인 조회를 가리지 않도록
+  if (mySeq === trxLoadSeq) showLoading(false);
 }
 
 export function rebuildSelectors() {

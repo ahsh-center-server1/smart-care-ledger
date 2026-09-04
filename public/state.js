@@ -17,6 +17,12 @@ export const S = {
   rptSortKey: 'date', rptSortDir: 'asc', // 보고서 거래내역 정렬
   excelFile: null, excelMonth: '', excelRawRows: [], // 엑셀 업로드 임시 상태(원본 파일/미리보기)
   excelSkipped: [],  // 파싱에서 제외된 행과 이유 (조용한 삭제를 없애기 위해 화면에 표시)
+  // 보고서 목록 캐시 — 결재할 때마다 reports 컬렉션 전체를 다시 읽지 않기 위한 것.
+  // null이면 아직 안 읽었다는 뜻(빈 배열과 구별한다).
+  reportList: null,
+  rptListAllYears: false,   // true면 전체 기간, 기본은 작년부터
+  // 보고서 전용 거래 캐시. 거래내역 탭의 S.transactions와 섞이면 안 된다.
+  rptTrxCache: null,
   page: 1, pageSize: 100,
   trxViewMode: 'list', // 'list' | 'calendar'
   calendarYM: '',      // 달력뷰 표시 연월 (YYYY-MM, 비면 filteredTrx 기준)

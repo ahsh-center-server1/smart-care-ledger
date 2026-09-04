@@ -2,9 +2,14 @@
   "name": "smart-care-ledger",
   "private": true,
   "scripts": {
-    "lint": "node lint.cjs",
+    "lint": "eslint .",
     "test": "node --test test/*.test.mjs",
-    "check": "npm run lint && npm test"
+    "check": "npm run lint && npm test",
+    "lint:syntax": "node lint.cjs"
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "globals": "^17.12.0"
+  }
 }

@@ -225,7 +225,6 @@ export function parseSheetRows(rows, categories = [], opts = {}) {
   }
   if (startRow === -1) return out;
   out.bank = bank;
-  const cfg = configs[bank];
 
   // 2) 데이터 행
   const note = (i, reason, row) => {

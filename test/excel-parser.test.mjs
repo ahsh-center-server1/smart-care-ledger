@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BANK_CONFIGS, NOISE_WORDS,
+  BANK_CONFIGS,
   toNum, toNumSigned, fixDate, fixReadableDate, cleanDesc,
   detectConfig, parseSheetRows, decodeCsvBytes, isHtmlBytes, parseSmsBody,
 } from '../public/services/excel-parser.js';

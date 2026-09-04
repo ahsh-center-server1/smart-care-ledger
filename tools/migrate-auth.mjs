@@ -20,7 +20,6 @@
  *   node tools/migrate-auth.mjs --apply    # 실제 반영
  */
 
-import { readFileSync } from 'node:fs';
 import admin from 'firebase-admin';
 import { createRequire } from 'node:module';
 

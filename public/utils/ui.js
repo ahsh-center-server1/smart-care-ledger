@@ -148,3 +148,37 @@ export function emptyState(icon, message, ctaText, ctaAction) {
   html += '</div>';
   return html;
 }
+
+/**
+ * 떠 있는 패널을 드래그로 옮길 수 있게 한다.
+ *
+ * 왜 헬퍼로 뺐는가
+ *   영수증·통장 미리보기가 각자 `document`에 mousemove/mouseup 리스너를
+ *   **열 때마다 두 개씩** 붙였고, 닫기는 패널 엘리먼트만 지웠다.
+ *   영수증을 50번 열면 살아 있는 핸들러 100개가 이미 제거된 DOM을 붙잡고 있다.
+ *
+ *   여기서는 **누르고 있는 동안에만** 문서에 리스너를 건다. 손을 떼면 사라지므로
+ *   따로 정리할 것이 없고, 패널을 어떻게 닫든 누수가 생기지 않는다.
+ */
+export function makeDraggable(panel, handle) {
+  if (!panel || !handle) return;
+  let ox = 0, oy = 0;
+  const onMove = (e) => {
+    panel.style.left = (e.clientX - ox) + 'px';
+    panel.style.top = (e.clientY - oy) + 'px';
+    panel.style.right = 'auto';
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    handle.style.cursor = 'grab';
+  };
+  handle.addEventListener('mousedown', (e) => {
+    ox = e.clientX - panel.offsetLeft;
+    oy = e.clientY - panel.offsetTop;
+    handle.style.cursor = 'grabbing';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  });
+}

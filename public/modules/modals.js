@@ -6,11 +6,11 @@
 'use strict';
 
 import { S } from '../state.js';
-import { COLS, CAT_COLORS, cs } from '../constants.js';
-import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.js';
+import { COLS, cs } from '../constants.js';
+import { toast, showConfirm, escAttr, makeDraggable } from '../utils/ui.js';
 import { fb, fdb, batchAddDocs } from '../services/firestore.js';
 import { uploadToStorage, uploadImageWithThumb, uploadExcelOriginal, deleteFromStorage, deleteManyFromStorage, getImageUrl } from '../services/storage.js';
-import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts, isConfirmedLocked } from './core.js';
+import { loadTransactions, refetchUsers, refetchClients, refetchAccounts, isConfirmedLocked } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
 import { can } from './permissions.js';
@@ -771,12 +771,8 @@ export function openReceiptModal(url, trxId, opts){
     const img=panel.querySelector('#rfp-img'), loading=panel.querySelector('#rfp-loading');
     if(img&&loading){img.onload=()=>{loading.style.display='none';img.style.display='block';};img.onerror=()=>{loading.style.display='none';};}
   }
-  // 드래그 이동
-  const handle=panel.querySelector('#rfp-drag-handle');
-  let ox=0,oy=0,dragging=false;
-  handle.addEventListener('mousedown',e=>{dragging=true;ox=e.clientX-panel.offsetLeft;oy=e.clientY-panel.offsetTop;handle.style.cursor='grabbing';e.preventDefault();});
-  document.addEventListener('mousemove',e=>{if(!dragging)return;panel.style.left=(e.clientX-ox)+'px';panel.style.top=(e.clientY-oy)+'px';panel.style.right='auto';});
-  document.addEventListener('mouseup',()=>{dragging=false;handle.style.cursor='grab';});
+  // 드래그 이동 — 누르고 있는 동안에만 문서에 리스너가 붙는다(누수 없음)
+  makeDraggable(panel, panel.querySelector('#rfp-drag-handle'));
 }
 export function closeReceiptModal(){
   const p=document.getElementById('receipt-float-panel');

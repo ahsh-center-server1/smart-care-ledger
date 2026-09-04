@@ -203,3 +203,101 @@ test('parser-config.js는 ES 모듈이고 파서가 실제로 import한다', () 
   const app = src('public/app.js');
   assert.ok(!app.includes('_defaultConfig'), 'app.js에 설정 복제본이 남아 있습니다');
 });
+
+// ─────────────────────────────────────────────
+// 리스너 누수 (7단계)
+// ─────────────────────────────────────────────
+test('드래그 리스너는 손을 뗄 때 문서에서 제거된다', () => {
+  // 영수증·통장 미리보기가 열 때마다 document에 mousemove/mouseup을 두 개씩 붙이고
+  // 닫기는 패널 엘리먼트만 지웠다. 50번 열면 살아 있는 핸들러 100개가
+  // 이미 제거된 DOM을 붙잡고 있다.
+  const body = bodyOf(src('public/utils/ui.js'), 'export function makeDraggable(');
+  assert.ok(body.includes("removeEventListener('mousemove'"), 'mousemove를 제거하지 않습니다');
+  assert.ok(body.includes("removeEventListener('mouseup'"), 'mouseup을 제거하지 않습니다');
+});
+
+test('떠 있는 패널은 모두 공용 드래그 헬퍼를 쓴다', () => {
+  // 각자 구현하면 각자 누수한다
+  for (const f of ['public/modules/modals.js', 'public/modules/report.js']) {
+    const text = src(f);
+    assert.ok(text.includes('makeDraggable('), `${f}가 공용 헬퍼를 쓰지 않습니다`);
+    assert.ok(!/document\.addEventListener\('mousemove'/.test(text),
+      `${f}에 문서 전역 mousemove가 직접 붙어 있습니다`);
+  }
+});
+
+test('설정 탭 버튼은 중복 바인딩되지 않는다', () => {
+  // loadSettings()가 부를 때마다 실행되므로 핸들러가 쌓인다
+  const body = bodyOf(src('public/modules/settings.js'), 'export function initSettingsTabs(){');
+  assert.ok(body.includes('dataset.bound'), '중복 바인딩 가드가 없습니다');
+});
+
+// ─────────────────────────────────────────────
+// 읽기 비용 (7단계)
+// ─────────────────────────────────────────────
+test('결재할 때마다 보고서 목록 전체를 다시 읽지 않는다', () => {
+  // 입주자 30명 × 36개월이면 클릭 한 번에 약 1,080문서였다. 바뀐 것은 한 건인데.
+  const body = bodyOf(src('public/modules/report.js'), 'export async function applyReportTransition(');
+  assert.ok(body.includes('patchReportCache'), '바뀐 한 건만 고치지 않습니다');
+  assert.ok(!/\bloadReportList\(/.test(body), '전이 뒤에 목록 전체를 다시 읽습니다');
+});
+
+test('보고서 목록은 캐시가 있으면 다시 읽지 않는다', () => {
+  const body = bodyOf(src('public/modules/report.js'), 'export async function loadReportList(');
+  assert.ok(/force/.test(body), '강제 재조회 구분이 없습니다');
+  assert.ok(body.includes('S.reportList'), '캐시를 쓰지 않습니다');
+});
+
+test('결재 완료 월 잠금을 연도 제한된 목록에서 다시 만들지 않는다', () => {
+  // 목록은 최근 연도만 담는다. 그것으로 confirmedMonths를 통째로 만들면
+  // 예전 연도의 잠금이 전부 풀려 결재 끝난 달이 다시 편집 가능해진다.
+  const text = src('public/modules/report.js');
+  assert.ok(!/S\.confirmedMonths\s*=\s*new Set\(\s*list/.test(text),
+    '목록에서 confirmedMonths를 통째로 다시 만들고 있습니다');
+});
+
+test('보고서 거래 캐시가 거래내역 탭 캐시를 덮어쓰지 않는다', () => {
+  // 보고서를 한 번 열면 거래내역 탭의 조회 범위가 조용히 'all'로 바뀌고
+  // 데이터가 다른 입주자 것으로 교체됐다.
+  const body = bodyOf(src('public/modules/report.js'), 'async function getClientTrxAll(');
+  // 비교(===)가 아니라 **대입**만 잡는다
+  assert.ok(!/S\.transactions\s*=(?!=)/.test(body), '아직 거래내역 탭 캐시에 씁니다');
+  assert.ok(!/S\.trxRange\s*=(?!=)/.test(body), '아직 거래내역 탭 조회 범위를 바꿉니다');
+  assert.ok(!/S\.activeClient\s*=(?!=)/.test(body), '아직 거래내역 탭의 선택 입주자를 바꿉니다');
+  assert.ok(body.includes('S.rptTrxCache'), '보고서 전용 캐시가 없습니다');
+});
+
+test('거래 조회에 재진입 가드가 있다', () => {
+  // 입주자를 빠르게 두 번 바꾸면 늦게 끝난 응답이 이겼다
+  const body = bodyOf(src('public/modules/core.js'), 'export async function loadTransactions(');
+  assert.ok(body.includes('trxLoadSeq'), '재진입 가드가 없습니다');
+  assert.ok(/mySeq\s*!==\s*trxLoadSeq/.test(body), '오래된 응답을 버리지 않습니다');
+});
+
+// ─────────────────────────────────────────────
+// 배포 위생
+// ─────────────────────────────────────────────
+test('HTML·JS에 캐시 무효화 헤더가 있다', () => {
+  // 없으면 배포 후 최대 1시간 동안 새 HTML과 낡은 모듈 JS가 섞인다
+  const cfg = JSON.parse(src('firebase.json'));
+  const headers = cfg.hosting.headers || [];
+  const has = (src_) => headers.some(h => h.source === src_
+    && h.headers.some(x => x.key === 'Cache-Control' && /no-cache/.test(x.value)));
+  assert.ok(has('**/*.js'), 'JS에 no-cache가 없습니다');
+  assert.ok(has('/index.html'), 'index.html에 no-cache가 없습니다');
+  assert.ok(has('/sw.js'), '서비스 워커에 no-cache가 없습니다');
+});
+
+test('lint은 문법 검사가 아니라 ESLint다', () => {
+  const pkg = JSON.parse(src('package.json'));
+  assert.match(pkg.scripts.lint, /eslint/, 'lint가 여전히 문법 검사입니다');
+  assert.ok(pkg.devDependencies?.eslint, 'eslint가 devDependency에 없습니다');
+});
+
+test('쓰이지 않는 Firestore 래퍼가 되살아나지 않는다', () => {
+  // 범용 CRUD 6개 + 컬렉션별 24개, 모두 호출부가 0건이었다
+  const text = src('public/services/firestore.js');
+  for (const dead of ['function getAll(', 'function fetchUsers(', 'function saveTransaction(']) {
+    assert.ok(!text.includes(dead), `${dead} 가 다시 생겼습니다`);
+  }
+});

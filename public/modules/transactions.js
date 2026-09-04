@@ -6,13 +6,13 @@
 'use strict';
 
 import { S } from '../state.js';
-import { COLS, CAT_COLORS, cs } from '../constants.js';
-import { toast, toastAction, showConfirm, showLoading, setText, escAttr, emptyState } from '../utils/ui.js';
+import { COLS, cs } from '../constants.js';
+import { toast, toastAction, showConfirm, escAttr, emptyState } from '../utils/ui.js';
 import { fb, fdb, batchDeleteDocs, batchUpdateDocs } from '../services/firestore.js';
 import { calcAccountBalance } from '../services/balance.js';
 import { deleteFromStorage } from '../services/storage.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
-import { openModal, getUnpaidMandatoryItems } from './modals.js';
+import { openModal, getUnpaidMandatoryItems, openReceiptModal, openReceiptUpload } from './modals.js';
 import { can } from './permissions.js';
 
 // 필수 고정항목 미납 배너 렌더 (당월 기준)
@@ -67,8 +67,35 @@ export function rebuildAccountFilter(){
   if(accs.some(a=>a.id===prev))sel.value=prev; else sel.value='';
 }
 
+/**
+ * 페이지 번호를 결과 범위 안으로 당긴다.
+ *
+ * 이 보정이 없어서, 5페이지를 보다가 검색어로 결과를 3건으로 좁히면
+ * slice(400,3)이 되어 빈 표가 뜨고 카운터는 "총 3건 (401–3)"이 됐다.
+ * 페이지 버튼도 사라져서(pages<=1) 1페이지로 돌아갈 방법이 없었다.
+ */
+export function clampPage(page, totalItems, pageSize) {
+  const size = Number(pageSize) > 0 ? Number(pageSize) : 100;
+  const pages = Math.max(1, Math.ceil(Math.max(0, Number(totalItems) || 0) / size));
+  const p = Math.floor(Number(page));
+  if (!Number.isFinite(p) || p < 1) return 1;
+  return Math.min(p, pages);
+}
+
 // ─────────────────────────────────────────────
-export function applyFilters() {
+/**
+ * 필터를 다시 적용한다.
+ *
+ * @param {Object} [opts]
+ * @param {boolean} [opts.resetPage] 필터 조건이 바뀐 호출이면 true — 1페이지로 돌아간다.
+ *
+ * 페이지 범위는 opts와 무관하게 **항상 보정한다.** 예전에는 보정이 없어서,
+ * 5페이지를 보다가 검색어로 결과를 3건으로 좁히면 slice(400,3)이 되어
+ * 빈 표가 뜨고 카운터는 "총 3건 (401–3)"이 됐다. 페이지 버튼도 사라져서
+ * (pages<=1) **1페이지로 돌아갈 방법이 없었다.**
+ */
+export function applyFilters(opts) {
+  if (opts && opts.resetPage) S.page = 1;
   const kw=(document.getElementById('h-search')?.value||'').toLowerCase();
   const sd=document.getElementById('h-start')?.value||'';
   const ed=document.getElementById('h-end')?.value||'';
@@ -108,6 +135,7 @@ export function applyFilters() {
     vA=String(vA||''); vB=String(vB||'');
     if(vA<vB)return dir==='asc'?-1:1; if(vA>vB)return dir==='asc'?1:-1; return 0;
   });
+  S.page=clampPage(S.page,S.filteredTrx.length,S.pageSize);
   renderHistoryTable(); renderPagination();
   renderTrxMandatoryBanner();
 }
@@ -243,7 +271,7 @@ export function closeCatDropdowns(){document.querySelectorAll('.cat-dd.show').fo
 
 // 달력형 뷰
 export function renderCalendarView(){
-  const tbody=document.getElementById('h-body'), ce=document.getElementById('h-count');
+  const ce=document.getElementById('h-count');
   // calendarYM 없으면 첫 거래 기준으로 초기화 (S.transactions 전체 기준)
   if(!S.calendarYM){
     const ref=((S.transactions[0]||S.filteredTrx[0])?.date||new Date().toISOString().substring(0,7)+'-01');
@@ -350,6 +378,7 @@ export async function saveCatChange(trxId, newCat, chipEl) {
 export function renderPagination(){
   const el=document.getElementById('h-pages'); if(!el)return;
   const pages=Math.ceil(S.filteredTrx.length/S.pageSize);
+  S.page=clampPage(S.page,S.filteredTrx.length,S.pageSize);
   if(pages<=1){el.innerHTML='';return;} el.innerHTML='';
   const cur=S.page;
   const go=p=>{
@@ -620,35 +649,67 @@ export function moveTrxRow(id,dir){
   reorderTrx(id,S.filteredTrx[target].id);
 }
 
-// Phase 2 최적화: 배치 업데이트 사용
+/** 순서를 직접 바꿀 수 있는 정렬 상태인가 */
+export function canReorderNow(){
+  return S.sortKey==='sortOrder'||S.sortKey==='date';
+}
+
+/**
+ * 드래그/버튼으로 거래 순서를 바꾼다.
+ *
+ * 재정렬은 **현재 화면 순서를 그대로 sortOrder에 새겨 넣는 작업**이다.
+ * 그래서 금액순이나 분류순으로 보고 있을 때 한 행을 옮기면 그 페이지 전체가
+ * 금액순으로 **영구 저장**됐다. 사용자는 한 줄을 옮겼다고 생각하지만
+ * 실제로는 그 페이지의 원래 순서가 전부 사라진다.
+ *
+ * 이제 sortOrder(또는 그와 사실상 같은 날짜순)로 보고 있을 때만 허용한다.
+ */
 export async function reorderTrx(fromId,toId){
   if(!can('trx.reorder')){toast('순서 변경 권한이 없습니다.','error');return;}
+  if(!canReorderNow()){
+    toast('순서를 바꾸려면 날짜순으로 정렬한 상태여야 합니다.\n'
+      +'지금 정렬 상태에서 옮기면 이 페이지 전체가 그 순서로 저장됩니다.','error',5000);
+    return;
+  }
   if(fromId===toId)return;
   const fromIdx=S.filteredTrx.findIndex(x=>x.id===fromId);
   const toIdx  =S.filteredTrx.findIndex(x=>x.id===toId);
   if(fromIdx<0||toIdx<0)return;
-  const movedItem=S.filteredTrx[fromIdx];
-  if(movedItem&&isConfirmedLocked(movedItem.clientId,movedItem.date)){toast('최종 결재 완료된 월의 거래는 순서를 변경할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   const arr=[...S.filteredTrx];
   const [moved]=arr.splice(fromIdx,1);
   arr.splice(toIdx,0,moved);
   const base=(S.page-1)*S.pageSize;
   const pageItems=arr.slice(base,base+S.pageSize);
-  // 배치 업데이트할 항목 수집
-  const toUpdate=[];
+
+  // 번호가 바뀌는 행을 먼저 모은다
+  const changed=[];
   for(let i=0;i<pageItems.length;i++){
     const t=pageItems[i];
     const newOrder=base+i;
-    if(t.sortOrder!==newOrder){
-      t.sortOrder=newOrder;
-      toUpdate.push({col:COLS.TRANSACTIONS,docId:t.id,data:{sortOrder:newOrder}});
-      const orig=S.transactions.find(x=>x.id===t.id);
-      if(orig)orig.sortOrder=newOrder;
-    }
+    if(t.sortOrder!==newOrder)changed.push({t,newOrder});
   }
-  // 배치 업데이트 실행 (순차 호출 대신 1회 배치)
-  if(toUpdate.length)await batchUpdateDocs(toUpdate);
+  if(!changed.length)return;
+
+  // 옮긴 행만이 아니라 **번호가 바뀌는 모든 행**의 결재 잠금을 확인한다.
+  // 예전에는 옮긴 행만 확인해서, 결재 완료된 달의 거래가 같은 페이지에 있으면
+  // 그 행의 sortOrder가 말없이 덮어써졌다.
+  const locked=changed.filter(({t})=>isConfirmedLocked(t.clientId,t.date));
+  if(locked.length){
+    toast(`최종 결재 완료된 월의 거래 ${locked.length}건이 이 페이지에 있어 순서를 바꿀 수 없습니다. `
+      +'(센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error',6000);
+    return;
+  }
+
+  const toUpdate=changed.map(({t,newOrder})=>{
+    t.sortOrder=newOrder;
+    const orig=S.transactions.find(x=>x.id===t.id);
+    if(orig)orig.sortOrder=newOrder;
+    return {col:COLS.TRANSACTIONS,docId:t.id,data:{sortOrder:newOrder}};
+  });
+  await batchUpdateDocs(toUpdate);
   S.filteredTrx=arr;
-  renderHistoryTable(); renderPagination();
+  // 재정렬 뒤에 applyFilters를 부르지 않으면, 다음 필터 입력·저장 때
+  // 정렬이 다시 적용되면서 방금 바꾼 순서가 원래대로 돌아간다.
+  applyFilters();
   toast('순서가 저장되었습니다.','success',1500);
 }

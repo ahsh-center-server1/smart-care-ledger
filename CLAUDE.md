@@ -314,10 +314,12 @@ HANA_BANK: {
 
 ## 11. 코드 작성 규칙
 
-1. **함수 중복 절대 금지** — 수정 전 `grep -n "function 함수명"` 확인
+1. **함수 중복 절대 금지** — ESLint `no-redeclare`/`no-func-assign`이 잡아준다
 2. **괄호 균형 항상 검증** — `{ = }` `( = )` `[ = ]`
 3. **문자열 내 실제 줄바꿈 금지** — `\n` 이스케이프 사용
-4. **수정 후 `node --check` 실행** — 문법 오류 확인
+4. **수정 후 `npm run check` 실행** — ESLint + 테스트 167개
+   - `onclick="fn(...)"`로 부르는 함수는 `app.js`의 전역 등록 목록에도 넣어야 한다
+     (빠뜨리면 `test/globals.test.mjs`가 실패한다)
 5. **인덱스 기반 교체 시 주의** — 파일 크기 확인 후 진행
 6. **패치 방식 권장** — 전체 파일 재작성보다 정밀 패치
 
@@ -348,7 +350,7 @@ https://smart-care-ledger.web.app
 
 ### 배포 체크리스트
 - [ ] 로컬 테스트 완료 (`firebase serve`)
-- [ ] `node --check` 모든 모듈 통과 (`npm run lint`)
+- [ ] `npm run check` 통과 (ESLint + 단위 테스트)
 - [ ] git 커밋 완료
 - [ ] `firebase deploy` 실행
 - [ ] 배포된 앱 확인

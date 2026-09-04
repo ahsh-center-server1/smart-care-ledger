@@ -26,13 +26,12 @@ import {
   COLS, CAT_COLORS, cs,
   STATUS_LABELS, STATUS_CLASSES,
 } from './constants.js';
-import { toast, showConfirm, closeConfirm, setText, showLoading, escAttr } from './utils/ui.js';
+import { toast, showConfirm, closeConfirm, setText, showLoading } from './utils/ui.js';
 import { fb, fdb } from './services/firestore.js';
 import { compressImage } from './services/image.js';
 import { uploadToStorage } from './services/storage.js';
 
 import * as Auth     from './modules/auth.js';
-import { can } from './modules/permissions.js';
 import * as Core     from './modules/core.js';
 import * as Dash     from './modules/dashboard.js';
 import * as Trx      from './modules/transactions.js';
@@ -334,9 +333,14 @@ function bindEvents(){
       Trx.renderHistoryTable(); Trx.rebuildAccountFilter();
     }
   });
-  document.getElementById('h-account')?.addEventListener('change',Trx.applyFilters);
-  ['h-search','h-start','h-end'].forEach(id=>document.getElementById(id)?.addEventListener('input',Trx.applyFilters));
-  ['h-type','h-receipt','h-start','h-end'].forEach(id=>document.getElementById(id)?.addEventListener('change',Trx.applyFilters));
+  // 필터가 바뀌면 1페이지로 — 그러지 않으면 5페이지에서 결과를 좁혔을 때 빈 표가 뜬다.
+  // 날짜 칸은 change에만 건다. input에도 걸면 연도를 타이핑하는 중간값(0002-01-01)이
+  // 범위 확장 조건을 만족해 **키 입력마다 전체 이력 조회가 발사되고**,
+  // change와 겹쳐 필터가 두 번 실행된다.
+  const onFilter=()=>Trx.applyFilters({resetPage:true});
+  ['h-search'].forEach(id=>document.getElementById(id)?.addEventListener('input',onFilter));
+  ['h-account','h-type','h-receipt','h-start','h-end']
+    .forEach(id=>document.getElementById(id)?.addEventListener('change',onFilter));
   document.getElementById('check-all')?.addEventListener('click',e=>{
     document.querySelectorAll('.row-check').forEach(c=>c.checked=e.target.checked);
   });
@@ -363,7 +367,12 @@ function bindEvents(){
   })();
   document.getElementById('btn-annual-load')?.addEventListener('click',Rpt.loadAnnual);
   document.getElementById('btn-rpt-load')?.addEventListener('click',Rpt.loadReport);
-  document.getElementById('btn-rpt-list-refresh')?.addEventListener('click',Rpt.loadReportList);
+  document.getElementById('btn-rpt-list-refresh')?.addEventListener('click',()=>Rpt.loadReportList({force:true}));
+  // 목록은 기본적으로 올해·작년만 읽는다(읽기 비용). 그 이전을 보려면 켠다.
+  document.getElementById('rpt-list-all-years')?.addEventListener('change',e=>{
+    S.rptListAllYears=e.target.checked;
+    Rpt.loadReportList({force:true});
+  });
   // 저장된 보고서 토글 (기본: 숨김)
   document.getElementById('btn-rpt-list-toggle')?.addEventListener('click',()=>{
     const list=document.getElementById('rpt-list');

@@ -17,7 +17,7 @@ import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchSetDocs, 
 import { deleteManyFromStorage, recompressStorageImage } from '../services/storage.js';
 import { COLS, DEFAULT_CATEGORIES } from '../constants.js';
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
-import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
+import { fetchBaseData, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
 import { can, savePermissions, requiredRank, DEFAULT_MIN_RANK,
          SELECTABLE_RANKS, RANK_LABEL, PERM_SECTIONS } from './permissions.js';
@@ -347,7 +347,6 @@ export function renderRuleTags(){
   const el=document.getElementById('rule-tags'); if(!el)return;
   const settingsClientId=S.settings.settingsClientId||'';
   const clientName=settingsClientId?S.clients.find(c=>c.id===settingsClientId)?.name||'':'';
-  const targetDisplay=settingsClientId?`— ${clientName}`:'— 공통';
   const ruleTargetLabel=settingsClientId?clientName:'공통';
   const ruleBadge=document.getElementById('rule-target'); if(ruleBadge)ruleBadge.textContent=ruleTargetLabel;
   el.innerHTML='';
@@ -766,17 +765,23 @@ export function renderPermissionPanel(){
 // ─────────────────────────────────────────────
 // 탭 전환 함수
 // ─────────────────────────────────────────────
+/**
+ * 설정 탭 버튼 바인딩.
+ * loadSettings()가 부를 때마다 실행되므로 **같은 버튼에 핸들러가 쌓인다.**
+ * 설정 화면을 열 때마다 탭 한 번 클릭에 switchSettingsTab이 n번 돌았다.
+ * 이미 건 버튼은 건너뛴다.
+ */
 export function initSettingsTabs(){
   document.querySelectorAll('.settings-tab-btn').forEach(btn=>{
+    if(btn.dataset.bound)return; btn.dataset.bound='1';
     btn.addEventListener('click',e=>{
-      const tab=e.target.dataset.tab;
-      switchSettingsTab(tab);
+      switchSettingsTab(e.currentTarget.dataset.tab);
     });
   });
   document.querySelectorAll('.category-subtab-btn').forEach(btn=>{
+    if(btn.dataset.bound)return; btn.dataset.bound='1';
     btn.addEventListener('click',e=>{
-      const subtab=e.target.dataset.subtab;
-      switchCategorySubtab(subtab);
+      switchCategorySubtab(e.currentTarget.dataset.subtab);
     });
   });
 }
