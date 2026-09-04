@@ -271,3 +271,102 @@ exports.changePassword = onCall(async (request) => {
   );
   return { ok: true };
 });
+
+// ─────────────────────────────────────────────────────────────
+// syncAccountBalance — 거래가 바뀌면 계좌 currentBalance를 서버에서 재계산
+//
+// 왜 서버인가
+//   기존에는 클라이언트 updateAccBalance가 부분 로드된 S.transactions(기본 당월)로
+//   계산해 currentBalance를 덮어썼다. 그래서 거래를 하나만 저장해도 이전 기록이
+//   사라졌다. 게다가 입력자는 보안 규칙상 계좌 전체 거래를 읽을 수 없어
+//   클라이언트에서는 애초에 올바른 계산이 불가능하다.
+//
+//   서버에서 계산하면 역할과 무관하게 항상 전체 거래를 근거로 하고,
+//   "잔액 계산 → 거래 저장" 순서 뒤바뀜 문제도 함께 사라진다.
+// ─────────────────────────────────────────────────────────────
+const { onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { calcAccountBalance } = require('./balance.cjs');
+
+const TRANSACTIONS = 'transactions';
+const ACCOUNTS = 'accounts';
+
+/** 한 계좌의 currentBalance를 전체 거래 기준으로 다시 쓴다. */
+async function recalcAccount(accountId) {
+  if (!accountId) return;
+  const accRef = db.collection(ACCOUNTS).doc(accountId);
+  const accSnap = await accRef.get();
+  if (!accSnap.exists) return;
+
+  const account = { id: accountId, ...accSnap.data() };
+  const trxSnap = await db
+    .collection(TRANSACTIONS)
+    .where('accountId', '==', accountId)
+    .get();
+  const transactions = trxSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  const balance = calcAccountBalance(account, transactions);
+  if (Number(account.currentBalance || 0) === balance) return;   // 변화 없으면 쓰지 않는다
+  await accRef.update({ currentBalance: balance });
+}
+
+exports.syncAccountBalance = onDocumentWritten(
+  { document: 'transactions/{trxId}' },
+  async (event) => {
+    const before = event.data && event.data.before && event.data.before.data();
+    const after = event.data && event.data.after && event.data.after.data();
+
+    // 계좌가 바뀐 수정이면 양쪽 모두 다시 계산해야 한다.
+    const affected = new Set();
+    if (before && before.accountId) affected.add(before.accountId);
+    if (after && after.accountId) affected.add(after.accountId);
+    if (!affected.size) return;
+
+    // 잔액 갱신 실패가 거래 저장을 되돌리지는 않는다. 실패는 로그로 남기고
+    // tools/recalc-balances.mjs로 언제든 바로잡을 수 있다.
+    for (const accountId of affected) {
+      try {
+        await recalcAccount(accountId);
+      } catch (err) {
+        console.error(`[syncAccountBalance] 계좌 ${accountId} 재계산 실패:`, err);
+      }
+    }
+  }
+);
+
+/**
+ * 계좌의 기초잔액·기준일이 바뀌면 currentBalance를 다시 계산한다.
+ *
+ * 필요한 이유
+ *   거래 트리거만으로는 부족하다. 계좌 등록·수정 폼(modals.js)과 연도 마감
+ *   (settings.js)이 currentBalance를 직접 쓰는데, 그 시점에는 거래가 변하지 않으므로
+ *   syncAccountBalance가 발동하지 않는다. 특히 계좌 정보를 수정하면
+ *   currentBalance가 기초잔액으로 되돌아간 채 남는다.
+ *
+ * 무한 루프 방지
+ *   이 트리거 자신이 쓰는 값은 currentBalance뿐이다. 따라서 initialBalance나
+ *   initialBalanceDate가 실제로 바뀐 경우에만 재계산하고, 그 외에는 즉시 반환한다.
+ */
+exports.syncAccountOnSettingsChange = onDocumentWritten(
+  { document: 'accounts/{accountId}' },
+  async (event) => {
+    const before = event.data && event.data.before && event.data.before.data();
+    const after = event.data && event.data.after && event.data.after.data();
+    if (!after) return;                       // 삭제된 계좌는 계산할 것이 없다
+
+    const baseChanged =
+      !before ||
+      Number(before.initialBalance || 0) !== Number(after.initialBalance || 0) ||
+      (before.initialBalanceDate || '') !== (after.initialBalanceDate || '');
+
+    if (!baseChanged) return;                 // currentBalance만 바뀐 경우 = 이 트리거 자신의 쓰기
+
+    try {
+      await recalcAccount(event.params.accountId);
+    } catch (err) {
+      console.error(
+        `[syncAccountOnSettingsChange] 계좌 ${event.params.accountId} 재계산 실패:`,
+        err
+      );
+    }
+  }
+);

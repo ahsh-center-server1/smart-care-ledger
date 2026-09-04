@@ -10,6 +10,7 @@ import { COLS, CAT_COLORS, STATUS_LABELS, STATUS_CLASSES, cs } from '../constant
 import { toast, showConfirm, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { can } from './permissions.js';
+import { calcAccountBalanceAsOf, sumIncomeExpense } from '../services/balance.js';
 import { getImageUrl } from '../services/storage.js';
 import { getUnpaidMandatoryItems } from './modals.js';
 
@@ -204,21 +205,12 @@ function getReportAccountRows(year,month,accs,allTrx){
   const prevYM=month===1?`${year-1}-12`:`${year}-${String(month-1).padStart(2,'0')}`;
   const prevEnd=prevYM+'-31';
   return (accs||[]).map(a=>{
-    const baseDate=a.initialBalanceDate||'';
-    const baseAmt=Number(a.initialBalance||0);
-    const allAccTrx=(allTrx||[]).filter(t=>t.accountId===a.id&&t.type!=='취소');
-    let bal=baseAmt, prevBal=baseAmt, monthlyIn=0, monthlyOut=0;
-    allAccTrx.forEach(t=>{
-      if(baseDate&&(t.date||'')<baseDate)return;
-      const d=t.date||'';
-      const diff=Number(t.amountIn||0)-Number(t.amountOut||0);
-      if(d<=prevEnd)prevBal+=diff;
-      if(d<=endDate)bal+=diff;
-      if(d.startsWith(mStr)&&t.type!=='자산이동'){
-        monthlyIn+=Number(t.amountIn||0);
-        monthlyOut+=Number(t.amountOut||0);
-      }
-    });
+    // 잔액은 services/balance.js 하나만 쓴다 (대시보드·설정과 값이 어긋나지 않도록)
+    const prevBal=calcAccountBalanceAsOf(a,allTrx,prevEnd);
+    const bal=calcAccountBalanceAsOf(a,allTrx,endDate);
+    // 당월 수입/지출 집계 — 자산이동·취소는 제외
+    const monthTrx=(allTrx||[]).filter(t=>t.accountId===a.id&&(t.date||'').startsWith(mStr));
+    const {totalIn:monthlyIn,totalOut:monthlyOut}=sumIncomeExpense(monthTrx);
     return {...a,prevBal,monthlyIn,monthlyOut,bal};
   });
 }

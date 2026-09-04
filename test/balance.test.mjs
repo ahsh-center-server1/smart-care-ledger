@@ -134,3 +134,57 @@ test('회귀: 부분 로드된 목록을 넘기면 잔액이 틀린다 — 전�
   assert.equal(calcAccountBalance(a, 전체), 70000);
   assert.equal(calcAccountBalance(a, 당월만), 80000);  // 이것이 기존 버그의 정체
 });
+
+// ─────────────────────────────────────────────────────────────
+// 브라우저(ESM)와 서버(CJS) 구현이 갈라지지 않는지 검증한다.
+//
+// 파일이 두 벌인 이유: 브라우저는 public/ 아래 ESM만 불러올 수 있고,
+// Cloud Functions 배포 번들에는 functions/ 밖의 파일이 포함되지 않는다.
+// 한쪽만 고치면 아래 테스트가 실패하므로 드리프트를 놓칠 수 없다.
+// ─────────────────────────────────────────────────────────────
+import { createRequire } from 'node:module';
+const { calcAccountBalance: serverCalc } =
+  createRequire(import.meta.url)('../functions/balance.cjs');
+
+test('서버(CJS)와 브라우저(ESM) 잔액 계산이 모든 경우에 일치한다', () => {
+  const 계좌들 = [
+    acc(),
+    acc({ initialBalanceDate: '' }),
+    acc({ initialBalance: 0 }),
+    acc({ initialBalance: '250000' }),
+    acc({ id: 'other' }),
+  ];
+  const 거래들 = [
+    [],
+    [t({ type: '수입', amountIn: 50000 })],
+    [t({ type: '지출', amountOut: 30000 })],
+    [t({ type: '취소', amountOut: 70000 })],
+    [t({ type: '자산이동', amountOut: 20000 })],
+    [t({ type: '지출', amountOut: -5000 })],
+    [t({ date: '2026-01-15', amountOut: 9999 })],
+    [t({ date: '2026-01-31', amountOut: 5000 })],
+    [t({ date: '2026-02-01', amountOut: 5000 })],
+    [t({ accountId: 'acc2', amountOut: 999999 }), t({ amountOut: 10000 })],
+    [t({ type: '수입', amountIn: '50000' }), t({ type: '지출', amountOut: '20000' })],
+    [{ accountId: 'acc1', date: '2026-02-10', type: '지출' }],
+    null,
+  ];
+
+  let 비교횟수 = 0;
+  for (const a of 계좌들) {
+    for (const trx of 거래들) {
+      const mine = calcAccountBalance(a, trx);
+      const theirs = serverCalc(a, trx);
+      assert.equal(
+        theirs, mine,
+        `불일치: 계좌 ${JSON.stringify(a)} / 거래 ${JSON.stringify(trx)}`
+      );
+      비교횟수++;
+    }
+  }
+  assert.ok(비교횟수 >= 60, `비교 조합이 너무 적습니다 (${비교횟수}건)`);
+});
+
+test('서버 구현도 계좌가 null이면 0을 반환한다', () => {
+  assert.equal(serverCalc(null, []), 0);
+});

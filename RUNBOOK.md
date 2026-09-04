@@ -127,11 +127,31 @@ curl -s "https://firestore.googleapis.com/v1/projects/smart-care-ledger/database
 **순서가 중요합니다.** 잔액 단일화 코드를 먼저 배포해야 합니다.
 그렇지 않으면 재계산 직후 앱이 다시 망가뜨립니다.
 
-```bash
-# 1. 잔액 단일화 코드 배포 (services/balance.js 적용 — 다음 작업 단위)
-firebase deploy --only hosting
+이제 `currentBalance`는 **Cloud Functions 트리거가 소유**합니다.
+클라이언트는 화면 표시용으로만 로컬 계산하고 Firestore에는 쓰지 않습니다.
+(입력자는 보안 규칙상 계좌 전체 거래를 읽을 수 없어 클라이언트 계산이 불가능합니다)
 
-# 2. 재계산 — 먼저 드라이런
+| 트리거 | 언제 발동 | 하는 일 |
+|---|---|---|
+| `syncAccountBalance` | `transactions/*` 쓰기 | 해당 계좌 잔액 재계산. 계좌가 바뀐 수정이면 양쪽 모두 |
+| `syncAccountOnSettingsChange` | `accounts/*`의 기초잔액·기준일 변경 | 그 계좌 잔액 재계산 (`currentBalance`만 바뀐 경우는 건너뛰어 루프 방지) |
+
+```bash
+# 1. 트리거 + 잔액 단일화 코드 배포
+firebase deploy --only functions,hosting
+
+# 2. 트리거가 실제로 도는지 먼저 확인
+#    거래를 하나 저장한 뒤 로그를 본다
+firebase functions:log --only syncAccountBalance
+```
+
+- [ ] 거래 저장 시 로그에 실행 기록이 남는가
+- [ ] 해당 계좌 `currentBalance`가 Firestore에서 실제로 바뀌는가
+
+트리거가 도는 것을 확인한 뒤 기존 손상분을 정정합니다.
+
+```bash
+# 3. 재계산 — 먼저 드라이런
 node tools/recalc-balances.mjs
 ```
 

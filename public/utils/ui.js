@@ -18,6 +18,26 @@ export function escAttr(str) {
     .replace(/>/g, '&gt;');
 }
 
+/**
+ * HTML 텍스트 노드용 이스케이프.
+ *
+ * escAttr은 속성값용이고, innerHTML 템플릿의 **본문**에 사용자 입력을 넣을 때는
+ * 이 함수를 쓴다. 거래 내용(description)은 엑셀 업로드의 가맹점명 칸에서 오므로
+ * 조작된 은행 파일 하나로 스크립트가 실행될 수 있다.
+ *
+ * 주의: `onclick="fn('${escAttr(x)}')"` 형태는 HTML 파서가 &#39;를 '로 되돌린
+ * 뒤에 JS가 컴파일되므로 JS 문자열 문맥에서는 이스케이프가 무력하다.
+ * 그런 곳은 addEventListener + dataset으로 옮겨야 한다.
+ */
+export function escHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function showConfirm(title, msg, onOk, okLabel='확인', okStyle='btn') {
   setText('c-title', title);
   setText('c-msg', msg);

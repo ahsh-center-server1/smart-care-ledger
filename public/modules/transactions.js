@@ -9,6 +9,7 @@ import { S } from '../state.js';
 import { COLS, CAT_COLORS, cs } from '../constants.js';
 import { toast, toastAction, showConfirm, showLoading, setText, escAttr, emptyState } from '../utils/ui.js';
 import { fb, fdb, batchDeleteDocs, batchUpdateDocs } from '../services/firestore.js';
+import { calcAccountBalance } from '../services/balance.js';
 import { deleteFromStorage } from '../services/storage.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
 import { openModal, getUnpaidMandatoryItems } from './modals.js';
@@ -430,8 +431,10 @@ export async function saveTrx(data){
     // 입력자: createdBy 필드 추가
     if(!data.createdBy&&S.user?.userId)data.createdBy=S.user.userId;
     await addDoc(collection(fdb(),COLS.TRANSACTIONS),data);
-    await updateAccBalance(data.accountId);
+    // loadTransactions를 먼저 — 방금 넣은 거래가 캐시에 들어온 뒤에 잔액을 다시 계산한다.
+    // (이전에는 순서가 반대여서 신규 거래가 잔액에서 빠졌고, 수정 경로와 값이 달랐다)
     if(S.activeClient===data.clientId)await loadTransactions(data.clientId);
+    updateAccBalance(data.accountId);
   }
   toast('저장되었습니다.','success');
 }
@@ -536,26 +539,25 @@ export async function confirmBulkDelete(){
 
 export function editTrx(id){const t=S.transactions.find(x=>x.id===id);if(!t)return;openModal('trx',t);}
 
-export async function updateAccBalance(accId){
+/**
+ * 화면에 보이는 잔액을 즉시 갱신한다 (낙관적 업데이트).
+ *
+ * ⚠️ Firestore의 currentBalance는 **여기서 쓰지 않는다.**
+ *    Cloud Functions의 syncAccountBalance 트리거가 전체 거래를 근거로 계산해 소유한다.
+ *
+ * 이전 구현은 부분 로드된 S.transactions(기본 당월)로 계산한 값을 Firestore에
+ * 덮어써서, 거래를 하나만 저장해도 지난 달 이전 기록이 잔액에서 사라졌다.
+ * 게다가 입력자는 보안 규칙상 계좌 전체 거래를 읽을 수 없어 클라이언트에서는
+ * 올바른 계산이 원천적으로 불가능하다.
+ *
+ * 따라서 여기서는 로컬 캐시만 손대고, 정확한 값은 트리거가 쓴 뒤
+ * 다음 fetch에서 따라온다. 로드 범위 밖 거래가 있으면 이 값은 부정확할 수 있다.
+ */
+export function updateAccBalance(accId){
   if(!accId)return;
-  const{doc,getDoc,updateDoc}=fb();
-  const accRef=doc(fdb(),COLS.ACCOUNTS,accId);
-  const accSnap=await getDoc(accRef); if(!accSnap.exists())return;
-  const acc=accSnap.data();
-  // Phase 1 최적화: Firestore 쿼리 대신 S.transactions 캐시 사용
-  const accTrx=S.transactions.filter(t=>t.accountId===accId);
-  let bal=Number(acc.initialBalance||0);
-  // ⑫ initialBalanceDate 기준: 해당 날짜 이후 거래만 합산
-  const baseDate=acc.initialBalanceDate||'';
-  // 자산이동/취소는 수입/지출 합계에서 제외하지만 잔액에는 반영
-  accTrx.forEach(t=>{
-    if(baseDate&&(t.date||'')<baseDate)return; // 기준일 이전 거래 제외
-    if(t.type==='취소')return; // 취소 거래는 잔액에 영향 없음
-    // 2. 음수 amountOut(환불/취소성 지출)도 잔액에 정확히 반영
-    bal+=(Number(t.amountIn||0)-Number(t.amountOut||0));
-  });
-  await updateDoc(accRef,{currentBalance:bal});
-  const local=S.accounts.find(a=>a.id===accId); if(local)local.currentBalance=bal;
+  const acc=S.accounts.find(a=>a.id===accId);
+  if(!acc)return;
+  acc.currentBalance=calcAccountBalance(acc,S.transactions);
 }
 
 // ─────────────────────────────────────────────
