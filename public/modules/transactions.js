@@ -330,6 +330,7 @@ export function moveCalendar(dir){
 }
 
 export async function saveCatChange(trxId, newCat, chipEl) {
+  if(!can('trx.category.edit')){toast('분류 수정 권한이 없습니다.','error');return;}
   const lk=S.transactions.find(x=>x.id===trxId);
   if(lk&&isConfirmedLocked(lk.clientId,lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   const {doc,updateDoc}=fb();
@@ -413,6 +414,13 @@ export function applyPeriod(p){
 // 거래 CRUD
 // ─────────────────────────────────────────────
 export async function saveTrx(data){
+  // 실행 시점 검증. 예전에는 렌더 시점에만 can()을 봤고 이 함수들은 전부
+  // window에 노출되어 있어 콘솔에서 직접 호출하면 그대로 통과했다.
+  // (실제 차단은 보안 규칙이 하지만, 여기서도 막아 무의미한 요청을 줄인다)
+  const editingOthers = data.id && data.createdBy && data.createdBy !== S.user?.userId;
+  if(!can('trx.create')||(editingOthers&&!can('trx.view.all'))){
+    toast('거래 저장 권한이 없습니다.','error'); return;
+  }
   if(isConfirmedLocked(data.clientId,data.date)){toast('최종 결재 완료된 월의 거래는 추가/수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   // 편집 시: 원본 거래가 확정 월에 있으면 다른 월로 이동/수정 금지
   if(data.id){const prev=S.transactions.find(x=>x.id===data.id);if(prev&&isConfirmedLocked(prev.clientId,prev.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}}
@@ -454,6 +462,11 @@ export async function toggleReceiptMissing(id){
 }
 
 export async function delTrx(id,accId){
+  const t=S.transactions.find(x=>x.id===id);
+  const mine=!t||t.createdBy===S.user?.userId;
+  if(!can('trx.delete')||(!mine&&!can('trx.view.all'))){
+    toast('거래 삭제 권한이 없습니다.','error'); return;
+  }
   const trxCheck=S.transactions.find(x=>x.id===id);
   if(trxCheck&&isConfirmedLocked(trxCheck.clientId,trxCheck.date)){toast('최종 결재 완료된 월의 거래는 삭제할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   showConfirm('거래 삭제','이 거래 내역을 삭제하시겠습니까?\n삭제 후 잠시 동안 되돌릴 수 있습니다.',()=>{
@@ -507,6 +520,7 @@ function scheduleTrxDeletion(ids){
 
 // I002: 거래내역 CSV 내보내기 (현재 필터 기준)
 export function exportFilteredCSV(){
+  if(!can('trx.csv')){toast('CSV 내보내기 권한이 없습니다.','error');return;}
   if(!S.filteredTrx||!S.filteredTrx.length){toast('내보낼 데이터가 없습니다.','info');return;}
   const client=S.clients.find(c=>c.id===S.activeClient)||{name:'전체'};
   const header=['날짜','시간','계좌','구분','분류','내용','수입','지출','증빙'];
@@ -526,6 +540,7 @@ export function exportFilteredCSV(){
 
 // 일괄 삭제 — 되돌리기 유예 후 배치 삭제 (scheduleTrxDeletion 재사용)
 export async function confirmBulkDelete(){
+  if(!can('trx.delete.bulk')){toast('일괄 삭제 권한이 없습니다.','error');return;}
   const checked=Array.from(document.querySelectorAll('.row-check:checked'));
   if(!checked.length){toast('삭제할 항목을 선택하세요.','info');return;}
   // confirmed 월 거래 포함 여부 체크
@@ -576,6 +591,7 @@ export function moveTrxRow(id,dir){
 
 // Phase 2 최적화: 배치 업데이트 사용
 export async function reorderTrx(fromId,toId){
+  if(!can('trx.reorder')){toast('순서 변경 권한이 없습니다.','error');return;}
   if(fromId===toId)return;
   const fromIdx=S.filteredTrx.findIndex(x=>x.id===fromId);
   const toIdx  =S.filteredTrx.findIndex(x=>x.id===toId);

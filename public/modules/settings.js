@@ -19,7 +19,8 @@ import { COLS, DEFAULT_CATEGORIES } from '../constants.js';
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
-import { can, savePermissions, DEFAULT_PERMISSIONS } from './permissions.js';
+import { can, savePermissions, requiredRank, DEFAULT_MIN_RANK,
+         SELECTABLE_RANKS, RANK_LABEL, PERM_SECTIONS } from './permissions.js';
 
 // ─────────────────────────────────────────────
 // 직원·입주자·계좌 관리 통합 렌더
@@ -199,12 +200,13 @@ export function confirmDelete(type,id){
 // ─────────────────────────────────────────────
 export async function loadSettings(){
   const isArchive=can('settings.archive');
-  const isResetAdmin=can('settings.reset');
+  const isResetAdmin=can('settings.reset');          // 전체 초기화
+  const canPerm=can('settings.permissions');        // 권한 설정 탭
   // 권한 없는 탭 버튼은 아예 숨김 (누르면 alert만 뜨는 '유령 탭' 제거)
   const archiveTabBtn=document.querySelector('.settings-tab-btn[data-tab="archive"]');
   if(archiveTabBtn)archiveTabBtn.style.display=isArchive?'':'none';
   const permTabBtn=document.querySelector('.settings-tab-btn[data-tab="permissions"]');
-  if(permTabBtn)permTabBtn.style.display=isResetAdmin?'':'none';
+  if(permTabBtn)permTabBtn.style.display=canPerm?'':'none';
   if(isArchive){
     const ySel=document.getElementById('archive-year');
     if(ySel&&!ySel.options.length){const cy=new Date().getFullYear();for(let y=cy-1;y>=cy-6;y--)ySel.add(new Option(y+'년',y));}
@@ -239,7 +241,7 @@ export async function loadSettings(){
     });
   }
   // 이미 패널이 렌더링된 경우 재호출 금지 (편집 중 draft 초기화 방지)
-  if(isResetAdmin&&!document.getElementById('btn-perm-save'))renderPermissionPanel();
+  if(canPerm&&!document.getElementById('btn-perm-save'))renderPermissionPanel();
   initBudgetSection();
   // 탭 초기화
   renderCategoryTarget();
@@ -252,7 +254,7 @@ export async function loadSettings(){
 export function renderCategoryTarget(){
   const el=document.getElementById('category-target-content');
   if(!el)return;
-  const isAdmin=can('settings.reset');
+  const isAdmin=can('settings.category.common');
   const cSel=document.getElementById('settings-client-sel');
   const clientId=cSel?.value||'';
   const isCommon=clientId==='';
@@ -284,7 +286,7 @@ export function renderCatTags(type){
   const el=document.getElementById(id); if(!el)return;
   const settingsClientId=S.settings.settingsClientId||'';
   const clientName=settingsClientId?S.clients.find(c=>c.id===settingsClientId)?.name||'':'';
-  const isAdmin=can('settings.reset');
+  const isAdmin=can('settings.category.common');
   const allCats=S.categories
     .filter(c=>c.keyword===''&&c.type===type&&(!c.clientId||c.clientId===settingsClientId))
     .sort((a,b)=>(a.sortOrder??999)-(b.sortOrder??999));
@@ -370,8 +372,8 @@ export function updateRuleCatSel(){
   cats.forEach(c=>sel.add(new Option(c,c)));
 }
 export async function addCategory(type,clientId=''){
-  if(!clientId&&!can('settings.reset')){
-    toast('공통 카테고리는 관리자만 추가할 수 있습니다.','error');
+  if(!clientId&&!can('settings.category.common')){
+    toast('공통 카테고리는 팀장 이상만 추가할 수 있습니다.','error');
     return;
   }
   const inputId=type==='지출'?'new-exp-cat':'new-inc-cat';
@@ -390,8 +392,8 @@ export async function addCategory(type,clientId=''){
   toast(`"${name}" 추가됨`,'success');
 }
 export async function deleteCategory(type,name,clientId=''){
-  if(!clientId&&!can('settings.reset')){
-    toast('공통 카테고리는 관리자만 삭제할 수 있습니다.','error');
+  if(!clientId&&!can('settings.category.common')){
+    toast('공통 카테고리는 팀장 이상만 삭제할 수 있습니다.','error');
     return;
   }
   const{getDocs,collection,query,where,doc,deleteDoc}=fb();
@@ -426,6 +428,9 @@ export async function deleteRule(docId){
 }
 // Phase 2 최적화: 배치 삭제 + 배치 추가
 export async function resetCategories(){
+  // 전 입주자의 카테고리와 자동분류 규칙을 모두 지우는 작업인데 검사가 없었다.
+  // 설정 탭은 담당자도 들어오므로 버튼 하나로 조직 전체 분류가 날아갔다.
+  if(!can('settings.category.common')){toast('공통 카테고리 초기화는 팀장 이상만 할 수 있습니다.','error');return;}
   showConfirm('기본값 초기화','기존 카테고리와 규칙을 모두 삭제하고 기본값으로 초기화합니다.',async()=>{
     const{getDocs,collection}=fb();
     const snap=await getDocs(collection(fdb(),COLS.CATEGORIES));
@@ -464,6 +469,8 @@ export async function confirmArchive(){
 }
 // Phase 3 최적화: 배치 처리 + 500개 단위 자동 분할
 export async function executeArchive(year){
+  // 탭 버튼만 숨겨져 있었고 window.executeArchive는 노출되어 있었다
+  if(!can('settings.archive')){toast('연도 마감 권한이 없습니다.','error');return;}
   showLoading(true);
   try{
     const{getDocs,collection,query,where,addDoc,doc}=fb();
@@ -575,6 +582,7 @@ export async function loadBudgetForm(){
 
 // Phase 2 최적화: 배치 혼합 작업 사용
 export async function saveBudget(){
+  if(!can('settings.budget')){toast('예산 설정 권한이 없습니다.','error');return;}
   const clientId=document.getElementById('budget-client-sel')?.value;
   const year=Number(document.getElementById('budget-year-sel')?.value);
   if(!clientId||!year)return;
@@ -637,101 +645,68 @@ export async function executeFirebaseReset(){
 // ─────────────────────────────────────────────
 // 권한 관리 패널 (관리자 전용)
 // ─────────────────────────────────────────────
-const PERM_SECTIONS=[
-  {label:'📌 내비게이션',keys:['nav.report','nav.settings','nav.staff']},
-  {label:'💳 거래내역',keys:['trx.view.all','trx.create','trx.edit','trx.delete','trx.delete.bulk','trx.reorder','trx.transfer','trx.category.edit','trx.csv']},
-  {label:'📁 엑셀·증빙',keys:['excel.upload','receipt.upload','receipt.print','bankbook.upload']},
-  {label:'📑 보고서',keys:['report.view.all','report.view.own','report.draft','report.edit','report.delete','report.recall','report.submit','report.approve.team','report.approve.center','report.reject']},
-  {label:'⚙️ 설정',keys:['settings.staff','settings.client','settings.account','settings.fixed','settings.archive','settings.reset']},
-];
-const PERM_LABELS={
-  'nav.report':'보고서 탭','nav.settings':'설정 탭','nav.staff':'직원관리 패널',
-  'trx.view.all':'전체 거래 조회','trx.create':'수기 입력','trx.edit':'거래 수정',
-  'trx.delete':'거래 삭제','trx.delete.bulk':'일괄 삭제','trx.reorder':'드래그 순서 변경',
-  'trx.transfer':'자산이동 입력','trx.category.edit':'카테고리 인라인 수정','trx.csv':'CSV 내보내기',
-  'excel.upload':'엑셀 업로드','receipt.upload':'영수증 업로드','receipt.print':'영수증 일괄 출력',
-  'bankbook.upload':'통장 사진 업로드',
-  'report.view.all':'전체 보고서 열람','report.view.own':'본인 담당 열람','report.draft':'초안 작성',
-  'report.edit':'보고서 수정','report.delete':'보고서 삭제','report.recall':'보고서 회수',
-  'report.submit':'보고서 제출','report.approve.team':'팀장 결재','report.approve.center':'센터장 결재','report.reject':'보고서 반려',
-  'settings.staff':'직원 등록/수정/삭제','settings.client':'입주자 관리','settings.account':'계좌 관리',
-  'settings.fixed':'고정항목 관리','settings.archive':'연도 마감','settings.reset':'전체 초기화',
-};
-// 관리자는 역할이 아니라 users.isAdmin 플래그다 (직원 폼의 체크박스로 부여).
-// 4단계에서 이 목록은 등급표(ROLE_RANK)로 대체된다.
-const ROLES=['입력자','담당자','팀장','센터장'];
-
 export function renderPermissionPanel(){
   const container=document.getElementById('permission-panel-content');
   if(!container)return;
-  // 현재 저장된 권한 또는 기본값
-  const perms=S.permissions||DEFAULT_PERMISSIONS;
-  // 편집용 임시 복사본 (deep copy)
-  const draft=JSON.parse(JSON.stringify(perms));
-  // 역할 탭
-  let activeRole=ROLES[1]; // 기본: 담당자
+
+  // 편집용 초안 — 현재 유효 등급으로 시작한다
+  const draft={};
+  PERM_SECTIONS.forEach(sec=>Object.keys(sec.keys).forEach(k=>{draft[k]=requiredRank(k);}));
+
+  const rankOpts=(cur)=>SELECTABLE_RANKS
+    .map(r=>`<option value="${r}"${Number(cur)===r?' selected':''}>${escAttr(RANK_LABEL[r])}</option>`)
+    .join('');
+
   function renderPanel(){
+    const changed=Object.entries(draft).filter(([k,v])=>Number(v)!==DEFAULT_MIN_RANK[k]).length;
     container.innerHTML=`
-      <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap;">
-        ${ROLES.map(r=>`<button onclick="window._permSetRole('${escAttr(r)}')" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:1.5px solid ${r===activeRole?'#7c3aed':'#e2e8f0'};background:${r===activeRole?'#f5f3ff':'#fff'};color:${r===activeRole?'#7c3aed':'#64748b'};cursor:pointer;">${r}</button>`).join('')}
+      <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:#5b21b6;line-height:1.6;">
+        각 기능을 <b>어느 등급부터</b> 쓸 수 있는지 정합니다.
+        등급은 <b>입력자 &lt; 담당자 &lt; 팀장 &lt; 센터장</b> 순이고,
+        관리자 권한은 역할이 아니라 직원 등록 화면의 체크박스로 부여합니다.
+        ${changed?`<div style="margin-top:6px;font-weight:700;">기본값과 다른 항목 ${changed}개</div>`:''}
       </div>
       <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:12px;">
-          <thead><tr>
-            <th style="text-align:left;padding:8px 10px;background:#1e293b;color:#fff;font-size:11px;min-width:120px;">권한</th>
-            <th style="padding:8px 10px;background:#1e293b;color:#fff;font-size:11px;min-width:60px;text-align:center;">허용</th>
-          </tr></thead>
-          <tbody>
-            ${PERM_SECTIONS.map(sec=>`
-              <tr><td colspan="2" style="background:#3b82f6;color:#fff;font-weight:700;padding:6px 10px;font-size:11px;">${sec.label}</td></tr>
-              ${sec.keys.map(key=>{
-                const val=draft[activeRole]?.[key]??DEFAULT_PERMISSIONS[activeRole]?.[key]??false;
-                return `<tr style="border-bottom:1px solid #f1f5f9;">
-                  <td style="padding:7px 10px;color:#475569;">${PERM_LABELS[key]||key}</td>
-                  <td style="text-align:center;padding:7px 10px;">
-                    <input type="checkbox" data-role="${activeRole}" data-key="${key}" ${val?'checked':''} style="width:15px;height:15px;cursor:pointer;accent-color:#7c3aed;">
-                  </td>
-                </tr>`;
-              }).join('')}
-            `).join('')}
-          </tbody>
-        </table>
+        ${PERM_SECTIONS.map(sec=>`
+          <div style="font-weight:800;color:#fff;background:#3b82f6;padding:7px 12px;border-radius:8px 8px 0 0;font-size:12px;">${escAttr(sec.title)}</div>
+          <div style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;margin-bottom:14px;">
+            ${Object.entries(sec.keys).map(([key,label])=>{
+              const isDefault=Number(draft[key])===DEFAULT_MIN_RANK[key];
+              return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 12px;border-bottom:1px solid #f1f5f9;">
+                <span style="font-size:13px;color:var(--text);">${escAttr(label)}${isDefault?'':'<span style="margin-left:6px;font-size:10px;font-weight:700;color:#7c3aed;">변경됨</span>'}</span>
+                <select class="perm-rank input" data-key="${escAttr(key)}" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;flex-shrink:0;">${rankOpts(draft[key])}</select>
+              </div>`;
+            }).join('')}
+          </div>`).join('')}
       </div>
-      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
-        <button id="btn-perm-save" style="padding:9px 20px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">💾 저장</button>
-        <button id="btn-perm-reset" style="padding:9px 20px;background:#fff;color:#64748b;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">↺ 기본값으로 초기화</button>
-      </div>
-    `;
-    // 체크박스 이벤트
-    container.querySelectorAll('input[type=checkbox]').forEach(cb=>{
-      cb.addEventListener('change',()=>{
-        const r=cb.dataset.role;
-        const k=cb.dataset.key;
-        if(!draft[r])draft[r]={};
-        draft[r][k]=cb.checked;
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        <button id="btn-perm-save" class="btn" style="padding:9px 20px;font-size:13px;">💾 저장</button>
+        <button id="btn-perm-reset" style="padding:9px 20px;background:#fff;color:#64748b;border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">↺ 기본값으로</button>
+      </div>`;
+
+    container.querySelectorAll('.perm-rank').forEach(sel=>{
+      sel.addEventListener('change',()=>{
+        draft[sel.dataset.key]=Number(sel.value);
+        renderPanel();   // '변경됨' 표시와 개수를 갱신
       });
     });
-    // 저장 버튼
+
     document.getElementById('btn-perm-save')?.addEventListener('click',async()=>{
-      // draft에서 누락된 역할/키는 DEFAULT_PERMISSIONS로 채움
-      const full={};
-      ROLES.forEach(r=>{full[r]={};Object.keys(DEFAULT_PERMISSIONS[r]).forEach(k=>{full[r][k]=draft[r]?.[k]??DEFAULT_PERMISSIONS[r][k];});});
       try{
-        await savePermissions(full);
-        toast('권한이 저장되었습니다. 5초 후 페이지가 새로고침됩니다.','success');
-        setTimeout(()=>location.reload(),5000);
-      }catch(e){toast('저장 실패: '+e.message,'error');}
+        await savePermissions(draft);
+        toast('권한이 저장되었습니다. 새로고침 후 적용됩니다.','success',5000);
+        setTimeout(()=>location.reload(),2000);
+      }catch(e){toast('저장 실패: '+(e.message||'다시 시도하세요.'),'error');}
     });
-    // 기본값 초기화 버튼
+
     document.getElementById('btn-perm-reset')?.addEventListener('click',()=>{
-      const code=prompt('모든 역할 권한을 기본값으로 초기화합니다.\\n확인을 위해 "초기화"를 입력하세요:');
-      if(code!=='초기화')return;
-      ROLES.forEach(r=>Object.keys(DEFAULT_PERMISSIONS[r]).forEach(k=>{if(!draft[r])draft[r]={};draft[r][k]=DEFAULT_PERMISSIONS[r][k];}));
-      renderPanel();
-      toast('기본값으로 초기화되었습니다. 저장 버튼을 눌러 적용하세요.','info');
+      showConfirm('기본값으로','모든 기능의 최소 등급을 기본값으로 되돌립니다. 저장을 눌러야 반영됩니다.',()=>{
+        Object.keys(draft).forEach(k=>{draft[k]=DEFAULT_MIN_RANK[k];});
+        renderPanel();
+        toast('기본값으로 되돌렸습니다. 저장을 눌러 적용하세요.','info');
+      },'되돌리기');
     });
   }
-  window._permSetRole=(r)=>{activeRole=r;renderPanel();};
   renderPanel();
 }
 
@@ -759,7 +734,7 @@ export function switchSettingsTab(tab){
     alert('데이터 마감은 센터장·관리자만 사용할 수 있습니다.');
     return;
   }
-  if(tab==='permissions'&&!can('settings.reset')){
+  if(tab==='permissions'&&!can('settings.permissions')){
     alert('권한 관리는 관리자만 사용할 수 있습니다.');
     return;
   }

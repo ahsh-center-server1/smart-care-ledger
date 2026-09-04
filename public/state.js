@@ -29,7 +29,7 @@ export const S = {
   fixedItems: [],          // 고정항목 (활성 입주자 기준)
   allFixedItems: [],       // 고정항목 전체 (대시보드/배너 미납 알림용)
   confirmedMonths: new Set(), // 최종 결재 완료된 월 캐시
-  permissions: null,       // 역할별 권한 맵 (initPermissions() 로드)
+  permOverride: null,      // 기능별 최소 등급 오버라이드 (initPermissions() 로드)
   monthlyStats: {},        // 당월 입주자별 수입/지출 집계 { clientId: {inc, exp} }
   mandatoryUnpaid: {},     // 당월 필수 고정항목 미납 카운트 { clientId: number }
 };

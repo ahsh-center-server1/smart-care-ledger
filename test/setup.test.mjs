@@ -2,12 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { S } from '../public/state.js';
 import { getSetupState } from '../public/modules/setup.js';
-import { DEFAULT_PERMISSIONS } from '../public/modules/permissions.js';
+
 
 /** 역할·데이터를 세팅하고 단계 상태를 계산한다 */
 function stateAs(role, { categories = [], clients = [], accounts = [], isAdmin = false } = {}) {
   S.user = { userId: 'tester', name: '테스터', role, isAdmin };
-  S.permissions = DEFAULT_PERMISSIONS;
   S.categories = categories;
   S.allClients = clients;
   S.clients = clients;
@@ -20,7 +19,7 @@ const cat = { keyword: '', type: '지출', category: '식비' };
 const client = { id: 'c1', name: '입주자 A' };
 const account = { id: 'a1', clientId: 'c1', label: '통장' };
 
-test.afterEach(() => { S.user = null; S.permissions = null; });
+test.afterEach(() => { S.user = null; S.permOverride = null; });
 
 test('빈 배포 — 세 단계 모두 미완료', () => {
   const { steps, done, total, complete } = stateAs('센터장');
@@ -79,7 +78,6 @@ test('본인 담당 입주자가 없어도 조직에 입주자가 있으면 설�
   // 담당자에게 배정된 입주자가 없는 상황 — 설정 문제가 아니라 배정 문제이므로
   // 마법사가 아니라 "담당 배정을 요청하세요" 안내가 나가야 한다.
   S.user = { userId: 'tester', role: '담당자', isAdmin: false };
-  S.permissions = DEFAULT_PERMISSIONS;
   S.categories = [cat];
   S.allClients = [client];   // 조직에는 있음
   S.clients = [];            // 본인 담당은 없음
@@ -89,7 +87,7 @@ test('본인 담당 입주자가 없어도 조직에 입주자가 있으면 설�
 });
 
 test('로그인하지 않은 상태에서도 예외 없이 계산된다', () => {
-  S.user = null; S.permissions = null;
+  S.user = null; S.permOverride = null;
   S.categories = []; S.allClients = []; S.clients = [];
   S.allAccounts = []; S.accounts = [];
   const { complete, steps } = getSetupState();

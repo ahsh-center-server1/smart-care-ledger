@@ -9,7 +9,7 @@ import { S } from '../state.js';
 import { COLS, CAT_COLORS, STATUS_LABELS, STATUS_CLASSES, cs } from '../constants.js';
 import { toast, showConfirm, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
-import { can } from './permissions.js';
+import { can, requiredRank, ROLE_RANK, ADMIN_RANK } from './permissions.js';
 import { calcAccountBalanceAsOf, sumIncomeExpense } from '../services/balance.js';
 import { getImageUrl } from '../services/storage.js';
 import { getUnpaidMandatoryItems } from './modals.js';
@@ -626,12 +626,12 @@ export function renderComments(report,curStatus){
   const userId=String(S.user?.userId||'');
   const client=S.clients.find(c=>c.id===S.reportData?.clientId);
   const teamLeaderId=String(client?.teamLeader||'');
-  const isThisLeader=role==='팀장'&&userId===teamLeaderId;
+  const isThisLeader=userId===teamLeaderId&&can('report.approve.team');
   el.innerHTML='<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">의견</div>';
   const sections=[
     {key:'staffComment',  label:'담당자 의견', editable: role==='담당자'&&(!curStatus||curStatus==='draft'||curStatus==='rejected')},
     {key:'leaderComment', label:'팀장 의견',   editable: isThisLeader},
-    {key:'centerComment', label:'센터장 의견', editable: role==='센터장'||role==='관리자'},
+    {key:'centerComment', label:'센터장 의견', editable: can('report.approve.center')},
   ];
   sections.forEach(s=>{
     const val=report?.[s.key]||'';
@@ -714,10 +714,18 @@ export function renderApproval(report,curStatus){
   const teamLeaderId=String(client?.teamLeader||'');
   // teamLeader는 저장 경로에 따라 doc id 또는 userId로 들어올 수 있어 양쪽 모두로 매칭 (불일치 완화)
   const me=S.users.find(u=>String(u.id)===userId||String(u.userId)===userId);
-  const isThisLeader=role==='팀장'&&(teamLeaderId===userId||(me&&teamLeaderId===String(me.id)));
-  // 배정 팀장이 공석/삭제/역할변경/퇴사(비활성)면 vacant으로 간주 → 센터장·관리자가 대행
+  // 두 가지를 나눠 본다: 이 사람이 **배정된 팀장인가**(신원)와
+  // **팀장 결재를 할 수 있는가**(권한). 예전에는 role==='팀장' 하나로 묶여 있어
+  // 배정 팀장이 센터장이거나 관리자면 결재 버튼이 아예 나오지 않았다.
+  const isAssignedLeader=teamLeaderId===userId||(me&&teamLeaderId===String(me.id));
+  const isThisLeader=isAssignedLeader&&can('report.approve.team');
+  // 배정 팀장이 공석/삭제/결재불가/퇴사(비활성)면 vacant으로 간주 → 상위 등급이 대행.
+  // 역할 문자열이 아니라 '팀장 결재를 할 수 있는 등급인가'로 판정한다.
   const leaderUser=S.users.find(u=>String(u.id)===teamLeaderId||String(u.userId)===teamLeaderId);
-  const leaderVacant=!teamLeaderId||!leaderUser||leaderUser.role!=='팀장'||leaderUser.active===false;
+  const leaderRank=leaderUser?(leaderUser.isAdmin?ADMIN_RANK:(ROLE_RANK[leaderUser.role]||0)):0;
+  const leaderVacant=!teamLeaderId||!leaderUser
+    ||leaderRank<requiredRank('report.approve.team')
+    ||leaderUser.active===false;
   const staffIds=String(client?.userIds||'').split(',').map(s=>s.trim());
   const isDirectStaff=staffIds.includes(userId);
   const isLeaderDirectSubmit=isThisLeader&&isDirectStaff;
@@ -772,7 +780,7 @@ export function renderApproval(report,curStatus){
       mkBtn('📤 제출','color:var(--amber);border-color:#fde68a;',()=>showConfirm('보고서 제출','제출 후에는 담당자가 수정할 수 없습니다.\n계속하시겠습니까?',()=>doApproval('approve'),'제출'));
     }
     // 담당자 본인이 제출한 보고서 회수 (submitted 상태 + 팀장 이상 역할 아닌 경우)
-    if(can('report.recall')&&report?.createdBy===String(userId)&&curStatus==='submitted'&&!['팀장','센터장','관리자'].includes(role)){
+    if(can('report.recall')&&report?.createdBy===String(userId)&&curStatus==='submitted'&&!can('report.approve.team')){
       showSb();
       mkBtn('↩ 회수','color:#7c3aed;border-color:#ddd6fe;',()=>recallReport(report.id));
     }
@@ -793,7 +801,7 @@ export function renderApproval(report,curStatus){
       mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제','btn btn-danger'));
     }
     // 팀장 공석/무효 시: 센터장·관리자가 팀장 결재를 대행 (데스크톱에서도 보고서가 멈추지 않도록)
-    if(!isThisLeader&&(role==='센터장'||role==='관리자')&&curStatus==='submitted'&&leaderVacant){
+    if(!isThisLeader&&can('report.approve.center')&&curStatus==='submitted'&&leaderVacant){
       showSb();
       const bProxy=document.createElement('button');bProxy.className='btn';bProxy.style.cssText='background:var(--green);font-size:13px;padding:8px 14px;';
       bProxy.textContent='✅ 팀장 결재 (대행)';
@@ -807,7 +815,7 @@ export function renderApproval(report,curStatus){
       mkBtn('↩ 회수','color:#7c3aed;border-color:#ddd6fe;',()=>recallReport(report.id));
       mkBtn('↩️ 결재 취소','color:#64748b;border-color:#cbd5e1;',()=>showConfirm('결재 취소','팀장 결재를 취소하고 제출 상태로 되돌립니다.',()=>doRevertToDraft('팀장'),'취소'));
     }
-    if((role==='센터장'||role==='관리자')&&curStatus==='team_approved'){
+    if(can('report.approve.center')&&curStatus==='team_approved'){
       showSb();
       const bFinal=document.createElement('button');bFinal.className='btn';bFinal.style.cssText='font-size:13px;padding:8px 14px;';
       bFinal.textContent='🏁 최종 결재';
@@ -818,7 +826,7 @@ export function renderApproval(report,curStatus){
       mkBtn('✏️ 수정(초안)','color:#64748b;border-color:#cbd5e1;',()=>doRevertToDraft('센터장'));
       mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제','btn btn-danger'));
     }
-    if((role==='센터장'||role==='관리자')&&curStatus==='confirmed'){
+    if(can('report.revert')&&curStatus==='confirmed'){
       showSb();
       mkBtn('↩️ 결재 취소','color:#64748b;border-color:#cbd5e1;',()=>showConfirm('결재 취소','최종 결재를 취소하고 팀장결재 상태로 되돌립니다.',()=>doRevertToDraft('센터장'),'취소'));
       mkBtn('🗑️ 삭제','color:#dc2626;border-color:#fecaca;',()=>showConfirm('보고서 삭제','이 보고서를 삭제하시겠습니까?',()=>doDeleteReport(),'삭제','btn btn-danger'));
@@ -945,8 +953,8 @@ export async function recallReport(reportId){
   if(!report||report.id!==reportId){toast('보고서를 찾을 수 없습니다.','error');return;}
 
   const role=S.user?.role;
-  const isTeamLead=['팀장','센터장','관리자'].includes(role);
-  const isCenter=['센터장','관리자'].includes(role);
+  const isTeamLead=can('report.approve.team');
+  const isCenter=can('report.approve.center');
 
   const canRecallAsAuthor=can('report.recall')&&report.createdBy===String(S.user?.userId)&&report.status==='submitted';
   const canRecallAsTeam=isTeamLead&&['submitted','team_approved'].includes(report.status);
@@ -986,8 +994,8 @@ function filterPendingForUser(list){
   return list.filter(r=>{
     const client=(S.allClients||S.clients).find(c=>c.id===r.clientId);
     const tlId=String(client?.teamLeader||'');
-    if(role==='팀장'&&userId===tlId&&r.status==='submitted')return true;
-    if((role==='센터장'||role==='관리자')&&r.status==='team_approved')return true;
+    if(can('report.approve.team')&&userId===tlId&&r.status==='submitted')return true;
+    if(can('report.approve.center')&&r.status==='team_approved')return true;
     return false;
   });
 }

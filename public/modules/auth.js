@@ -134,7 +134,7 @@ function clearSessionState() {
   S.trxRange='month'; S.page=1;
   S.reportData=null;
   S.confirmedMonths=new Set();
-  S.permissions=null;
+  S.permOverride=null;
   S.monthlyStats={}; S.mandatoryUnpaid={};
   S.fixedItems=[]; S.allFixedItems=[];
   S.excelTemp=[]; S.excelRawRows=[]; S.excelFile=null; S.excelMonth='';
