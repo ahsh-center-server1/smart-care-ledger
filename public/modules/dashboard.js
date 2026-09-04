@@ -7,14 +7,27 @@
 
 import { S } from '../state.js';
 import { loadTransactions, changeView } from './core.js';
-import { emptyState, escHtml } from '../utils/ui.js';
+import { escHtml } from '../utils/ui.js';
+import { renderSetupWizard } from './setup.js';
 
 export function renderDashboard() {
   const grid=document.getElementById('client-grid'); if(!grid)return;
   grid.innerHTML='';
-  if (!S.clients.length) { 
-    grid.innerHTML = emptyState('👤', '등록된 입주자가 없습니다.', '입주자 등록하기', "changeView('settings')");
-    return; 
+
+  // 준비가 덜 됐으면 초기 설정 마법사를 대신 보여준다.
+  // 예전에는 "설정으로" 버튼 하나였는데, 등록 권한이 없는 사용자에게는
+  // 설정 화면의 +등록 버튼이 숨겨져 있어 막다른 길이었다.
+  if (renderSetupWizard()) return;
+
+  if (!S.clients.length) {
+    // 조직에는 입주자가 있지만 본인 담당이 배정되지 않은 경우
+    grid.innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1;">
+        <div class="icon" aria-hidden="true">👤</div>
+        <p>담당으로 지정된 입주자가 없습니다.<br>
+        관리자나 팀장에게 담당 배정을 요청하세요.</p>
+      </div>`;
+    return;
   }
   S.clients.forEach(client=>{
     const card=document.createElement('div'); card.className='client-card';

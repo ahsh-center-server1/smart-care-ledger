@@ -46,6 +46,25 @@ export function cs(cat) {
 }
 
 // ─────────────────────────────────────────────
+// 기본 카테고리
+//
+// 신규 배포 시 categories 컬렉션이 비어 있으면 거래 입력 폼의 분류 셀렉트가
+// 비고 자동분류 규칙 추가가 항상 실패한다. 초기 설정 마법사와
+// 설정 → 기본값 초기화가 이 목록을 함께 쓴다.
+// ─────────────────────────────────────────────
+export const DEFAULT_CATEGORIES = [
+  { keyword:'', type:'지출', category:'식비',     subcategory:'', sortOrder:0 },
+  { keyword:'', type:'지출', category:'교통비',   subcategory:'', sortOrder:1 },
+  { keyword:'', type:'지출', category:'의료비',   subcategory:'', sortOrder:2 },
+  { keyword:'', type:'지출', category:'생필품',   subcategory:'', sortOrder:3 },
+  { keyword:'', type:'지출', category:'여가비',   subcategory:'', sortOrder:4 },
+  { keyword:'', type:'지출', category:'기타',     subcategory:'', sortOrder:5 },
+  { keyword:'', type:'지출', category:'확인필요', subcategory:'', sortOrder:6 },
+  { keyword:'', type:'수입', category:'수입',     subcategory:'', sortOrder:0 },
+  { keyword:'', type:'수입', category:'확인필요', subcategory:'', sortOrder:1 },
+];
+
+// ─────────────────────────────────────────────
 // 보고서 상태
 // ─────────────────────────────────────────────
 export const STATUS_LABELS = {

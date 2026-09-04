@@ -15,7 +15,7 @@ import { S } from '../state.js';
 import { toast, showConfirm, showLoading, escAttr } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchMixedOps } from '../services/firestore.js';
 import { deleteManyFromStorage, recompressStorageImage } from '../services/storage.js';
-import { COLS } from '../constants.js';
+import { COLS, DEFAULT_CATEGORIES } from '../constants.js';
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
@@ -61,7 +61,9 @@ export function renderManagement(){
         const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fffbeb;border-color:#fde68a;flex-wrap:wrap;';
         const roles=['입력자','담당자','팀장','센터장'];
         const roleOpts=roles.map(r=>`<option value="${r}"${(u.role||'입력자')===r?' selected':''}>${r}</option>`).join('');
-        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${escAttr(u.userId||'')} ${u.team?'· '+escAttr(u.team):''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div><div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="승인할 역할(권한)을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn" onclick="approveStaff('${escAttr(u.id)}')" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">✓ 승인</button></div>`;
+        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${escAttr(u.userId||'')} ${u.team?'· '+escAttr(u.team):''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div><div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="승인할 역할(권한)을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn approve-staff-btn" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">✓ 승인</button></div>`;
+        // 인라인 onclick 대신 직접 바인딩 — 전역 함수 이름에 의존하지 않는다
+        d.querySelector('.approve-staff-btn').addEventListener('click',()=>approveStaff(u.id));
         sl.appendChild(d);
       });
       const divider=document.createElement('div'); divider.style.cssText='height:1px;background:var(--border);margin:8px 0;'; sl.appendChild(divider);
@@ -430,20 +432,8 @@ export async function resetCategories(){
     // 배치 삭제
     const toDelete=snap.docs.map(d=>({col:COLS.CATEGORIES,docId:d.id}));
     if(toDelete.length)await batchDeleteDocs(toDelete);
-    // 기본값 준비
-    const defaults=[
-      {keyword:'',type:'지출',category:'식비',subcategory:'',sortOrder:0},
-      {keyword:'',type:'지출',category:'교통비',subcategory:'',sortOrder:1},
-      {keyword:'',type:'지출',category:'의료비',subcategory:'',sortOrder:2},
-      {keyword:'',type:'지출',category:'생필품',subcategory:'',sortOrder:3},
-      {keyword:'',type:'지출',category:'여가비',subcategory:'',sortOrder:4},
-      {keyword:'',type:'지출',category:'기타',subcategory:'',sortOrder:5},
-      {keyword:'',type:'지출',category:'확인필요',subcategory:'',sortOrder:6},
-      {keyword:'',type:'수입',category:'수입',subcategory:'',sortOrder:0},
-      {keyword:'',type:'수입',category:'확인필요',subcategory:'',sortOrder:1},
-    ];
-    // 배치 추가
-    const toAdd=defaults.map(d=>({col:COLS.CATEGORIES,data:d}));
+    // 기본값 — 초기 설정 마법사(setup.js)와 같은 목록을 쓴다 (constants.js)
+    const toAdd=DEFAULT_CATEGORIES.map(d=>({col:COLS.CATEGORIES,data:{...d}}));
     if(toAdd.length)await batchAddDocs(toAdd);
     await refetchCategories(); loadSettings(); toast('기본값으로 초기화됨','success');
   },'초기화','btn btn-danger');
@@ -787,9 +777,9 @@ export function switchCategorySubtab(subtab){
 }
 
 // ─────────────────────────────────────────────
-// 회원가입 승인 (inline onclick에서 호출)
+// 회원가입 승인
 // ─────────────────────────────────────────────
-window.approveStaff = async (userId) => {
+export async function approveStaff(userId) {
   const sel = document.getElementById('pending-role-' + userId);
   const role = sel?.value || '입력자';
   try {
@@ -799,7 +789,7 @@ window.approveStaff = async (userId) => {
     toast(`승인 완료 — ${role} 권한으로 로그인할 수 있습니다.`, 'success');
     await refetchUsers(); renderManagement(); updateSignupBadge();
   } catch(e) { toast('승인 오류: '+(e.message||'다시 시도하세요.'), 'error'); }
-};
+}
 
 // 설정 네비게이션의 회원가입 승인 대기 뱃지 갱신 (관리 권한자에게만 표시)
 export function updateSignupBadge(){

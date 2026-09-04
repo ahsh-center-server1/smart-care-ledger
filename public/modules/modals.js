@@ -14,6 +14,7 @@ import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchA
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
 import { can } from './permissions.js';
+import { refreshSetupAfterChange } from './setup.js';
 
 // ─────────────────────────────────────────────
 // 모달
@@ -954,12 +955,29 @@ export function renderClientForm(c){
     </div>`;
   document.getElementById('fc-save').addEventListener('click',async()=>{
     const isAdm=can('nav.staff');
-    const staffIds=isAdm?Array.from(document.querySelectorAll('input[name="fc-staff"]:checked')).map(c=>c.value).join(','):String(S.user.userId);
+    // 담당 직원 목록은 관리 권한자만 편집할 수 있다(체크박스가 그들에게만 보인다).
+    // 권한이 없는 사용자가 저장할 때 본인 한 명으로 덮어쓰면 동료의 접근권이
+    // 통째로 사라지므로, 신규 등록일 때만 본인을 담당으로 넣고 수정 시에는
+    // 필드를 건드리지 않는다.
     const leaderId=isAdm?document.getElementById('fc-leader')?.value||'':'';
-    const data={id:document.getElementById('fc-id').value,name:document.getElementById('fc-name').value,contact:isEdit?c.contact||'':'',memo:document.getElementById('fc-memo').value,userIds:staffIds,teamLeader:leaderId};
+    const id=document.getElementById('fc-id').value;
+    const data={id,name:document.getElementById('fc-name').value,contact:isEdit?c.contact||'':'',memo:document.getElementById('fc-memo').value};
+    if(isAdm){
+      data.userIds=Array.from(document.querySelectorAll('input[name="fc-staff"]:checked')).map(x=>x.value).join(',');
+    } else if(!isEdit){
+      data.userIds=String(S.user.userId);   // 본인이 만든 입주자는 본인 담당으로
+    }
+    // 담당 팀장은 관리 권한자만 지정할 수 있다. 권한이 없는 사용자가 저장할 때
+    // 빈 값으로 덮어쓰면 팀장이 공석 처리되어 결재가 센터장 대행으로 넘어가므로,
+    // 아예 필드를 넣지 않아 기존 값이 유지되게 한다(merge).
+    if(isAdm)data.teamLeader=leaderId;
+    if(!isEdit)data.active=true;
+    // merge:true — 예전에는 merge 없이 덮어써서 저장 한 번에 active가 사라지고
+    // 비활성 입주자가 되살아났다.
     const{doc,setDoc}=fb();
-    await setDoc(doc(fdb(),COLS.CLIENTS,data.id),data);
+    await setDoc(doc(fdb(),COLS.CLIENTS,id),data,{merge:true});
     toast('저장됨','success'); closeModal(); await refetchClients(); renderManagement();
+    await refreshSetupAfterChange();
   });
 }
 
@@ -988,11 +1006,17 @@ export function renderAccountForm(a){
   document.getElementById('fa-save').addEventListener('click',async()=>{
     const id=document.getElementById('fa-id').value, init=Number(document.getElementById('fa-init').value||0);
     const initDate=document.getElementById('fa-init-date')?.value||'';
-    const data={clientId:document.getElementById('fa-client').value,label:document.getElementById('fa-label').value,accountNumber:isEdit?a.accountNumber||'':'',initialBalance:init,initialBalanceDate:initDate,currentBalance:init};
+    const data={clientId:document.getElementById('fa-client').value,label:document.getElementById('fa-label').value,accountNumber:isEdit?a.accountNumber||'':'',initialBalance:init,initialBalanceDate:initDate};
+    if(!isEdit)data.active=true;
+    // merge:true — 이 객체에 없는 필드를 보존한다.
+    // 예전에는 merge 없이 덮어써서 계좌를 한 번 수정하면 그 계좌의
+    // 통장 사진 기록(bankStatements)이 통째로 사라지고 비활성 계좌가 되살아났다.
+    // currentBalance도 여기서 쓰지 않는다 — syncAccountOnSettingsChange 트리거가
+    // 기초잔액·기준일 변경을 감지해 전체 거래 기준으로 다시 계산한다.
     const{doc,setDoc}=fb();
-    await setDoc(doc(fdb(),COLS.ACCOUNTS,id),data);
-    await updateAccBalance(id);
+    await setDoc(doc(fdb(),COLS.ACCOUNTS,id),data,{merge:true});
     toast('저장됨','success'); closeModal(); await refetchAccounts(); renderManagement();
+    await refreshSetupAfterChange();
   });
 }
 
