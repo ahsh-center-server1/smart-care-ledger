@@ -69,33 +69,42 @@ export async function _enterApp() {
     setText('user-role',   S.user.role||'');
     document.getElementById('user-avatar').textContent=(S.user.name||'?').charAt(0);
     if (can('nav.staff')) document.getElementById('admin-staff').style.display='block';
-    // 입력자 전용: 보고서/설정 nav + 일부 버튼 숨김
-    const isInputOnly=!can('trx.view.all');
-    document.querySelectorAll('.nav-item[data-view="report"],.nav-item[data-view="settings"]').forEach(el=>{
-      el.style.display=isInputOnly?'none':'';
-    });
-    // 각 버튼을 고유 권한으로 제어
-    const elExcel=document.getElementById('btn-h-excel');
-    if(elExcel)elExcel.style.display=can('excel.upload')?'':'none';
-    const elReceiptPrint=document.getElementById('btn-h-receipt-print');
-    if(elReceiptPrint)elReceiptPrint.style.display=can('receipt.print')?'':'none';
-    const elViewToggle=document.getElementById('btn-trx-view-toggle');
-    if(elViewToggle)elViewToggle.style.display=isInputOnly?'none':'';
-    const elBulkDel=document.getElementById('btn-bulk-del');
-    if(elBulkDel)elBulkDel.style.display=can('trx.delete.bulk')?'':'none';
-    const elFixed=document.getElementById('btn-h-fixed');
-    if(elFixed)elFixed.style.display=can('settings.fixed')?'':'none';
+    applyPermissionVisibility();
     document.getElementById('login-view').style.display='none';
     await fetchBaseData();
-    // isMobile / initMobileApp는 app.js에 정의됨 (모바일 전용, 미모듈화) — window 경유
-    if(window.isMobile()){
-      window.initMobileApp();
-    } else {
-      document.getElementById('app-view').style.display='block';
-      changeView('dashboard');
-    }
+    // 화면 폭에 따른 분기는 없다. 모바일 전용 앱을 없애고 반응형 하나로 통합했으므로
+    // 좁은 화면에서도 같은 데이터·같은 로직이 돈다(보이는 범위만 CSS로 줄인다).
+    document.getElementById('app-view').style.display='block';
+    changeView('dashboard');
   } catch(e) { toast('초기화 오류: '+e.message,'error'); }
   showLoading(false);
+}
+
+/**
+ * 권한에 따라 메뉴·버튼 표시를 정한다.
+ *
+ * 입력자는 담당 입주자의 본인 작성 거래만 보고 수기 입력만 한다.
+ * 보고서·설정은 물론 엑셀 업로드·증빙 출력·통장사진·CSV·일괄삭제·달력뷰까지
+ * 전부 숨긴다(보안 규칙에서도 막히지만, 눌러서 실패하게 두지 않는다).
+ */
+function applyPermissionVisibility() {
+  const show = (id, ok) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = ok ? '' : 'none';
+  };
+
+  // 보고서·설정 탭 — 사이드바와 하단 네비 양쪽
+  document.querySelectorAll('.nav-item[data-view="report"],.mobile-nav-item[data-view="report"]')
+    .forEach(el => { el.style.display = can('nav.report') ? '' : 'none'; });
+  document.querySelectorAll('.nav-item[data-view="settings"],.mobile-nav-item[data-view="settings"]')
+    .forEach(el => { el.style.display = can('nav.settings') ? '' : 'none'; });
+
+  show('btn-h-excel',         can('excel.upload'));
+  show('btn-h-receipt-print', can('receipt.print'));
+  show('btn-bulk-del',        can('trx.delete.bulk'));
+  show('btn-h-fixed',         can('settings.fixed'));
+  show('btn-csv-export',      can('trx.csv'));
+  show('btn-trx-view-toggle', can('trx.view.all'));
 }
 
 export async function handleLogout() {
@@ -104,8 +113,6 @@ export async function handleLogout() {
   clearSessionState();
   document.getElementById('login-view').style.display='flex';
   document.getElementById('app-view').style.display='none';
-  const mv=document.getElementById('mobile-view');
-  if(mv)mv.style.display='none';
   document.getElementById('login-id').value='';
   document.getElementById('login-pw').value='';
   document.getElementById('login-err').style.display='none';

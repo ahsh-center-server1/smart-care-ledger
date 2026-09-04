@@ -152,28 +152,28 @@ export function renderHistoryTable() {
     const accName=S.accounts.find(a=>a.id===t.accountId)?.label||'';
     tr.innerHTML=`
       <td style="text-align:center;width:28px;cursor:grab;color:#cbd5e1;font-size:16px;user-select:none;${isInputOnly?'display:none;':''}" class="drag-handle" title="드래그로 순서 변경">⠿</td>
-      <td style="text-align:center;width:36px;${isInputOnly?'display:none;':''}"><input type="checkbox" class="row-check" value="${t.id}" data-acc="${t.accountId}" style="accent-color:var(--blue);width:14px;height:14px;cursor:pointer;"></td>
-      <td style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--sub);white-space:nowrap;">${t.date||''}</td>
-      <td><div style="position:relative;display:inline-block;">
+      <td class="col-check" style="text-align:center;width:36px;${isInputOnly?'display:none;':''}"><input type="checkbox" class="row-check" value="${t.id}" data-acc="${t.accountId}" style="accent-color:var(--blue);width:14px;height:14px;cursor:pointer;"></td>
+      <td data-label="날짜" style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--sub);white-space:nowrap;">${t.date||''}</td>
+      <td data-label="카테고리"><div style="position:relative;display:inline-block;">
         <span class="cat-chip" data-id="${t.id}" style="background:${c.bg};color:${c.text};border-color:${c.border};">
           <span class="cat-dot" style="background:${c.dot};"></span><span class="cat-label">${t.category||'미분류'}</span>
         </span>
         <div class="cat-dd" id="dd-${t.id}"></div>
       </div></td>
-      <td class="trx-edit" data-id="${t.id}" style="cursor:pointer;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.description||''}">${t.description||''}${typeTag}</td>
-      <td style="font-size:11px;color:var(--muted);white-space:nowrap;">${accName}</td>
-      <td style="text-align:right;" class="col-in">${
+      <td class="trx-edit" data-label="내용" data-id="${t.id}" style="cursor:pointer;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.description||''}">${t.description||''}${typeTag}</td>
+      <td data-label="계좌" style="font-size:11px;color:var(--muted);white-space:nowrap;">${accName}</td>
+      <td data-label="수입" style="text-align:right;" class="col-in">${
         t.type==='취소'&&t.amountIn>0?'<span style="color:#a1a1aa;text-decoration:line-through;">+'+t.amountIn.toLocaleString()+'원</span>':
         t.amountIn>0?'<span style="color:'+(t.type==='자산이동'?'#0ea5e9':'')+'">'+'+'+t.amountIn.toLocaleString()+'원</span>':''
       }</td>
-      <td style="text-align:right;" class="col-out">${
+      <td data-label="지출" style="text-align:right;" class="col-out">${
         t.type==='자산이동'?'<span style="color:#0ea5e9;">'+Math.abs(t.amountOut).toLocaleString()+'원</span>':
         t.type==='취소'&&t.amountOut>0?'<span style="color:#a1a1aa;text-decoration:line-through;">'+t.amountOut.toLocaleString()+'원</span>':
         t.type==='취소'?'':
         t.amountOut<0?'<span style="color:#059669;font-size:12px;">+'+Math.abs(t.amountOut).toLocaleString()+'원 (환불)</span>':
         (t.amountOut>0?'-'+t.amountOut.toLocaleString()+'원':'')
       }</td>
-      <td style="text-align:center;">
+      <td data-label="증빙" style="text-align:center;">
         ${t.receiptUrl
           ?`<button class="icon-btn receipt-view" data-url="${t.receiptUrl}" title="증빙 보기">📎</button>`
           :`<span style="display:inline-flex;align-items:center;gap:3px;justify-content:center;">${
@@ -184,7 +184,7 @@ export function renderHistoryTable() {
                 :(t.receiptMissing?'<span style="font-size:10px;font-weight:700;color:#b91c1c;background:#fee2e2;padding:1px 6px;border-radius:4px;border:1px solid #fecaca;">분실</span>':'')
             }</span>`}
       </td>
-      <td style="text-align:center;"><div style="display:flex;justify-content:center;gap:4px;flex-wrap:wrap;">${(()=>{
+      <td data-label="관리" style="text-align:center;"><div style="display:flex;justify-content:center;gap:4px;flex-wrap:wrap;">${(()=>{
         const canEdit=can('trx.edit')&&(!isInputOnly||(t.createdBy===S.user?.userId));
         const moveBtns=!isInputOnly
           ?`<button class="icon-btn trx-up-btn" data-id="${t.id}" title="위로 이동" style="color:#94a3b8;font-size:12px;" onmouseover="this.style.background='#e0f2fe';this.style.color='#0369a1';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">▲</button>

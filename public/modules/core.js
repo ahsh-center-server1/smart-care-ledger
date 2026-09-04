@@ -227,10 +227,45 @@ export function rebuildSelectors() {
   Trx.rebuildAccountFilter();
 }
 
+/** 좁은 화면(휴대폰)인지 — CSS 미디어 쿼리와 같은 기준을 쓴다 */
+export function isNarrowScreen() {
+  return window.matchMedia('(max-width:768px)').matches;
+}
+
+/**
+ * 화면이 좁아지면 PC 전용 화면에서 빠져나온다.
+ * 태블릿을 세로로 돌리거나 창을 줄이면 보고서 화면이 조작 불가 상태로 남기 때문.
+ */
+export function watchViewportForDesktopOnlyViews() {
+  const mq = window.matchMedia('(max-width:768px)');
+  const onChange = (e) => {
+    if (!e.matches) return;
+    const current = ['report','settings'].find(v => {
+      const el = document.getElementById('view-' + v);
+      return el && el.style.display !== 'none';
+    });
+    if (current) changeView('dashboard');
+  };
+  // Safari 13 이하는 addEventListener를 지원하지 않는다
+  if (mq.addEventListener) mq.addEventListener('change', onChange);
+  else if (mq.addListener) mq.addListener(onChange);
+}
+
+/**
+ * 좁은 화면에서 숨기는 화면들.
+ * 보고서·결재는 표와 결재란이 많아 휴대폰에서 읽기 어렵다는 현장 판단에 따라
+ * PC 전용으로 두고, 휴대폰에서는 조회와 수기입력만 노출한다.
+ */
+const DESKTOP_ONLY_VIEWS = { report: '보고서', settings: '설정' };
+
 export function changeView(view) {
   if(view==='management') view='settings';
   if((view==='report'&&!can('nav.report'))||(view==='settings'&&!can('nav.settings'))){
     toast('접근 권한이 없습니다.','error'); return;
+  }
+  if(DESKTOP_ONLY_VIEWS[view] && isNarrowScreen()){
+    toast(`${DESKTOP_ONLY_VIEWS[view]}는 PC에서 이용해 주세요.`,'info',4000);
+    return;
   }
   if(view==='annual'){ changeView('report'); switchRptSubtab('annual'); return; }
   if(view!=='report'){
