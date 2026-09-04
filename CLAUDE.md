@@ -86,18 +86,36 @@ archive_YYYY: 마감된 거래 데이터 백업
 
 ## 5. 결재 흐름
 
+전이표는 `public/modules/report-workflow.js`의 `TRANSITIONS` 하나뿐이고,
+**모든 결재 동작이 `applyReportTransition()`을 통과한다.** 버튼 표시 여부와
+무관하게 실행 시점에 현재 상태를 확인하므로 단계를 건너뛸 수 없다.
+
 ```
-draft → submitted(담당자 제출) → team_approved(팀장 결재) → confirmed(센터장 최종)
-                                    ↑                           ↓                           ↓
-                                 rejected(반려) ←←←←←←←←←←←←←←←←
+draft ──submit──▶ submitted ──approveTeam──▶ team_approved ──approveCenter──▶ confirmed
+  ▲                   │                          │                               │
+  └─recall/revert─────┘                          │                               │
+  ▲                   └───reject──▶ rejected ◀───┘                               │
+  └─release/submit───────────────────┘           ◀────────────revert─────────────┘
 ```
 
-- **순서 강제**: 팀장 결재 완료 후에만 센터장 결재 가능
-- **팀장 직접 담당**: 담당자 없음 + `userIds`에 포함 + `teamLeader`가 본인 → 제출+팀장결재 동시 처리
-- **반려 후**: 담당자가 의견 수정 후 재제출 가능
-- **회수(recall)**: 팀장 결재 전(submitted) 상태면 담당자 본인이 draft로 회수 가능 (`report.recall`)
+| 액션 | 필요 권한 | 비고 |
+|---|---|---|
+| `save` | `report.draft` | 임시저장 |
+| `submit` | `report.submit` | |
+| `submitAsLeader` | `report.submit` + `report.approve.team` + 배정 팀장 | 제출+팀장결재 동시 |
+| `approveTeam` | `report.approve.team` + 배정 팀장 | |
+| `approveTeamProxy` | `report.approve.center` + **팀장 공석일 때만** | 대행 표시가 남음 |
+| `approveCenter` | `report.approve.center` | |
+| `reject` | `report.reject` + 지금 결재할 차례인 사람 | 사유 필수 |
+| `recall` | 작성자(`createdBy`)+`report.recall`, 또는 팀장 이상 | |
+| `revert` | 직전 단계의 결재 권한 (confirmed는 `report.revert`) | 한 단계씩 |
+| `release` | `report.release` | 담당자 부재 시 반려 해제 |
 
----
+- **도장 정리**: 전이할 때마다 도착 상태보다 뒤 단계의 결재 기록을
+  `deleteField()`로 지운다. 취소된 서명이 인쇄물에 남지 않는다.
+- **`createdBy`**: 보고서를 만드는 모든 경로가 기록한다. 회수 권한 판정의 근거.
+- **막다른 상태 없음**: `rejected`에서 담당자 재제출(`submit`)과
+  팀장 이상 해제(`release`) 두 경로가 보장된다.
 
 ## 6. 거래 유형(type)
 

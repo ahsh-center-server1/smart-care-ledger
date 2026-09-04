@@ -82,6 +82,9 @@ export const DEFAULT_MIN_RANK = {
   'report.approve.team':   3,
   'report.reject':         3,
   'report.delete':         3,
+  // 반려된 보고서를 초안으로 되돌린다. 담당자가 퇴사·부재여도 보고서가
+  // 영구 정지되지 않도록 하는 탈출 경로.
+  'report.release':        3,
   'settings.client':       3,
   'settings.account':      3,
   'settings.staff':        3,
@@ -125,6 +128,7 @@ export const PERM_SECTIONS = [
     'report.draft': '임시저장', 'report.submit': '제출', 'report.recall': '회수',
     'report.approve.team': '팀장 결재', 'report.approve.center': '센터장 최종 결재',
     'report.reject': '반려', 'report.revert': '결재 취소', 'report.delete': '보고서 삭제',
+    'report.release': '반려 해제 (담당자 부재 시)',
   }},
   { title: '설정', keys: {
     'settings.client': '입주자 관리', 'settings.account': '계좌 관리',
