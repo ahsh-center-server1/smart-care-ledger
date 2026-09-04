@@ -1,4 +1,43 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "_comment": "core.js loadTransactions(range=month|기간) 및 monthlyStats의 clientId in + date 범위 쿼리용. 이 인덱스가 없으면 거래내역 조회가 통째로 실패하고 core.js:133이 예외를 삼켜 대시보드가 조용히 0원을 표시한다.",
+      "collectionGroup": "transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "입력자(등급 1) 전용. 보안 규칙이 본인 작성분만 허용하므로 클라이언트가 where('createdBy','==',uid)를 함께 걸어야 하고, 그때 필요한 인덱스.",
+      "collectionGroup": "transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "createdBy", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "settings.js executeArchive의 연도 범위 조회 + 입력자 필터 조합.",
+      "collectionGroup": "transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdBy", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comment": "report.js loadReport — 입주자·연·월 단일 보고서 조회.",
+      "collectionGroup": "reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "year", "order": "ASCENDING" },
+        { "fieldPath": "month", "order": "ASCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }

@@ -16,13 +16,9 @@ GAS v17 → Firebase 마이그레이션 후 기능이 90개 이상 쌓였고, "�
 
 | 항목 | 결정 |
 |---|---|
-| 인증 | **Cloud Functions 커스텀 토큰** — 현재 ID/PW 로그인 화면 유지, 서버에서 토큰 발급 (Blaze 종량제 플랜 필요) |
-| 권한 | **결재 3역할(담당자·팀장·센터장) + 입력자 + 관리자 플래그**, 32키 매트릭스 폐기 |
+| 인증 | **Cloud Functions 커스텀 토큰** — 현재 ID/PW 로그인 화면 유지, 서버에서 토큰 발급. **Blaze 전환 확정** |
+| 권한 | **등급 4개(입력자·담당자·팀장·센터장) + `isAdmin` 플래그.** 입력자 역할 **유지 확정**, 32키 매트릭스 폐기 |
 | 모바일 | **별도 구현 삭제 → 반응형 통합.** 좁은 화면에는 조회·수기입력만, 보고서·결재는 데스크톱 전용 |
-
-> ⚠️ "3역할 + 관리자 플래그"라고 하셨는데 입력자 권한도 상세히 지정해 주셔서,
-> **결재 3역할 + 입력자 + 관리자 플래그**로 설계했습니다(등급 4개 + 플래그).
-> 입력자를 없애려면 아래 등급표에서 **등급 1만 지우면** 됩니다.
 
 ---
 
@@ -216,6 +212,19 @@ if (role==='팀장' && userId===tlId && ...) return true;   // 로그인 ID → 
 → **팀장 결재 대기 뱃지·목록·대시보드 배너가 언제나 0건이다.**
 팀장이 보고서로 직접 찾아 들어가면 결재는 되는데(`report.js:724-728`이 양쪽 키를
 모두 대조하는 방어 코드를 갖고 있음) 알림은 절대 오지 않는다. 모바일도 동일(`app.js:653`).
+
+**게다가 `users` 문서 ID 자체가 세 가지 형태로 생성된다.**
+
+| 생성 경로 | 문서 ID |
+|---|---|
+| 직원 등록 폼 (`modals.js:1006`) | `usr_${Date.now()}` |
+| 직원 CSV 일괄등록 (`modals.js:1178`, `batchAddDocs`) | Firestore 자동 ID |
+| 본인 회원가입 (`auth.js:140`, `addDoc`) | Firestore 자동 ID |
+
+→ **`clients.teamLeader`에는 현재 3종류 값이 섞여 있을 수 있다** — `usr_...`,
+Firestore 자동 ID, 그리고 CSV 입주자 등록이 넣은 로그인 아이디.
+마이그레이션 설계(설계 6)가 이 세 가지를 모두 처리해야 한다.
+`cli_${Date.now()}`·`acc_${Date.now()}`도 같은 패턴이라 동일 밀리초 생성 시 충돌 위험이 있다.
 
 같은 종류의 불일치: **날짜**(ISO 문자열 vs epoch 숫자), **`sortOrder`**(엑셀
 `maxOrder+i+1` / 모바일 `Date.now()` / 데스크톱 수기입력 **미설정** / 재정렬
@@ -459,15 +468,14 @@ if (auth && !auth.currentUser) { sessionStorage.removeItem('scl_user'); throw ..
     ↓ 이후 모든 Firestore 요청에 request.auth 존재
 ```
 
-**필요한 Cloud Functions (5개)**
+**필요한 Cloud Functions (4개, 리전 `asia-northeast3`)**
 
 | 함수 | 역할 |
 |---|---|
-| `login` | 비밀번호 검증 + 커스텀 토큰 발급 |
-| `signup` | 가입 신청 (해시 저장, `approved:false`) |
-| `approveStaff` | 승인 + 역할 부여 (**호출자 등급 이하만** 부여 가능) |
-| `changePassword` | 본인/관리자 비밀번호 변경 |
-| `bootstrap` | `users`가 비면 첫 계정을 관리자로 생성 (S2 해소) |
+| `login` | 비밀번호 검증 + `approved`·`active` 확인 + 커스텀 토큰 발급 |
+| `signup` | 가입 신청 (해시 저장, `approved:false`). **`users`가 비어 있으면 첫 계정을 `관리자`+`approved:true`로** → S2 부트스트랩 교착 해소 |
+| `approveStaff` | 승인 + 역할 부여 (**호출자 등급 이하만** 부여 가능 → S4 권한 상승 차단) |
+| `changePassword` | 본인 또는 관리자의 비밀번호 변경 |
 
 **데이터 모델 변경**
 
@@ -657,6 +665,80 @@ const TRANSITIONS = {
 - `rejected`에서 담당자가 부재해도 **관리자가 해제**할 수 있게 한다.
 - 작성일을 `report.createdAt`에서 읽는다(`report.js:291`).
 
+## 설계 6: 마이그레이션 절차 (라이브 데이터)
+
+1단계는 **운영 중인 데이터의 문서 ID와 비밀번호 저장 방식을 바꾼다.** 한 번에
+배포하면 사용 중인 직원이 전부 끊긴다. **확장 → 이전 → 축소** 3배포로 나눈다.
+
+### 배포 1 — 데이터 준비 (앱 동작 변화 **없음**)
+
+Cloud Functions를 올려두되 **아무도 호출하지 않는다.** 규칙도 아직 열어둔다.
+기존 앱은 평소대로 동작한다.
+
+마이그레이션 스크립트(Admin SDK, 규칙 우회)를 **사전 점검 → 실행** 순으로 돌린다.
+
+**사전 점검 (실패 시 중단하고 리포트만 출력)**
+- `userId` **중복 검사** — 중복이 있으면 새 문서 ID가 충돌한다. S12에서 확인한
+  대로 회원가입 중복 검사가 비원자적이라 실제로 존재할 수 있다. **사람이 먼저 정리해야 한다.**
+- `userId`가 비었거나 문서 ID로 못 쓰는 문자(`/`)를 포함한 계정
+- `clients.teamLeader` 중 매핑 불가 값
+
+**실행**
+1. `users/{구ID}` → `users/{userId}` 복사. **구 문서는 지우지 않는다**(롤백용)
+2. `userSecrets/{userId}` 생성 — 기존 평문에서 `passwordHash` 산출 (bcrypt/scrypt)
+3. 신규 `users/{userId}`에서 `password` 필드 **제거**
+4. `isAdmin = (role === '관리자')` 부여, `role === '관리자'`였던 계정은 `role`을 `센터장`으로 하향
+5. `clients.teamLeader` 정규화 — 구ID→userId 매핑표로 **3종류 값 모두** 처리
+   (`usr_...` / 자동 ID / 이미 로그인 ID인 값). 매핑 실패 시 `''`로 비우고 **리포트에 명시**
+6. 검증 리포트 출력: 이전 계정 수, 매핑 실패 목록, `teamLeader`가 빈 입주자 목록
+
+> `clients.userIds`는 **이미 로그인 아이디**를 담고 있어 손대지 않는다. 이것이
+> 두 필드를 같은 키 공간으로 맞추는 지점이고, **팀장 결재 대기 목록이 여기서 살아난다.**
+
+### 배포 2 — 앱 전환
+
+- `auth.js` 로그인을 `httpsCallable('login')` → `signInWithCustomToken`으로 교체
+- 세션 복원을 `onAuthStateChanged`로 교체 → **S12(F5 로그아웃)와 sessionStorage
+  역할 위조가 동시에 해소된다.** `scl_user` 신뢰 코드 제거
+- `S.user.id`를 없앤다 (`userId`가 곧 문서 ID) → `core.js:68`·`report.js:725`의
+  반복 조회 삭제
+- **실사용자 로그인 확인 후 다음 단계로.** 문제가 생기면 배포 1 상태로 롤백 가능
+  (구 `users/{구ID}` 문서가 살아 있음)
+
+### 배포 3 — 잠금
+
+- `firestore.rules` / `storage.rules` 적용
+- 구 `users/{구ID}` 문서 삭제
+- 이 시점부터 **비인증 접근이 차단된다**
+
+### 배포 4 — 잔액 정정
+
+- `services/balance.js` 도입 + 호출부 4곳 교체 → **새 손상이 멈춘다**
+- 그 **다음에** 재계산 스크립트로 전 계좌 `currentBalance`를 바로잡는다
+  (순서를 바꾸면 재계산 직후 다시 망가진다)
+- 재계산 전 `accounts` 컬렉션을 백업해 둔다
+
+### 토큰과 역할 변경
+
+`createCustomToken(userId, { role, isAdmin })`으로 클레임을 토큰에 실으면
+규칙에서 `request.auth.token.role`로 읽을 수 있다. 다만 **클레임이 토큰에 고정되므로
+역할 변경은 재로그인 후 반영된다.** 이 앱에서 역할 변경은 드물어 수용 가능하다.
+즉시 반영이 필요하면 `admin.auth().setCustomUserClaims()` + 클라이언트
+`getIdToken(true)` 조합으로 바꾼다.
+
+퇴사 처리(`active:false`)는 **ID 토큰 만료(기본 1시간)까지 유효**하다. 지금은
+"탭 닫을 때까지 무제한"이므로 큰 개선이지만, 즉시 차단이 필요하면 민감한 쓰기
+규칙에 `get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true`를 추가한다(읽기 1회 비용).
+
+### 기타
+
+- Functions 리전을 Firestore와 같은 **`asia-northeast3`(서울)** 로 배포하고
+  클라이언트 `httpsCallable`에도 같은 리전을 지정한다.
+- `bootstrap`은 별도 함수 대신 **`signup` 안에서 처리한다** — `users`가 완전히
+  비어 있을 때만 첫 계정을 `관리자 + approved:true`로 만들고 로그를 남긴다.
+- 기존 `config/permissions` 문서는 **형식이 달라졌으므로 폐기하고 새로 만든다**
+  (어차피 15개 키가 무반응이었다).
+
 ---
 
 ## 작업 순서
@@ -665,27 +747,36 @@ const TRANSITIONS = {
 
 ### 1단계 — 데이터 보호 (지금)
 
-| # | 작업 | 대상 |
-|---|---|---|
-| 1 | Cloud Functions 5개 작성 + 비밀번호 해시 마이그레이션 | `functions/` (신규) |
-| 2 | `userId`를 문서 ID로 승격 + 기존 데이터 마이그레이션 | `users`, `clients.teamLeader` |
-| 3 | `firestore.rules` / `storage.rules` 잠그기 | 규칙 2개 |
-| 4 | 로그인/세션을 커스텀 토큰 방식으로 전환, `S.users`에서 비밀번호 제거 | `auth.js`, `core.js:48`, `app.js:338` |
-| 5 | **잔액 단일화 + 손상된 `currentBalance` 전량 재계산** | `services/balance.js`(신규) 외 4곳 |
-| 6 | 복합 인덱스를 저장소에 기록 (`transactions`: clientId, date) | `firestore.indexes.json` |
-| 7 | `escHtml()` 추가 + `innerHTML` 삽입 32곳 정리 | `utils/ui.js`, 전 모듈 |
+설계 6의 4배포로 나눠 진행한다.
 
-2번이 S5(팀장 결재 알림 0건)를 함께 해소한다. 7번은 S0을 고치기 전까지 실질적
-공격 경로이므로 1단계에 둔다.
+| # | 작업 | 배포 | 대상 |
+|---|---|---|---|
+| 1 | Cloud Functions 4개 (`login`·`signup`+부트스트랩·`approveStaff`·`changePassword`) | 1 | `functions/` (신규) |
+| 2 | 마이그레이션 스크립트 (사전 점검 + 실행 + 리포트) | 1 | `tools/migrate-auth.mjs` (신규) |
+| 3 | 로그인·세션을 커스텀 토큰 / `onAuthStateChanged`로 교체 | 2 | `auth.js`, `app.js:338` |
+| 4 | `firestore.rules` / `storage.rules` 잠그기, 구 문서 삭제 | 3 | 규칙 2개 |
+| 5 | **잔액 단일화** (`calcAccountBalance` 도입, 호출부 4곳 교체) | 4 | `services/balance.js`(신규) |
+| 6 | **손상된 `currentBalance` 전량 재계산** | 4 | `tools/recalc-balances.mjs` (신규) |
+| 7 | 복합 인덱스를 저장소에 기록 (`transactions`: clientId, date) | 아무 때나 | `firestore.indexes.json` |
+| 8 | `escHtml()` 추가 + `innerHTML` 삽입 32곳 정리 | 아무 때나 | `utils/ui.js`, 전 모듈 |
+
+2번이 S5(팀장 결재 알림 0건)를, 3번이 S12(F5 로그아웃 + 역할 위조)를 함께 해소한다.
+8번은 S0을 고치기 전까지 실질적 공격 경로이므로 1단계에 둔다.
+
+**시작 전 확인 사항**
+- Firebase 프로젝트를 **Blaze 플랜으로 전환** (결제 수단 등록)
+- `userId` 중복 계정이 있으면 **사람이 먼저 정리** (스크립트가 목록을 뽑아준다)
 
 ### 2단계 — 신규 세팅이 되게 만들기
 
+부트스트랩(`signup` 내 첫 계정 = 관리자)과 세션 재검증은 **1단계에서 이미 처리된다.**
+여기서는 첫 로그인 이후 실제로 쓸 수 있게 만드는 부분만 남는다.
+
 | # | 작업 | 대상 |
 |---|---|---|
-| 8 | `bootstrap` 함수: `users`가 비면 첫 계정을 관리자로 | `functions/bootstrap` |
-| 9 | 첫 로그인 시 기본 카테고리 자동 시딩 | `settings.js:425` 로직 재사용 |
+| 9 | 첫 로그인 시 기본 카테고리 자동 시딩 (빈 컬렉션 감지) | `settings.js:425` 로직 재사용 |
 | 10 | 초기 설정 마법사 (관리자 → 입주자 → 계좌 → 기초잔액 → 카테고리) | 신규 |
-| 11 | 세션 복원 시 서버 재검증 (`role`·`approved`·`active`) | `app.js:338-356` |
+| 11 | 빈 상태 막다른 길 수정 — 대시보드 CTA가 등록 권한 없는 사용자를 설정으로 보내는 문제 | `dashboard.js:16` |
 
 ### 3단계 — 모바일 통합 (설계 4)
 
@@ -786,6 +877,35 @@ grep -n "value=\"\${u.id}\"\|value=\"\${u.userId}\"" public/modules/modals.js   
    **빈 표 + `총 3건 (401–3)`** 과 1페이지 복귀 불가를 확인.
 9. **S2 부트스트랩** — 새 Firebase 프로젝트에 배포 후 회원가입만으로 로그인되는지 확인
    (되지 않아야 정상 재현).
+
+### 마이그레이션 검증 (1단계 전용)
+
+배포마다 다음을 통과해야 다음 배포로 넘어간다.
+
+**배포 1 이후** — 앱은 평소대로 동작해야 한다(아직 아무것도 바뀌지 않음)
+- 기존 계정으로 로그인·거래 입력·보고서 조회가 **전부 정상**인지
+- 스크립트 리포트에 `userId` 중복 **0건**, `teamLeader` 매핑 실패 **0건**
+- `users/{userId}` 신규 문서 수 == 구 문서 수, `userSecrets` 수도 동일
+- 신규 `users` 문서에 `password` 필드가 **없는지**
+
+**배포 2 이후**
+- 각 역할 계정으로 로그인 → 커스텀 토큰 발급 확인
+- **F5를 눌러도 로그인이 유지되는지** (S12 해소 확인)
+- 개발자도구에서 `sessionStorage`를 조작해도 **역할이 바뀌지 않는지**
+- **팀장 계정에서 결재 대기 뱃지에 건수가 잡히는지** (S5 해소 확인 — 이 항목이
+  마이그레이션 성공의 가장 좋은 신호다)
+- 문제 발생 시 → `auth.js`만 되돌리면 구 문서로 롤백된다
+
+**배포 3 이후**
+- 로그아웃 상태에서 Firestore REST로 `users` 조회 → **거부**
+- 입력자 토큰으로 타인 작성 거래 조회 → **거부**
+- Storage 객체를 비인증 `curl`로 요청 → **거부**
+
+**배포 4 이후**
+- 재계산 전후 `accounts` 백업을 비교해 **변화량이 설명 가능한지** 확인
+  (많은 계좌가 크게 바뀌는 것이 정상 — 손상돼 있었으므로)
+- 표본 계좌 3개를 손으로 검산: 기초잔액 + 기준일 이후 전체 거래 합
+- 대시보드·보고서·설정 계좌 목록 **3곳 숫자 일치**
 
 ### 수정 후 회귀 확인
 

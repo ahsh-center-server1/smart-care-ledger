@@ -1,16 +1,98 @@
 rules_version = '2';
 
+// ─────────────────────────────────────────────────────────────
+// Smart Care Ledger — Firestore 보안 규칙
+//
+// 인증: Cloud Functions(login)가 비밀번호를 검증하고 커스텀 토큰을 발급한다.
+//       토큰 클레임 { role, isAdmin }, uid == users 문서 ID == 로그인 아이디.
+//
+// ⚠️ 배포 순서 (BUGFIX_PLAN.md 「설계 6」)
+//    이 파일은 **배포 3**에서 적용한다. 마이그레이션(배포 1)과 앱 전환(배포 2)이
+//    끝나기 전에 적용하면 전원 로그인 불가가 된다.
+//
+// 참고: Firestore 규칙에서 allow는 가산적이다. 어떤 규칙도 허용하지 않으면
+//       기본 거부되므로 별도의 catch-all deny 블록은 두지 않는다.
+// ─────────────────────────────────────────────────────────────
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ─────────────────────────────────────────────
-    // 이 앱은 Firebase Auth를 사용하지 않습니다.
-    // (Firestore users 컬렉션에서 ID/PW 직접 비교 방식)
-    // request.auth가 항상 null이므로 시간 기반 규칙 사용.
-    // 세밀한 권한 제어는 app.js의 can() 함수로 처리됩니다.
-    // ─────────────────────────────────────────────
-    match /{document=**} {
-      allow read, write: if request.time < timestamp.date(2030, 12, 31);
+    function signedIn() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    // 역할 서열. 토큰에 role이 없으면 0 → 권한 없음(fail-closed).
+    function rank() {
+      return {'입력자': 1, '담당자': 2, '팀장': 3, '센터장': 4}
+        .get(request.auth.token.get('role', ''), 0);
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.get('isAdmin', false) == true;
+    }
+
+    // 등급 n 이상인가 (관리자는 항상 통과)
+    function atLeast(n) {
+      return signedIn() && (isAdmin() || rank() >= n);
+    }
+
+    function myUid() { return request.auth.uid; }
+
+    // ── 비밀번호 해시 — 클라이언트 접근 전면 차단 (Functions는 Admin SDK로 우회) ──
+    match /userSecrets/{uid} {
+      allow read, write: if false;
+    }
+
+    // ── 직원 ──
+    // 비밀번호가 userSecrets로 분리되었으므로 남는 값은 이름·역할·팀뿐인 내부 인명부다.
+    // 로그인한 직원은 조회 가능(앱이 users 컬렉션 전체를 로드해 팀장/결재자 이름을 찾는다).
+    // 쓰기는 Cloud Functions 전용 — 역할 변경·승인·비밀번호를 클라이언트가 못 건드린다.
+    match /users/{uid} {
+      allow read:  if signedIn();
+      allow write: if false;
+    }
+
+    // ── 입주자 · 계좌 ── 조회는 로그인 전원, 변경은 팀장 이상
+    match /clients/{id}  { allow read: if signedIn(); allow write: if atLeast(3); }
+    match /accounts/{id} { allow read: if signedIn(); allow write: if atLeast(3); }
+
+    // ── 거래 ──
+    // 입력자(등급 1)는 본인이 작성한 거래만.
+    // ⚠️ 목록 조회 시 클라이언트가 where('createdBy','==',uid)를 함께 걸어야 한다.
+    //    규칙 엔진이 결과 전체의 조건 충족을 증명할 수 없으면 쿼리가 통째로 거부된다.
+    match /transactions/{id} {
+      allow read: if atLeast(2)
+                  || (signedIn() && resource.data.get('createdBy', '') == myUid());
+
+      allow create: if signedIn()
+                    && request.resource.data.get('createdBy', '') == myUid();
+
+      allow update, delete: if atLeast(2)
+                            || (signedIn() && resource.data.get('createdBy', '') == myUid());
+    }
+
+    // ── 카테고리 · 고정항목 ── 담당자 이상이 편집
+    match /categories/{id} { allow read: if signedIn(); allow write: if atLeast(2); }
+    match /fixedItems/{id} { allow read: if signedIn(); allow write: if atLeast(2); }
+
+    // ── 보고서 ── 입력자는 접근 불가
+    match /reports/{id} { allow read, write: if atLeast(2); }
+
+    // ── 예산 ── 조회는 담당자 이상, 변경은 팀장 이상
+    match /budgets/{id} { allow read: if atLeast(2); allow write: if atLeast(3); }
+
+    // ── 엑셀 업로드 이력 ──
+    match /excelUploads/{id} { allow read, write: if atLeast(2); }
+
+    // ── 설정(권한 매트릭스 등) ── 쓰기는 관리자만
+    match /config/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+
+    // ── 연도 마감 아카이브 (archive_2025 등) ──
+    // Firestore 규칙은 세그먼트 일부 와일드카드(archive_{year})를 지원하지 않으므로
+    // 컬렉션명을 변수로 받아 정규식으로 판별한다.
+    match /{col}/{id} {
+      allow read:  if col.matches('archive_[0-9]{4}') && atLeast(2);
+      allow write: if col.matches('archive_[0-9]{4}') && atLeast(4);
     }
   }
 }

@@ -2,6 +2,9 @@
   "name": "smart-care-ledger",
   "private": true,
   "scripts": {
-    "lint": "node lint.js"
-  }
+    "lint": "node lint.cjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "npm run lint && npm test"
+  },
+  "type": "module"
 }

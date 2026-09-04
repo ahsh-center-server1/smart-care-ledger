@@ -1,9 +1,57 @@
 rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────
+// Smart Care Ledger — Storage 보안 규칙
+//
+// 영수증 · 통장 사진 · 은행 원본 파일이 들어 있다.
+// 이전 규칙(allow read, write: if true)은 익명 조회·수정·삭제를 전부 허용했다.
+//
+// ⚠️ firestore.rules와 함께 **배포 3**에서 적용한다.
+// ─────────────────────────────────────────────────────────────
+
 service firebase.storage {
   match /b/{bucket}/o {
-    match /{allPaths=**} {
-      allow read: if true;
-      allow write: if true;
+
+    function signedIn() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    function rank() {
+      return {'입력자': 1, '담당자': 2, '팀장': 3, '센터장': 4}
+        .get(request.auth.token.get('role', ''), 0);
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.get('isAdmin', false) == true;
+    }
+
+    function atLeast(n) {
+      return signedIn() && (isAdmin() || rank() >= n);
+    }
+
+    // 업로드 크기 상한 — services/storage.js validateUploadSize와 동일 기준
+    function sizeOk() {
+      return request.resource.size < 15 * 1024 * 1024;
+    }
+
+    // 영수증: 입력자도 본인 거래 증빙을 올려야 하므로 등급 1부터 허용
+    match /receipts/{clientId}/{fileName} {
+      allow read:   if signedIn();
+      allow write:  if signedIn() && sizeOk();
+      allow delete: if atLeast(2);
+    }
+
+    // 통장 사진 · 엑셀 원본: 담당자 이상
+    match /bankbooks/{accountId}/{fileName} {
+      allow read:   if signedIn();
+      allow write:  if atLeast(2) && sizeOk();
+      allow delete: if atLeast(2);
+    }
+
+    match /excel/{clientId}/{accountId}/{fileName} {
+      allow read:   if atLeast(2);
+      allow write:  if atLeast(2) && sizeOk();
+      allow delete: if atLeast(2);
     }
   }
 }
