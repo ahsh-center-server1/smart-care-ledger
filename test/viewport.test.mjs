@@ -55,6 +55,20 @@ test('모바일 전용 앱의 흔적이 남아 있지 않다', () => {
   }
 });
 
+test('좁은 화면에서 사이드바를 숨기는 규칙에 !important가 있다', () => {
+  // <aside>에 인라인 style="display:flex"가 붙어 있어 !important가 없으면
+  // 미디어 쿼리가 무시되고 휴대폰에서 216px 사이드바가 화면을 잡아먹는다.
+  // 모바일 전용 앱이 있을 때는 드러나지 않던 문제라 실제 브라우저로 잡았다.
+  assert.ok(
+    /@media\(max-width:768px\)\{aside\{display:none!important;\}\}/.test(htmlSrc),
+    '사이드바 숨김 규칙에 !important가 없습니다 — 인라인 display:flex가 이깁니다'
+  );
+  assert.ok(
+    /<aside[^>]*style="[^"]*display:flex/.test(htmlSrc),
+    'aside의 인라인 display가 사라졌다면 위 !important 요구도 재검토하세요'
+  );
+});
+
 test('거래내역 표의 카드 전환에 필요한 data-label이 붙어 있다', () => {
   const trxSrc = readFileSync(new URL('../public/modules/transactions.js', import.meta.url), 'utf8');
   for (const label of ['날짜', '카테고리', '내용', '계좌', '수입', '지출', '증빙', '관리']) {
