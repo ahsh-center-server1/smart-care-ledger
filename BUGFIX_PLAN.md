@@ -837,17 +837,31 @@ Firestore 쓰기를 없앴다. 계산식이 브라우저(ESM)·서버(CJS) 두 �
 - 테스트 5개: JS 기준폭과 CSS 미디어 쿼리가 갈리면 실패, 모바일 전용 앱의
   흔적이 되살아나면 실패, `data-label`이 빠지면 실패.
 
-### 4단계 — 권한 교체 (설계 2)
+### 4단계 — 권한 교체 (설계 2) ✅ 완료
 
-| # | 작업 | 대상 |
+| # | 작업 | 상태 |
 |---|---|---|
-| 16 | `permissions.js`를 등급표 방식으로 전면 교체 | `permissions.js` (149줄 → 약 50줄) |
-| 17 | `users.isAdmin` 추가, 관리자 역할 데이터 마이그레이션 | `users`, `modals.js:1011` |
-| 18 | 하드코딩 역할 비교 21곳을 `can()`으로 교체 | `report.js`, `core.js:150`, `app.js` |
-| 19 | `core.js:30`을 `client.view.all`로 교체 | `core.js:30` |
-| 20 | 실행 시점 가드 추가 (`saveTrx`·`delTrx`·`confirmBulkDelete` 등) | `transactions.js` |
-| 21 | 권한 설정 UI를 등급 드롭다운으로 | `settings.js` 권한 탭 |
-| 22 | 입력자 화면 축소 (위 표대로) | `auth.js:72-87`, `transactions.js` |
+| 16 | `permissions.js` 등급표 전면 교체 | ✅ |
+| 17 | `users.isAdmin` 플래그 | ✅ (1단계에서) |
+| 18 | 하드코딩 역할 비교 → `can()` | ✅ 11곳 (나머지는 5단계) |
+| 19 | `client.view.all` 분리 | ✅ (1단계에서) |
+| 20 | 실행 시점 가드 | ✅ 9곳 |
+| 21 | 권한 UI를 등급 드롭다운으로 | ✅ |
+| 22 | 입력자 화면 축소 | ✅ (3단계에서) |
+
+**구현 중 발견해 함께 고친 것**
+- 오버라이드가 등급표 확인보다 먼저 적용돼, `config/permissions` 문서에 아무 키나
+  넣으면 권한이 만들어지는 fail-open 구멍이 있었다(테스트로 발견).
+- `isThisLeader`가 `role==='팀장'`으로 묶여 있어 **배정 팀장이 센터장이거나
+  관리자면 결재 버튼이 아예 나오지 않았다.** 신원과 권한을 분리했다.
+- 공통 카테고리 권한이 `settings.reset`(관리자)으로 묶여 의미가 어긋나 있었다 →
+  `settings.category.common`(팀장)으로 분리.
+- 실행 시점 가드가 없던 9곳(`resetCategories`·`executeArchive`·`saveBudget`·
+  `saveTrx`·`delTrx`·`confirmBulkDelete`·`exportFilteredCSV`·`reorderTrx`·
+  `saveCatChange`). 전부 `window`에 노출돼 콘솔 호출이 통과했다.
+
+**5단계로 넘긴 것** — `report.js`의 제출·의견 라우팅(`role==='담당자'`/`'팀장'` 4곳).
+전이표와 함께 정리해야 하며, 지금 반쪽만 바꾸면 제출 버튼이 중복 노출된다.
 
 ### 5단계 — 결재 흐름 (설계 5)
 
