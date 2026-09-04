@@ -747,25 +747,50 @@ Cloud Functions를 올려두되 **아무도 호출하지 않는다.** 규칙도 
 
 ### 1단계 — 데이터 보호 (지금)
 
-설계 6의 4배포로 나눠 진행한다.
+설계 6의 4배포로 나눠 진행한다. 실행 절차와 단계별 확인 항목은 저장소의
+`RUNBOOK.md`에 있다.
 
-| # | 작업 | 배포 | 대상 |
-|---|---|---|---|
-| 1 | Cloud Functions 4개 (`login`·`signup`+부트스트랩·`approveStaff`·`changePassword`) | 1 | `functions/` (신규) |
-| 2 | 마이그레이션 스크립트 (사전 점검 + 실행 + 리포트) | 1 | `tools/migrate-auth.mjs` (신규) |
-| 3 | 로그인·세션을 커스텀 토큰 / `onAuthStateChanged`로 교체 | 2 | `auth.js`, `app.js:338` |
-| 4 | `firestore.rules` / `storage.rules` 잠그기, 구 문서 삭제 | 3 | 규칙 2개 |
-| 5 | **잔액 단일화** (`calcAccountBalance` 도입, 호출부 4곳 교체) | 4 | `services/balance.js`(신규) |
-| 6 | **손상된 `currentBalance` 전량 재계산** | 4 | `tools/recalc-balances.mjs` (신규) |
-| 7 | 복합 인덱스를 저장소에 기록 (`transactions`: clientId, date) | 아무 때나 | `firestore.indexes.json` |
-| 8 | `escHtml()` 추가 + `innerHTML` 삽입 32곳 정리 | 아무 때나 | `utils/ui.js`, 전 모듈 |
+| # | 작업 | 배포 | 대상 | 상태 |
+|---|---|---|---|---|
+| 1 | Cloud Functions 4개 (`login`·`signup`+부트스트랩·`approveStaff`·`changePassword`) | 1 | `functions/` | ✅ 코드 완료 |
+| 2 | 마이그레이션 스크립트 (사전 점검 + 실행 + 리포트) | 1 | `tools/migrate-auth.mjs` | ✅ 코드 완료 |
+| 3 | 로그인·세션을 커스텀 토큰 / `onAuthStateChanged`로 교체 | 2 | `auth.js`, `app.js:338` | ✅ 코드 완료 |
+| 4 | `firestore.rules` / `storage.rules` 잠그기, 구 문서 삭제 | 3 | 규칙 2개 | ✅ 코드 완료 |
+| 5 | **잔액 단일화** (`calcAccountBalance` 도입) | 4 | `services/balance.js` | ✅ 코드 완료 (트리거가 소유) |
+| 6 | **손상된 `currentBalance` 전량 재계산** | 4 | `tools/recalc-balances.mjs` | ✅ 코드 완료 |
+| 7 | 복합 인덱스를 저장소에 기록 | 아무 때나 | `firestore.indexes.json` | ✅ 완료 (4개) |
+| 8 | `escHtml()` 추가 + `innerHTML` 삽입 32곳 정리 | 아무 때나 | `utils/ui.js`, 전 모듈 | ⬜ 미착수 |
 
 2번이 S5(팀장 결재 알림 0건)를, 3번이 S12(F5 로그아웃 + 역할 위조)를 함께 해소한다.
 8번은 S0을 고치기 전까지 실질적 공격 경로이므로 1단계에 둔다.
 
+**설계에서 바뀐 점 — `currentBalance`를 서버가 소유한다**
+
+원래는 클라이언트 `updateAccBalance`가 계좌 전체 거래를 조회해 계산하는 안이었다.
+그런데 **입력자는 보안 규칙상 타인이 작성한 거래를 읽을 수 없어** 클라이언트에서
+올바른 계산이 원천적으로 불가능하다. 따라서 Cloud Functions 트리거로 옮겼다.
+
+| 트리거 | 발동 | 하는 일 |
+|---|---|---|
+| `syncAccountBalance` | `transactions/*` 쓰기 | 해당 계좌(들) 재계산. 계좌가 바뀐 수정이면 양쪽 모두 |
+| `syncAccountOnSettingsChange` | `accounts/*`의 기초잔액·기준일 변경 | 그 계좌 재계산. `currentBalance`만 바뀐 경우는 건너뛰어 루프 방지 |
+
+클라이언트 `updateAccBalance`는 로컬 캐시만 갱신하는 낙관적 업데이트로 축소했고
+Firestore 쓰기를 없앴다. 계산식이 브라우저(ESM)·서버(CJS) 두 파일로 존재하므로,
+계좌 5종 × 거래 13종 = 65개 조합을 양쪽에 통과시켜 값이 같은지 검증하는
+테스트를 넣었다(한쪽만 고치면 실패한다).
+
+**배포 2에서 추가로 필요해진 것** — `users` 쓰기가 규칙에 막히므로 Functions 2개를 더 만들었다
+- `upsertStaff` — 직원 등록·수정·비밀번호 변경 (단건·일괄 공용)
+- `setStaffActive` — 재직·퇴사 전환. 마지막 관리자 비활성화를 서버에서 차단
+- 관리자는 역할 select에서 빠지고 `isAdmin` 체크박스가 됐다.
+  `can()`이 `isAdmin`을 인정하도록 고쳤다 — 없으면 마이그레이션 후 관리자가
+  `settings.reset` 같은 전용 키를 전부 잃는다.
+
 **시작 전 확인 사항**
-- Firebase 프로젝트를 **Blaze 플랜으로 전환** (결제 수단 등록)
+- Firebase 프로젝트를 **Blaze 플랜으로 전환** (결제 수단 등록) — 전환 가능 확인됨
 - `userId` 중복 계정이 있으면 **사람이 먼저 정리** (스크립트가 목록을 뽑아준다)
+- `balance.js`의 기준일 경계 해석을 실제 통장 1건과 대조 (다르면 한 줄 변경)
 
 ### 2단계 — 신규 세팅이 되게 만들기
 
