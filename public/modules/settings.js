@@ -16,11 +16,19 @@ import { toast, showConfirm, showLoading, escAttr } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchSetDocs, batchMixedOps } from '../services/firestore.js';
 import { deleteManyFromStorage, recompressStorageImage } from '../services/storage.js';
 import { COLS, DEFAULT_CATEGORIES } from '../constants.js';
+const SYSTEM_OPS = COLS.SYSTEM_OPS;
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
 import { initSettingsShell, switchSettingsTab, registerPanel } from './settings-shell.js';
 import { renderSettingsOverview, refreshOverviewBadges } from './settings-overview.js';
+import { renderSettingsAudit } from './settings-audit.js';
+import { auditLog } from '../services/audit.js';
+import {
+  DATA_RESET_CONFIRM_TEXT, RESET_PRESERVED, MAX_DELETES_PER_BATCH,
+  RESET_OPERATION_ID, isResetLockActive, remainingCollections,
+  resetProgressPercent, resetProgressLabel, isResetConfirmed,
+} from '../domain/data-reset.js';
 import { can, savePermissions, requiredRank, DEFAULT_MIN_RANK,
          SELECTABLE_RANKS, RANK_LABEL, PERM_SECTIONS } from './permissions.js';
 
@@ -560,9 +568,21 @@ export async function executeArchive(year){
 
     // 6. 마무리
     await updateDoc(logRef,{status:'done',archivedAt:new Date().toISOString(),recompressed});
+    // 마감은 거래 원본을 삭제하고 기초잔액을 전진시킨다. 되돌릴 수 없으므로
+    // 누가 언제 실행했는지가 남아야 한다.
+    await auditLog('archive.run',{
+      resourceId:'archive_'+year,
+      summary:{ year, count:trxList.length },
+    });
     await fetchBaseData(); loadSettings();
     toast(`${year}년 마감 완료! ${trxList.length}건 보관, 이미지 ${recompressed}건 압축.`,'success',5000);
   }catch(e){
+    // 실패도 기록한다 — 중단된 마감은 데이터가 어중간한 상태로 남을 수 있어
+    // 나중에 "언제 무엇이 중단됐는지"가 복구의 출발점이 된다.
+    await auditLog('archive.failed',{
+      resourceId:'archive_'+year,
+      summary:{ year, reason:String(e.message||e) },
+    });
     toast(`마감 중단: ${e.message}\n같은 연도로 다시 실행하면 이어서 진행됩니다(사본은 중복되지 않습니다).`,'error',8000);
   }
   showLoading(false);
@@ -660,35 +680,133 @@ export async function saveBudget(){
 // ─────────────────────────────────────────────
 // Firebase 초기화 (관리자 전용)
 // ─────────────────────────────────────────────
+/**
+ * 전체 초기화.
+ *
+ * 종전 구현의 문제
+ *   · `await deleteDoc` 한 건씩 — 수천 건이면 매우 느리고, 중간에 실패하면
+ *     **DB가 반쯤 지워진 채로 남으며** 어디까지 지웠는지 알 수 없어 이어서
+ *     진행할 수도 없었다.
+ *   · 확인이 브라우저 prompt() 하나.
+ *   · 화면 설명은 "거래/계좌/입주자/보고서"인데 실제로는 카테고리·고정항목·
+ *     설정(config)까지 지웠다 — 동의한 범위와 실제 범위가 달랐다.
+ *     특히 config를 지우면 권한 등급표와 마감 색인이 함께 사라졌다.
+ *
+ * 지금
+ *   · 지울 대상은 domain/data-reset.js의 표 하나가 정하고, 확인 창이 그 표를
+ *     그대로 보여준다(보존되는 것도 함께).
+ *   · 배치(499건)로 지우고 진행 상태를 systemOperations 문서에 남긴다 →
+ *     중단되면 이어서 진행한다.
+ *   · 성공·실패 모두 변경 이력에 남는다.
+ */
 export async function executeFirebaseReset(){
   if(!can('settings.reset')){toast('권한이 없습니다.','error');return;}
-  showConfirm('Firebase 전체 초기화','모든 거래/계좌/입주자/보고서 데이터를 삭제합니다. 정말로 진행하시겠습니까?',async()=>{
-    const code=prompt('확인을 위해 "초기화"를 입력하세요:');
-    if(code!=='초기화'){toast('취소되었습니다.','info');return;}
-    showLoading(true);
-    try{
-      const{getDocs,collection,deleteDoc,doc}=fb();
-      const db=fdb();
-      const cols=[COLS.TRANSACTIONS,COLS.CLIENTS,COLS.ACCOUNTS,COLS.CATEGORIES,COLS.REPORTS,COLS.CONFIG,COLS.EXCEL_UPLOADS,'fixedItems'];
-      const storageUrls=[]; // Storage 고아 파일 방지: 삭제 전 파일 URL 수집
-      for(const col of cols){
+
+  const{getDoc,doc}=fb();
+  const db=fdb();
+  const opRef=doc(db,SYSTEM_OPS,RESET_OPERATION_ID);
+
+  // 다른 사람이 지금 돌리고 있으면 겹치지 않게 막는다.
+  let state=null;
+  try{ const s=await getDoc(opRef); state=s.exists()?s.data():null; }catch(e){ /* 상태를 못 읽으면 새로 시작 */ }
+  if(isResetLockActive(state)){
+    toast('초기화가 이미 진행 중입니다. 잠시 후 다시 확인하세요.','error',6000);
+    return;
+  }
+
+  const resuming=state&&state.status==='running';
+  const remaining=remainingCollections(state);
+  const willDelete=remaining.map(c=>'· '+c.label).join('\n');
+  const preserved=RESET_PRESERVED.map(p=>'· '+p).join('\n');
+
+  showConfirm(
+    resuming?'초기화 이어서 진행':'전체 초기화',
+    `지웁니다:\n${willDelete}\n\n그대로 둡니다:\n${preserved}\n\n`
+      + `되돌릴 수 없습니다. 계속하려면 다음 화면에 "${DATA_RESET_CONFIRM_TEXT}"를 입력하세요.`,
+    async()=>{
+      const code=prompt(`확인을 위해 "${DATA_RESET_CONFIRM_TEXT}"를 입력하세요:`);
+      if(!isResetConfirmed(code)){toast('취소되었습니다.','info');return;}
+      await runReset(opRef,state);
+    },
+    resuming?'이어서 진행':'초기화 실행','btn btn-danger');
+}
+
+/** 진행률 표시 갱신. */
+function paintResetProgress(state,visible=true){
+  const wrap=document.getElementById('reset-progress');
+  if(!wrap)return;
+  wrap.style.display=visible?'block':'none';
+  const bar=document.getElementById('reset-progress-bar');
+  if(bar)bar.style.width=resetProgressPercent(state)+'%';
+  const label=document.getElementById('reset-progress-label');
+  if(label)label.textContent=resetProgressLabel(state);
+}
+
+async function runReset(opRef,prevState){
+  const{getDocs,collection,setDoc,updateDoc}=fb();
+  const db=fdb();
+
+  const doneCollections=[...((prevState&&prevState.doneCollections)||[])];
+  const deletedCounts={...((prevState&&prevState.deletedCounts)||{})};
+  const startedAt=(prevState&&prevState.startedAt)||new Date().toISOString();
+
+  const touch=async(extra={})=>{
+    const data={status:'running',startedAt,updatedAt:new Date().toISOString(),
+      doneCollections,deletedCounts,by:String(S.user?.userId||''),...extra};
+    await setDoc(opRef,data,{merge:true});
+    paintResetProgress(data);
+    return data;
+  };
+
+  showLoading(true);
+  const storageUrls=[];   // Storage 고아 파일 방지: 삭제 전 URL을 모은다
+  try{
+    await touch();
+
+    for(const {col,label} of remainingCollections(prevState)){
+      // 컬렉션이 비어 있을 때까지 반복한다 — 한 배치가 499건이므로
+      // 큰 컬렉션은 여러 번 돈다. 삭제는 멱등하므로 재시도해도 안전하다.
+      for(;;){
         const snap=await getDocs(collection(db,col));
-        for(const d of snap.docs){
+        if(snap.empty)break;
+        const chunk=snap.docs.slice(0,MAX_DELETES_PER_BATCH);
+        for(const d of chunk){
           const data=d.data();
           if(col===COLS.TRANSACTIONS&&data.receiptUrl)storageUrls.push(data.receiptUrl);
-          else if(col===COLS.ACCOUNTS)(data.bankStatements||[]).forEach(s=>{if(s&&typeof s==='object'){if(s.url)storageUrls.push(s.url);if(s.thumbUrl)storageUrls.push(s.thumbUrl);}else if(typeof s==='string')storageUrls.push(s);});
-          else if(col===COLS.EXCEL_UPLOADS&&data.url)storageUrls.push(data.url); // 구형 데이터 호환
-          await deleteDoc(doc(db,col,d.id));
+          else if(col===COLS.ACCOUNTS)(data.bankStatements||[]).forEach(s=>{
+            if(s&&typeof s==='object'){if(s.url)storageUrls.push(s.url);if(s.thumbUrl)storageUrls.push(s.thumbUrl);}
+            else if(typeof s==='string')storageUrls.push(s);
+          });
+          else if(col===COLS.EXCEL_UPLOADS&&data.url)storageUrls.push(data.url);
         }
+        await batchDeleteDocs(chunk.map(d=>({col,docId:d.id})));
+        deletedCounts[col]=(deletedCounts[col]||0)+chunk.length;
+        await touch();
+        if(chunk.length<MAX_DELETES_PER_BATCH)break;
       }
-      // Firestore 삭제 후 Storage 파일도 전량 삭제(best-effort)
-      await deleteManyFromStorage(storageUrls);
-      await fetchBaseData();
-      loadSettings();
-      toast(`초기화 완료. 모든 데이터가 삭제되었습니다. (첨부 파일 ${storageUrls.length}건 정리)`,'success',5000);
-    }catch(e){toast('초기화 오류: '+e.message,'error');}
-    showLoading(false);
-  },'초기화 실행','btn btn-danger');
+      doneCollections.push(col);
+      await touch();
+      toast(`${label} 삭제 완료`,'info',1500);
+    }
+
+    // Firestore 삭제 후 Storage 파일도 전량 삭제(best-effort)
+    await deleteManyFromStorage(storageUrls);
+
+    const total=Object.values(deletedCounts).reduce((s,n)=>s+Number(n||0),0);
+    await updateDoc(opRef,{status:'done',finishedAt:new Date().toISOString()});
+    await auditLog('data.reset',{summary:{count:total}});
+    await fetchBaseData();
+    loadSettings();
+    paintResetProgress({doneCollections,deletedCounts},false);
+    toast(`초기화 완료 — ${total}건 삭제, 첨부 파일 ${storageUrls.length}건 정리.`,'success',6000);
+  }catch(e){
+    // 상태를 'failed'로 남긴다 — 다음 실행이 이어서 진행할 수 있게.
+    try{ await updateDoc(opRef,{status:'failed',error:String(e.message||e),
+      updatedAt:new Date().toISOString()}); }catch(_){ /* 상태 기록 실패는 무시 */ }
+    await auditLog('data.resetFailed',{summary:{reason:String(e.message||e)}});
+    toast(`초기화 중단: ${e.message}\n다시 실행하면 남은 항목부터 이어서 진행합니다.`,'error',9000);
+  }
+  showLoading(false);
 }
 
 // ─────────────────────────────────────────────
@@ -742,7 +860,17 @@ export function renderPermissionPanel(){
 
     document.getElementById('btn-perm-save')?.addEventListener('click',async()=>{
       try{
+        // 어떤 키가 기본값에서 벗어났는지 기록한다. 권한 등급표는 앱 전체의
+        // 접근 범위를 정하므로, 나중에 "왜 이 사람이 이걸 할 수 있었나"를
+        // 되짚을 수 있어야 한다.
+        const changed=Object.keys(draft)
+          .filter(k=>draft[k]!==DEFAULT_MIN_RANK[k])
+          .map(k=>`${k}=${draft[k]}`);
         await savePermissions(draft);
+        // 기록은 저장이 성공한 뒤에 남긴다(실패한 시도를 변경으로 남기지 않게).
+        await auditLog('permissions.update',{
+          summary:{ count:changed.length, target:changed.slice(0,8).join(', ') },
+        });
         toast('권한이 저장되었습니다. 새로고침 후 적용됩니다.','success',5000);
         setTimeout(()=>location.reload(),2000);
       }catch(e){toast('저장 실패: '+(e.message||'다시 시도하세요.'),'error');}
@@ -777,6 +905,7 @@ export function initSettingsTabs(){
   // 탭별 렌더 함수 등록 (없는 탭은 정적 HTML만 보여진다)
   registerPanel('overview',    renderSettingsOverview);
   registerPanel('list',        renderManagement);
+  registerPanel('audit',       renderSettingsAudit);
   // 권한 패널은 편집 중인 draft를 들고 있다. 이미 그려져 있으면 다시 그리지 않는다
   // — 탭을 왕복할 때마다 저장하지 않은 변경이 사라지면 쓸 수 없다.
   registerPanel('permissions', () => {

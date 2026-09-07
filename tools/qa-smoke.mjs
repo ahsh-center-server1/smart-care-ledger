@@ -166,6 +166,25 @@ async function runRole(browser, actor) {
     await page.waitForTimeout(2000);
     check(await page.isVisible('#view-settings'), '설정 화면이 열린다');
     await snap(page, actor, 'settings');
+
+    // 설정 탭을 하나씩 실제로 눌러본다 — 탭 배열과 패널이 어긋나면
+    // 빈 화면이 되고, 그것은 테스트가 아니라 눌러봐야만 드러난다.
+    const railTabs = await page.locator('#settings-rail .ui-settings__tab').all();
+    check(railTabs.length > 0, '설정 레일에 탭이 그려진다');
+
+    for (const tab of railTabs) {
+      const key = await tab.getAttribute('data-tab');
+      await tab.click();
+      await page.waitForTimeout(900);
+
+      const visible = await page.locator(`#${key}-tab-content`).isVisible().catch(() => false);
+      check(visible, `설정 「${key}」 패널이 열린다`);
+
+      // 제목이 비어 있으면 셸이 탭 정의를 못 찾은 것이다.
+      const title = (await page.textContent('#settings-panel-title').catch(() => '')) || '';
+      check(title.trim().length > 0, `설정 「${key}」 제목이 표시된다`);
+    }
+    await snap(page, actor, 'settings-last-tab');
   }
 
   // 콘솔·페이지 오류는 무조건 실패로 다룬다 — 예전에 화면을 못 띄웠던 원인이 여기 남는다.

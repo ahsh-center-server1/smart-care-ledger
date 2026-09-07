@@ -21,7 +21,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc,
-  collection, getDocs, query, where,
+  collection, getDocs, query, where, serverTimestamp,
 } from 'firebase/firestore';
 
 const HOST = '127.0.0.1';
@@ -508,6 +508,127 @@ describe('fail-closed — 알 수 없는 역할', () => {
     const adminNoRole = { uid: 'admin-noRole', isAdmin: true };
     await assertSucceeds(
       setDoc(doc(as(adminNoRole), 'config/permissions'), { schema: 'minRank' }),
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// auditLogs — 추가 전용, 위조 불가, 소급 불가
+//
+// 이 기록은 "누가 무엇을 바꿨나"의 유일한 근거다. 그래서 규칙이 보장해야 할 것은
+// 세 가지다: 한 번 쓰인 기록을 **고치거나 지울 수 없다**, 남의 이름으로
+// **만들 수 없다**, 시각을 **소급할 수 없다**.
+//
+// (막지 못하는 것: 클라이언트가 뮤테이션을 하면서 로그를 아예 안 쓰는 것.
+//  그것까지 막으려면 모든 쓰기를 Functions로 옮겨야 한다 — domain/audit.js 참고)
+// ─────────────────────────────────────────────────────────────
+describe('auditLogs — 추가 전용', () => {
+  const entry = (over = {}) => ({
+    action: 'trx.delete',
+    actorUid: 'staff-owner',
+    actorName: '이담당',
+    actorRole: '담당자',
+    resourceId: 't-1',
+    timestamp: serverTimestamp(),
+    expireAt: new Date('2028-01-01'),
+    ...over,
+  });
+
+  before(async () => {
+    await seed('auditLogs/existing', {
+      action: 'trx.create', actorUid: 'staff-owner', actorName: '이담당',
+      timestamp: new Date('2026-09-01'), expireAt: new Date('2028-09-01'),
+    });
+  });
+
+  it('본인 이름으로 기록을 만들 수 있다', async () => {
+    await assertSucceeds(
+      setDoc(doc(as(ACTORS.담당자), 'auditLogs/mine-1'), entry()),
+    );
+  });
+
+  it('입력자도 본인 기록을 만들 수 있다 — 거래를 넣을 수 있으므로 남겨야 한다', async () => {
+    await assertSucceeds(
+      setDoc(doc(as(ACTORS.입력자), 'auditLogs/mine-2'),
+        entry({ actorUid: 'staff-input', actorRole: '입력자' })),
+    );
+  });
+
+  it('남의 이름으로 기록을 만들 수 없다', async () => {
+    await assertFails(
+      setDoc(doc(as(ACTORS.담당자), 'auditLogs/forged'),
+        entry({ actorUid: 'staff-center' })),
+    );
+  });
+
+  it('시각을 소급하거나 미래로 밀 수 없다', async () => {
+    await assertFails(
+      setDoc(doc(as(ACTORS.담당자), 'auditLogs/backdated'),
+        entry({ timestamp: new Date('2020-01-01') })),
+    );
+    await assertFails(
+      setDoc(doc(as(ACTORS.담당자), 'auditLogs/future'),
+        entry({ timestamp: new Date('2099-01-01') })),
+    );
+  });
+
+  it('보관 만료 필드가 없으면 만들 수 없다 — 영구히 남아 비용이 늘어난다', async () => {
+    const e = entry();
+    delete e.expireAt;
+    await assertFails(setDoc(doc(as(ACTORS.담당자), 'auditLogs/no-ttl'), e));
+  });
+
+  it('보관 만료가 타임스탬프가 아니면 거부한다', async () => {
+    await assertFails(
+      setDoc(doc(as(ACTORS.담당자), 'auditLogs/bad-ttl'),
+        entry({ expireAt: '2028-01-01' })),
+    );
+  });
+
+  for (const [name, actor] of Object.entries(ACTORS)) {
+    it(`${name}도 기존 기록을 수정할 수 없다`, async () => {
+      await assertFails(
+        updateDoc(doc(as(actor), 'auditLogs/existing'), { action: 'trx.create' }),
+      );
+    });
+
+    it(`${name}도 기존 기록을 삭제할 수 없다`, async () => {
+      await assertFails(deleteDoc(doc(as(actor), 'auditLogs/existing')));
+    });
+  }
+
+  it('담당자는 조회할 수 없다 — 다른 직원의 활동 기록이다', async () => {
+    await assertFails(getDoc(doc(as(ACTORS.담당자), 'auditLogs/existing')));
+  });
+
+  it('팀장 이상은 조회할 수 있다', async () => {
+    await assertSucceeds(getDoc(doc(as(ACTORS.팀장), 'auditLogs/existing')));
+    await assertSucceeds(getDocs(collection(as(ACTORS.센터장), 'auditLogs')));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// systemOperations — 파괴적 작업의 진행 상태 (관리자만)
+// ─────────────────────────────────────────────────────────────
+describe('systemOperations', () => {
+  before(async () => {
+    await seed('systemOperations/data-reset', { status: 'done' });
+  });
+
+  it('센터장도 읽을 수 없다', async () => {
+    await assertFails(getDoc(doc(as(ACTORS.센터장), 'systemOperations/data-reset')));
+  });
+
+  it('센터장도 쓸 수 없다', async () => {
+    await assertFails(
+      setDoc(doc(as(ACTORS.센터장), 'systemOperations/data-reset'), { status: 'running' }),
+    );
+  });
+
+  it('관리자는 읽고 쓸 수 있다', async () => {
+    await assertSucceeds(getDoc(doc(as(ACTORS.관리자), 'systemOperations/data-reset')));
+    await assertSucceeds(
+      setDoc(doc(as(ACTORS.관리자), 'systemOperations/data-reset'), { status: 'running' }),
     );
   });
 });

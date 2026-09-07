@@ -43,6 +43,11 @@ export const COLS = {
   REPORTS:       'reports',
   CONFIG:        'config',
   EXCEL_UPLOADS: 'excelUploads',
+  // 변경 이력. 추가만 가능하고 수정·삭제는 규칙이 막는다(domain/audit.js 참고).
+  AUDIT_LOGS:    'auditLogs',
+  // 오래 걸리는 파괴적 작업(전체 초기화 등)의 진행 상태.
+  // 중단되어도 어디까지 했는지 남아 이어서 진행할 수 있다.
+  SYSTEM_OPS:    'systemOperations',
   BUDGETS:       'budgets',
 };
 
