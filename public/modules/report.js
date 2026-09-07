@@ -7,7 +7,7 @@
 
 import { S } from '../state.js';
 import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
-import { toast, showConfirm, showLoading, setText, makeDraggable } from '../utils/ui.js';
+import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml, escAttr } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { chunkForInQuery } from '../services/in-query.js';
 import { can, requiredRank, ROLE_RANK, ADMIN_RANK } from './permissions.js';
@@ -212,7 +212,7 @@ export async function loadAnnual(){
     const achieveColor=achieve===null?'var(--muted)':achieve>100?'#dc2626':achieve>80?'#f59e0b':'#10b981';
     const div=document.createElement('div');
     div.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);';
-    div.innerHTML=`<span style="width:22px;height:22px;border-radius:50%;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--sub);">${i+1}</span><span style="flex:1;font-size:14px;font-weight:600;">${k}</span><div style="flex:2;height:6px;background:#f1f5f9;border-radius:99px;overflow:hidden;"><div style="height:100%;background:${c.dot};border-radius:99px;width:${pct}%;"></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;width:90px;text-align:right;">${catMap[k].toLocaleString()}원</span><span style="font-size:12px;color:var(--muted);width:36px;text-align:right;">${pct}%</span>${hasBudget?`<span style="font-size:11px;width:80px;text-align:right;color:var(--muted);">예산 ${budget?budget.toLocaleString()+'원':'-'}</span><span style="font-size:11px;width:48px;text-align:right;font-weight:700;color:${achieveColor};">${achieve!==null?achieve+'%':'-'}</span>`:''}`;
+    div.innerHTML=`<span style="width:22px;height:22px;border-radius:50%;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--sub);">${i+1}</span><span style="flex:1;font-size:14px;font-weight:600;">${escHtml(k)}</span><div style="flex:2;height:6px;background:#f1f5f9;border-radius:99px;overflow:hidden;"><div style="height:100%;background:${c.dot};border-radius:99px;width:${pct}%;"></div></div><span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;width:90px;text-align:right;">${catMap[k].toLocaleString()}원</span><span style="font-size:12px;color:var(--muted);width:36px;text-align:right;">${pct}%</span>${hasBudget?`<span style="font-size:11px;width:80px;text-align:right;color:var(--muted);">예산 ${budget?budget.toLocaleString()+'원':'-'}</span><span style="font-size:11px;width:48px;text-align:right;font-weight:700;color:${achieveColor};">${achieve!==null?achieve+'%':'-'}</span>`:''}`;
     rankEl.appendChild(div);
   });
   document.getElementById('annual-content').style.display='block';
@@ -321,7 +321,7 @@ export function renderReportView(){
   (accountRows||getReportAccountRows(year,month,accs,S.reportData.allTrx)).forEach(a=>{
     const row=document.createElement('div');
     row.style.cssText='display:grid;grid-template-columns:minmax(120px,1fr) repeat(4,minmax(86px,auto));align-items:center;padding:7px 0;border-bottom:1px solid #f3f4f6;gap:8px;';
-    row.innerHTML=`<span style="font-size:14px;color:#374151;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${a.label}</span>`
+    row.innerHTML=`<span style="font-size:14px;color:#374151;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(a.label)}</span>`
       +`<span style="font-size:12px;color:#6b7280;text-align:right;white-space:nowrap;">전월 ${a.prevBal.toLocaleString()}원</span>`
       +`<span style="font-size:12px;color:#15803d;text-align:right;white-space:nowrap;">수입 +${a.monthlyIn.toLocaleString()}원</span>`
       +`<span style="font-size:12px;color:#b91c1c;text-align:right;white-space:nowrap;">지출 ${a.monthlyOut.toLocaleString()}원</span>`
@@ -395,7 +395,7 @@ export function renderRptTrxTable(trxList){
     const subOut=group.items.reduce((sum,t)=>t.type==='자산이동'||t.type==='취소'?sum:sum+Number(t.amountOut||0),0);
     const header=document.createElement('tr');
     header.className='rpt-account-group-row';
-    header.innerHTML=`<td colspan="6" style="padding:8px 6px;background:#f8fafc;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:800;color:#374151;">🏦 ${group.account.label||'미지정 계좌'} <span style="font-weight:600;color:#6b7280;margin-left:8px;">${group.items.length}건 · 수입 ${subIn.toLocaleString()}원 · 지출 ${subOut.toLocaleString()}원</span></td>`;
+    header.innerHTML=`<td colspan="6" style="padding:8px 6px;background:#f8fafc;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:800;color:#374151;">🏦 ${escHtml(group.account.label||'미지정 계좌')} <span style="font-weight:600;color:#6b7280;margin-left:8px;">${group.items.length}건 · 수입 ${subIn.toLocaleString()}원 · 지출 ${subOut.toLocaleString()}원</span></td>`;
     tbody.appendChild(header);
     group.items.forEach(t=>{    
     const tr=document.createElement('tr');
@@ -415,13 +415,13 @@ export function renderRptTrxTable(trxList){
       typeTag='<span style="font-size:10px;background:#f4f4f5;color:#71717a;padding:1px 5px;border-radius:4px;margin-left:4px;">취소('+sub+')</span>';
     }
     const catClr=cs(t.category||'');
-    tr.innerHTML=`<td style="padding:7px 4px;font-family:monospace;font-size:13px;color:#6b7280;white-space:nowrap;">${t.date||''}</td>`
-      +`<td style="padding:4px 4px;overflow:hidden;white-space:nowrap;"><span style="display:inline-block;background:${catClr.bg};color:${catClr.text};border:1px solid ${catClr.border};border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.category||''}</span></td>`
-      +`<td style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.description||''}${typeTag}</td>`
+    tr.innerHTML=`<td style="padding:7px 4px;font-family:monospace;font-size:13px;color:#6b7280;white-space:nowrap;">${escHtml(t.date||'')}</td>`
+      +`<td style="padding:4px 4px;overflow:hidden;white-space:nowrap;"><span style="display:inline-block;background:${catClr.bg};color:${catClr.text};border:1px solid ${catClr.border};border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.category||'')}</span></td>`
+      +`<td style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.description||'')}${typeTag}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#15803d;white-space:nowrap;">${Number(t.amountIn||0)>0?Number(t.amountIn).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#b91c1c;white-space:nowrap;">${Number(t.amountOut||0)>0?Number(t.amountOut).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:center;${t.type==='지출'&&!t.receiptUrl&&t.receiptMissing?'background:#fee2e2;':''}">${
-        t.receiptUrl?'<button class="icon-btn rpt-rv" data-url="'+t.receiptUrl+'" title="증빙 보기">📎</button>':
+        t.receiptUrl?'<button class="icon-btn rpt-rv" data-url="'+escAttr(t.receiptUrl)+'" title="증빙 보기">📎</button>':
         (t.receiptMissing?'<span style="font-size:10px;font-weight:700;color:#b91c1c;background:#fecaca;padding:2px 6px;border-radius:4px;">분실</span>':'')
       }</td>`;
     if(!locked){
@@ -1214,11 +1214,11 @@ export function renderReportList(){
     const tr=document.createElement('tr');
     tr.dataset.reportId=r.id;
     tr.style.cssText='border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s;';
-    tr.innerHTML=`<td style="padding:9px 10px;font-weight:600;color:var(--text);">${client.name}</td>
+    tr.innerHTML=`<td style="padding:9px 10px;font-weight:600;color:var(--text);">${escHtml(client.name)}</td>
       <td style="padding:9px 10px;text-align:center;color:var(--sub);">${r.year}년</td>
       <td style="padding:9px 10px;text-align:center;color:var(--sub);">${r.month}월</td>
-      <td style="padding:9px 10px;text-align:center;"><span class="${STATUS_CLASSES[r.status]||'rs-draft'}">${STATUS_LABELS[r.status]||r.status}</span></td>
-      <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${r.submittedByName||'-'}</td>
+      <td style="padding:9px 10px;text-align:center;"><span class="${STATUS_CLASSES[r.status]||'rs-draft'}">${escHtml(STATUS_LABELS[r.status]||r.status)}</span></td>
+      <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${escHtml(r.submittedByName||'-')}</td>
       <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${r.createdAt?new Date(r.createdAt).toLocaleDateString('ko-KR'):'-'}</td>`;
     tr.addEventListener('mouseenter',()=>{if(S.reportData?.report?.id!==r.id)tr.style.background='var(--bg)';});
     tr.addEventListener('mouseleave',()=>{if(S.reportData?.report?.id!==r.id)tr.style.background='';});

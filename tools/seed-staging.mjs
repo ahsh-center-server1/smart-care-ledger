@@ -118,7 +118,13 @@ const CLIENTS = [
 
 /** 기준일 잔액 — 기준일 **다음날부터**의 거래가 여기에 합산된다 */
 const ACCOUNTS = [
-  { id: 'acc_seed_1', clientId: 'cli_seed_1', label: '생활비 통장', accountNumber: '123-456-7890',
+  // 계좌 이름에 마크업을 심어 둔다.
+  //
+  // 이 이름은 보고서·설정·거래내역의 innerHTML 템플릿에 그대로 들어간다.
+  // 이스케이프가 빠지면 브라우저가 태그로 해석해 화면에서 <b>가 사라지고,
+  // 그 차이를 tools/qa-smoke.mjs가 잡는다. 실데이터에는 이런 이름이 없지만
+  // 엑셀 업로드의 가맹점명 칸은 파일에서 오므로 같은 경로가 열려 있다.
+  { id: 'acc_seed_1', clientId: 'cli_seed_1', label: '생활비 통장 <b>주입</b>', accountNumber: '123-456-7890',
     initialBalance: 500000, initialBalanceDate: baseDate(), bankStatements: [], active: true },
   { id: 'acc_seed_2', clientId: 'cli_seed_1', label: '저축 통장', accountNumber: '123-456-7891',
     initialBalance: 2000000, initialBalanceDate: baseDate(), bankStatements: [], active: true },

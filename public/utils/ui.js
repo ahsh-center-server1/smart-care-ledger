@@ -64,13 +64,26 @@ export function showLoading(on) {
   else    el.classList.remove('show');
 }
 
+/**
+ * 토스트.
+ *
+ * 메시지는 **textContent로 넣는다.** 예전에는 innerHTML 템플릿에 그대로
+ * 끼워 넣었는데, 오류 경로가 `toast('저장 실패: '+e.message)` 형태로 부르고
+ * Firestore 오류 메시지는 문서 내용을 되비칠 수 있다. 앱에서 가장 많이 불리는
+ * UI 함수라 여기 하나가 열려 있으면 거의 모든 경로가 열려 있는 것과 같다.
+ */
 export function toast(msg, type='info', duration=3000) {
   const c = document.getElementById('toast-wrap');
   if (!c) return;
   const icons = { success:'✅', error:'❌', info:'ℹ️' };
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `<span aria-hidden="true">${icons[type]||'ℹ️'}</span><span>${msg}</span>`;
+  const icon = document.createElement('span');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = icons[type] || 'ℹ️';
+  const body = document.createElement('span');
+  body.textContent = String(msg == null ? '' : msg);
+  el.append(icon, body);
   c.appendChild(el);
   setTimeout(() => {
     el.style.animation = 'toastOut .25s ease forwards';

@@ -166,6 +166,7 @@ async function runRole(browser, actor) {
     await page.waitForTimeout(2000);
     check(await page.isVisible('#view-report'), '보고서 화면이 열린다');
     await checkReportScope(page, actor);
+    await checkReportBody(page, actor);
     await snap(page, actor, 'report');
   }
   if (navSettings) {
@@ -353,6 +354,65 @@ async function checkReportScope(page, actor) {
     check(badge.trim() === '', '담당자에게는 결재 대기 뱃지가 없다',
       `뱃지 값: '${badge.trim()}'`);
   }
+}
+
+/**
+ * 보고서 본문이 실제로 그려지는가 — 그리고 사용자 입력이 마크업으로 새지 않는가.
+ *
+ * 왜 여기여야 하는가
+ *   계좌 현황·분류별 지출·인쇄용 거래표는 전부 `innerHTML` 템플릿에 입주자명·
+ *   계좌명·분류명·거래 내용을 끼워 넣는다. 이 값들은 전부 사용자 입력이고
+ *   (엑셀 업로드의 가맹점명 칸 포함) 조작된 은행 파일 하나로 스크립트가 들어올 수 있다.
+ *
+ *   이스케이프가 맞는지는 **텍스트로 보이는가**로만 확인된다. 이스케이프가 없으면
+ *   브라우저가 태그로 해석해 화면에서 사라지고, 그 차이는 화면을 그려봐야 보인다.
+ *   시드가 이름에 마크업을 심어 두었으므로, 그 문자열이 그대로 보이면 통과다.
+ */
+const MARKUP_PROBE = '<b>주입</b>';
+
+async function checkReportBody(page, actor) {
+  if (!['담당자', '팀장', '센터장', '관리자'].includes(actor.role)) return;
+
+  const result = await page.evaluate(async () => {
+    try {
+      const Rpt = await import('./modules/report.js');
+      const { S } = await import('./state.js');
+      const target = (S.clients || [])[0];
+      if (!target) return { ok: false, error: '입주자가 없다' };
+
+      const prev = new Date();
+      prev.setMonth(prev.getMonth() - 1);
+
+      document.getElementById('r-client').value = target.id;
+      document.getElementById('r-year').value = String(prev.getFullYear());
+      document.getElementById('r-month').value = String(prev.getMonth() + 1);
+      await Rpt.loadReport();
+
+      const acc = document.getElementById('rpt-accounts');
+      const cat = document.getElementById('rpt-cat-table');
+      return {
+        ok: true,
+        clientName: target.name,
+        accHtml: acc ? acc.innerHTML : '',
+        accText: acc ? acc.textContent : '',
+        catText: cat ? cat.textContent : '',
+      };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+
+  if (!check(result.ok, '보고서 본문을 그릴 수 있다', result.error)) return;
+  check(result.accText.trim().length > 0, '보고서에 계좌 현황이 그려진다');
+  check(result.catText.trim().length > 0, '보고서에 분류별 지출이 그려진다');
+
+  // 시드의 계좌 이름에 심어 둔 마크업이 **텍스트로** 보여야 한다.
+  check(result.accText.includes(MARKUP_PROBE),
+    '계좌 이름의 마크업이 태그가 아니라 글자로 표시된다',
+    `계좌 영역 텍스트: ${result.accText.slice(0, 160)}`);
+  check(!/<b>주입<\/b>/.test(result.accHtml),
+    '계좌 이름이 이스케이프되지 않은 채 innerHTML에 들어가지 않는다',
+    result.accHtml.slice(0, 200));
 }
 
 async function checkSummaryCache(page, actor) {

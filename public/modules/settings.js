@@ -12,7 +12,7 @@
 'use strict';
 
 import { S } from '../state.js';
-import { toast, showConfirm, showLoading, escAttr } from '../utils/ui.js';
+import { toast, showConfirm, showLoading, escAttr, escHtml } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchSetDocs, batchMixedOps } from '../services/firestore.js';
 import { deleteManyFromStorage, recompressStorageImage } from '../services/storage.js';
 import { COLS, DEFAULT_CATEGORIES } from '../constants.js';
@@ -331,7 +331,7 @@ export function renderCatTags(type){
     tag.draggable=!isCommonReadOnly;
     tag.dataset.docId=catDoc.id;
     tag.dataset.order=String(catDoc.sortOrder??i);
-    tag.innerHTML=`<span style="font-size:11px;color:#94a3b8;margin-right:2px;">⠿</span><span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-size:13px;font-weight:700;color:${color};">${cat}</span>`
+    tag.innerHTML=`<span style="font-size:11px;color:#94a3b8;margin-right:2px;">⠿</span><span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-size:13px;font-weight:700;color:${color};">${escHtml(cat)}</span>`
       +(isPersonal?`<span style="font-size:10px;background:${color}22;color:${color};padding:1px 5px;border-radius:4px;margin-left:2px;">${clientName}</span>`:'')
       +(cat==='확인필요'||isCommonReadOnly?'':`<button class="cat-del">×</button>`);
     if(!isCommonReadOnly){
@@ -378,7 +378,7 @@ export function renderRuleTags(){
     const tc=r.type==='지출'?'#dc2626':'#16a34a', tag=document.createElement('span');
     const isPersonal=!!r.clientId;
     tag.className='rule-tag'; tag.style.borderColor=tc+'33';
-    tag.innerHTML=`<span style="font-size:13px;font-weight:700;color:var(--sub);">"${r.keyword}"</span><span style="font-size:11px;color:var(--muted);">→</span><span style="font-size:13px;font-weight:700;color:${tc};">${r.category}</span>`
+    tag.innerHTML=`<span style="font-size:13px;font-weight:700;color:var(--sub);">"${escHtml(r.keyword)}"</span><span style="font-size:11px;color:var(--muted);">→</span><span style="font-size:13px;font-weight:700;color:${tc};">${escHtml(r.category)}</span>`
       +(isPersonal?`<span style="font-size:10px;background:${tc}22;color:${tc};padding:1px 5px;border-radius:4px;">${settingsClientName||r.clientId}</span>`:'')
       +`<button class="cat-del">×</button>`;
     tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${r.keyword}" 규칙을 삭제하시겠습니까?`,()=>deleteRule(r.id||r.keyword),'삭제','btn btn-danger'));
@@ -482,7 +482,7 @@ export async function loadArchiveHistory(){
       // 끊기면 화면상 미마감으로 보이고 다시 누르면 거래가 삼중으로 쌓였다.
       const stuck=r.status==='in_progress';
       const when=r.archivedAt||r.startedAt;
-      div.innerHTML=`<span>${r.year}년 마감${stuck?' <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:5px;font-size:11px;font-weight:700;">중단됨 · 다시 실행하면 이어서 진행</span>':''}</span>`
+      div.innerHTML=`<span>${escHtml(r.year)}년 마감${stuck?' <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:5px;font-size:11px;font-weight:700;">중단됨 · 다시 실행하면 이어서 진행</span>':''}</span>`
         +`<span style="color:var(--muted);">${r.count??0}건 · ${when?new Date(when).toLocaleDateString('ko-KR'):''}</span>`;
       el.appendChild(div);
     });

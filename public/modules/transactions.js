@@ -7,7 +7,7 @@
 
 import { S } from '../state.js';
 import { COLS, cs } from '../constants.js';
-import { toast, toastAction, showConfirm, escAttr, emptyState } from '../utils/ui.js';
+import { toast, toastAction, showConfirm, escAttr, escHtml, emptyState } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchMixedOps } from '../services/firestore.js';
 import { auditOp } from '../services/audit.js';
 import { calcAccountBalance } from '../services/balance.js';
@@ -262,7 +262,7 @@ export function openCatDropdown(trxId, chipEl, type) {
   cats.forEach(cat=>{
     const c=cs(cat), item=document.createElement('div');
     item.className='cat-dd-item';
-    item.innerHTML=`<span style="width:9px;height:9px;border-radius:50%;background:${c.dot};display:inline-block;flex-shrink:0;"></span>${cat}`;
+    item.innerHTML=`<span style="width:9px;height:9px;border-radius:50%;background:${c.dot};display:inline-block;flex-shrink:0;"></span>${escHtml(cat)}`;
     item.addEventListener('click',e=>{e.stopPropagation();saveCatChange(trxId,cat,chipEl);closeCatDropdowns();});
     dd.appendChild(item);
   });
