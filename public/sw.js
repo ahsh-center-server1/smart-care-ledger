@@ -61,6 +61,7 @@ const APP_SHELL = [
   '/modules/report-workflow.js',
   '/modules/settings.js',
   '/modules/settings-audit.js',
+  '/modules/settings-derived.js',
   '/modules/settings-nav.js',
   '/modules/settings-overview.js',
   '/modules/settings-shell.js',

@@ -37,6 +37,7 @@ import * as Dash     from './modules/dashboard.js';
 import * as Trx      from './modules/transactions.js';
 import * as Rpt      from './modules/report.js';
 import * as Settings from './modules/settings.js';
+import * as SettingsDerived from './modules/settings-derived.js';
 import * as Modals   from './modules/modals.js';
 import * as Parser   from './services/excel-parser.js';
 import { initFontScale, setFontScale } from './modules/font-scale.js';
@@ -394,6 +395,7 @@ function bindEvents(){
   document.getElementById('btn-reset-cats')?.addEventListener('click',Settings.resetCategories);
   document.getElementById('btn-archive')?.addEventListener('click',Settings.confirmArchive);
   document.getElementById('btn-archive-refresh')?.addEventListener('click',Settings.loadArchiveHistory);
+  document.getElementById('btn-rebuild-derived')?.addEventListener('click',SettingsDerived.rebuildDerivedDocs);
   document.getElementById('new-rule-type')?.addEventListener('change',Settings.updateRuleCatSel);
   ['new-exp-cat','new-inc-cat','new-rule-kw'].forEach(id=>{
     document.getElementById(id)?.addEventListener('keydown',e=>{
