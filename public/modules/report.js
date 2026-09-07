@@ -12,6 +12,7 @@ import { fb, fdb } from '../services/firestore.js';
 import { can, requiredRank, ROLE_RANK, ADMIN_RANK } from './permissions.js';
 import { calcAccountBalanceAsOf, sumIncomeExpense } from '../services/balance.js';
 import { planTransition, availableActions, actorContext, normalizeStatus } from './report-workflow.js';
+import { auditLog } from '../services/audit.js';
 import { getImageUrl } from '../services/storage.js';
 import { getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
 import { isConfirmedLocked } from './core.js';
@@ -882,6 +883,25 @@ const TRANSITION_TOAST={
 };
 
 /**
+ * 전이 → 변경 이력 액션 코드.
+ * 전이표(report-workflow.js)에 동작을 추가하면 여기도 채워야 한다 —
+ * test/audit.test.mjs가 라벨 없는 코드를 잡고, 빠진 동작은 report.save로
+ * 기록되어 이력이 부정확해진다.
+ */
+export const TRANSITION_AUDIT={
+  save:'report.save',
+  submit:'report.submit',
+  submitAsLeader:'report.submit',
+  approveTeam:'report.approveTeam',
+  approveTeamProxy:'report.approveTeam',
+  approveCenter:'report.approveCenter',
+  reject:'report.reject',
+  recall:'report.recall',
+  revert:'report.revert',
+  release:'report.release',
+};
+
+/**
  * 결재 전이를 실행한다. **모든 결재 동작이 이 함수 하나를 통과한다.**
  * 버튼이 보이든 말든, 콘솔에서 직접 부르든, 전이표를 통과하지 못하면 거부된다.
  */
@@ -913,6 +933,14 @@ export async function applyReportTransition(action,extraSet){
       const ref=await addDoc(collection(fdb(),COLS.REPORTS),data);
       S.reportData.report={id:ref.id,...data};
     }
+    // 결재 이력을 남긴다. 모든 결재 동작이 이 함수를 통과하므로 여기 한 곳이면
+    // 제출·결재·반려·회수·취소가 빠짐없이 기록된다.
+    const clientName=S.clients.find(c=>c.id===clientId)?.name||clientId;
+    await auditLog(TRANSITION_AUDIT[action]||'report.save',{
+      resourceId:report?.id||S.reportData.report?.id,
+      summary:{clientName,year,month,from:report?.status||'미저장',to:plan.next},
+    });
+
     const isReject=action==='reject';
     toast(TRANSITION_TOAST[action]||'처리되었습니다.',isReject?'info':'success',isReject?4000:3000);
     // 바뀐 것은 이 보고서 한 건이다. 목록 전체를 다시 읽지 않는다.

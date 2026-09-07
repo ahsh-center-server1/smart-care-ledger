@@ -161,6 +161,9 @@ export async function toggleClientActive(id,makeActive){
   try{
     const{doc,updateDoc}=fb();
     await updateDoc(doc(fdb(),COLS.CLIENTS,id),{active:makeActive});
+    await auditLog('client.activeChange',{resourceId:id,summary:{
+      clientName:(S.allClients||S.clients).find(c=>c.id===id)?.name||id,
+      to:makeActive?'활성':'비활성'}});
     toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
     await refetchClients(); renderManagement();
   }catch(e){ toast('저장 오류: '+e.message,'error'); }
@@ -169,6 +172,9 @@ export async function toggleAccountActive(id,makeActive){
   try{
     const{doc,updateDoc}=fb();
     await updateDoc(doc(fdb(),COLS.ACCOUNTS,id),{active:makeActive});
+    await auditLog('account.activeChange',{resourceId:id,summary:{
+      accountLabel:(S.allAccounts||S.accounts).find(a=>a.id===id)?.label||id,
+      to:makeActive?'활성':'비활성'}});
     toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
     await refetchAccounts(); renderManagement();
   }catch(e){ toast('저장 오류: '+e.message,'error'); }
@@ -182,6 +188,8 @@ export async function toggleStaffActive(id,makeActive){
     // users 쓰기는 보안 규칙이 막는다. 서버가 등급을 확인하고,
     // 마지막 관리자를 비활성화해 영구 잠금되는 것도 막아 준다.
     await window._fbFn.call('setStaffActive')({ userId:id, active:makeActive });
+    await auditLog('staff.activeChange',{resourceId:id,summary:{
+      target:S.users.find(u=>u.id===id)?.name||id, to:makeActive?'재직':'퇴사'}});
     // 비활성화 대상이 어느 입주자의 팀장이면 안내 (결재 공백 방지)
     if(!makeActive){
       const asLeader=(S.allClients||S.clients).filter(c=>String(c.teamLeader)===String(id));
@@ -198,7 +206,16 @@ export function confirmDelete(type,id){
   showConfirm(labels[type]+' 삭제',labels[type]+'를 삭제하시겠습니까?',async()=>{
     const{doc,deleteDoc}=fb();
     const cols={client:COLS.CLIENTS,account:COLS.ACCOUNTS,staff:COLS.USERS};
+    // 무엇을 지웠는지 이름을 먼저 읽어 둔다 — 지운 뒤에는 알 수 없다.
+    const nameOf={
+      client:()=>(S.allClients||S.clients).find(c=>c.id===id)?.name,
+      account:()=>(S.allAccounts||S.accounts).find(a=>a.id===id)?.label,
+      staff:()=>S.users.find(u=>u.id===id)?.name,
+    }[type];
+    const target=(nameOf&&nameOf())||id;
     await deleteDoc(doc(fdb(),cols[type],id));
+    await auditLog(type==='client'?'client.delete':type==='account'?'account.delete':'staff.update',
+      {resourceId:id,summary:{target}});
     await (refetchByType[type]||fetchBaseData)();
     renderManagement();
     toast('삭제됨','success');
@@ -945,6 +962,9 @@ export async function approveStaff(userId) {
     // users 쓰기는 보안 규칙이 막는다. 서버가 호출자 등급을 확인하고 처리한다
     // (예전에는 팀장이 신규 가입자를 센터장으로 승인할 수 있었다).
     await window._fbFn.call('approveStaff')({ userId, role, isAdmin: false });
+    // 누구를 어떤 권한으로 들였는지가 가장 중요한 기록 중 하나다.
+    await auditLog('staff.approve',{resourceId:userId,summary:{
+      target:S.users.find(u=>u.id===userId)?.name||userId, role}});
     toast(`승인 완료 — ${role} 권한으로 로그인할 수 있습니다.`, 'success');
     await refetchUsers(); renderManagement(); updateSignupBadge();
   } catch(e) { toast('승인 오류: '+(e.message||'다시 시도하세요.'), 'error'); }

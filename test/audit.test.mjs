@@ -158,3 +158,37 @@ test('요약 문장 — 키를 한글로 바꿔 보여준다', () => {
   assert.equal(summaryText(null), '');
   assert.equal(summaryText({ ok: true }), 'ok 예');
 });
+
+// ─────────────────────────────────────────────────────────────
+// 결재 전이 ↔ 이력 액션 코드
+//
+// 모든 결재 동작이 applyReportTransition 하나를 통과하므로 이력도 그 한 곳에서
+// 남는다. 그런데 전이표에 동작을 추가하고 매핑을 빼먹으면 그 동작이
+// **'report.save'로 잘못 기록된다** — 이력이 있으나 틀린 상태가 되고,
+// 그것은 이력이 없는 것보다 나쁘다.
+// ─────────────────────────────────────────────────────────────
+test('전이표의 모든 동작에 이력 액션 코드가 매핑돼 있다', async () => {
+  const { TRANSITIONS } = await import('../public/modules/report-workflow.js');
+  const { TRANSITION_AUDIT } = await import('../public/modules/report.js');
+
+  const actions = new Set();
+  for (const byAction of Object.values(TRANSITIONS)) {
+    for (const a of Object.keys(byAction)) actions.add(a);
+  }
+  assert.ok(actions.size >= 8, `전이 동작이 너무 적습니다 (${actions.size}개)`);
+
+  const missing = [...actions].filter(a => !(a in TRANSITION_AUDIT));
+  assert.deepEqual(
+    missing, [],
+    "전이표에 있지만 이력 매핑이 없는 동작 (report.save로 잘못 기록됩니다):\n  "
+      + missing.join('\n  '),
+  );
+});
+
+test('매핑된 이력 액션 코드는 모두 라벨이 있다', async () => {
+  const { TRANSITION_AUDIT } = await import('../public/modules/report.js');
+  for (const [action, code] of Object.entries(TRANSITION_AUDIT)) {
+    assert.ok(isKnownAction(code), `${action} → ${code}: 라벨이 없습니다`);
+    assert.equal(actionResource(code), 'report', `${action} → ${code}: report.* 가 아닙니다`);
+  }
+});

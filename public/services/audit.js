@@ -18,6 +18,23 @@ import { COLS } from '../constants.js';
 import { fb, fdb } from './firestore.js';
 import { buildAuditEntry } from '../domain/audit.js';
 
+/**
+ * 이 세션에서 기록을 쓴 횟수.
+ *
+ * 조회 화면(settings-audit.js)이 목록을 세션 캐시에 들고 있는데, 방금 내가 한
+ * 변경이 그 목록에 없으면 "기록이 안 남았다"고 오해한다. 그렇다고 탭을 열
+ * 때마다 100건을 다시 읽으면 읽기 비용이 는다.
+ *
+ * 그래서 **내가 뭔가 기록했을 때만** 캐시를 버리게 이 값을 올린다.
+ * (다른 사람의 변경은 「새로 고침」으로 가져온다 — 실시간일 필요가 없다)
+ */
+let writeCount = 0;
+
+/** 조회 화면이 캐시 유효성을 판단하는 값. */
+export function auditWriteToken() {
+  return writeCount;
+}
+
 /** 현재 로그인 사용자를 actor로 쓴다. */
 function currentActor() {
   const u = S.user;
@@ -38,6 +55,7 @@ export function auditOp(action, { resourceId, summary } = {}) {
   if (!actor) return null;
   try {
     const { serverTimestamp } = fb();
+    writeCount++;                       // 조회 캐시를 버리게 한다
     return {
       col: COLS.AUDIT_LOGS,
       data: {

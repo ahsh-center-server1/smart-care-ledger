@@ -185,6 +185,7 @@ async function runRole(browser, actor) {
       check(title.trim().length > 0, `설정 「${key}」 제목이 표시된다`);
     }
     await snap(page, actor, 'settings-last-tab');
+    await checkAuditRoundTrip(page, actor);
   }
 
   // 콘솔·페이지 오류는 무조건 실패로 다룬다 — 예전에 화면을 못 띄웠던 원인이 여기 남는다.
@@ -208,6 +209,43 @@ async function runRole(browser, actor) {
   check(realFailed.length === 0, '실패한 네트워크 요청이 없다', realFailed.slice(0, 3).join(' | '));
 
   await ctx.close();
+}
+
+/**
+ * 변경 이력 쓰기→규칙→읽기를 한 번에 확인한다.
+ *
+ * 규칙이 actorUid·timestamp·expireAt을 검사하므로, 이 왕복이 통과하면
+ * 앱이 만드는 기록 형태가 규칙과 맞다는 뜻이다. 형태가 어긋나면
+ * 조용히 permission-denied가 되고 이력만 비어 있게 된다 —
+ * 사용자는 알 수 없고 단위 테스트도 잡지 못하는 조합이다.
+ */
+async function checkAuditRoundTrip(page, actor) {
+  // 팀장 이상만 조회 권한이 있다(audit.view = 등급 3).
+  const canRead = ['팀장', '센터장', '관리자'].includes(actor.role);
+  if (!canRead) return;
+
+  const result = await page.evaluate(async () => {
+    try {
+      const { auditLog, fetchRecentAuditLogs } = await import('./services/audit.js');
+      await auditLog('login.success', { summary: { target: 'qa-smoke' } });
+      const rows = await fetchRecentAuditLogs(10);
+      return { ok: true, count: rows.length, first: rows[0] ? rows[0].action : null };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+
+  if (!check(result.ok, '변경 이력을 쓰고 다시 읽을 수 있다', result.error)) return;
+  check(result.count > 0, '기록이 조회된다');
+  check(result.first === 'login.success', '방금 쓴 기록이 가장 위에 온다',
+    `첫 기록=${result.first}`);
+
+  // 화면에도 실제로 그려지는지 확인한다.
+  await page.locator('#settings-rail .ui-settings__tab[data-tab="audit"]').click();
+  await page.waitForTimeout(1200);
+  const rows = await page.locator('#audit-tab-content .ui-log__row').count().catch(() => 0);
+  check(rows > 0, '변경 이력 화면에 기록이 표시된다', `행 ${rows}개`);
+  await snap(page, actor, 'settings-audit');
 }
 
 async function snap(page, actor, label) {

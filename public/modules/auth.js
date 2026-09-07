@@ -11,6 +11,7 @@ import { fb, fdb } from '../services/firestore.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fetchBaseData, changeView } from './core.js';
 import { initPermissions, can } from './permissions.js';
+import { clearAuditCache } from './settings-audit.js';
 import { fnErrorMessage } from '../services/fn-errors.js';
 
 // window.onFirebaseReady, 이벤트 바인딩 — app.js에서 일괄 처리
@@ -136,6 +137,9 @@ function clearSessionState() {
   S.fixedItems=[]; S.allFixedItems=[];
   S.excelTemp=[]; S.excelRawRows=[]; S.excelFile=null; S.excelMonth='';
   S.settings={ expCats:[], incCats:[], rules:[] };
+  // 변경 이력 캐시는 S 밖(모듈 지역 변수)에 있다. 비우지 않으면 다음에
+  // 로그인한 사람에게 남의 활동 기록이 그대로 보인다.
+  clearAuditCache();
 }
 
 // ─────────────────────────────────────────────

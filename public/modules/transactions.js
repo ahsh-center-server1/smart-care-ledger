@@ -8,7 +8,8 @@
 import { S } from '../state.js';
 import { COLS, cs } from '../constants.js';
 import { toast, toastAction, showConfirm, escAttr, emptyState } from '../utils/ui.js';
-import { fb, fdb, batchDeleteDocs, batchUpdateDocs } from '../services/firestore.js';
+import { fb, fdb, batchUpdateDocs, batchMixedOps } from '../services/firestore.js';
+import { auditOp } from '../services/audit.js';
 import { calcAccountBalance } from '../services/balance.js';
 import { deleteFromStorage } from '../services/storage.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
@@ -568,7 +569,18 @@ function scheduleTrxDeletion(ids){
             }catch{ /* 못 읽어도 삭제는 진행한다 */ }
           }
         }
-        await batchDeleteDocs([...allIds].map(docId=>({col:COLS.TRANSACTIONS,docId})));
+        // 삭제 기록을 같은 배치에 실어 원자적으로 커밋한다 — 삭제는 되고
+        // 기록만 빠지는 상태가 생기지 않게. (되돌릴 수 없는 작업이다)
+        const clientName=S.clients.find(c=>c.id===S.activeClient)?.name||S.activeClient||'';
+        const logOp=auditOp(allIds.size>1?'trx.bulkDelete':'trx.delete',{
+          resourceId:allIds.size===1?[...allIds][0]:undefined,
+          summary:{clientName,count:allIds.size,
+            amount:removed.reduce((s2,t)=>s2+Number(t.amountOut||0)+Number(t.amountIn||0),0)},
+        });
+        await batchMixedOps({
+          deletes:[...allIds].map(docId=>({col:COLS.TRANSACTIONS,docId})),
+          adds:logOp?[{col:logOp.col,data:logOp.data}]:[],
+        });
         // 증빙 파일도 Storage에서 제거(고아 파일 방지, best-effort)
         removed.forEach(t=>{ if(t.receiptUrl)deleteFromStorage(t.receiptUrl); });
         extraUrls.forEach(u=>deleteFromStorage(u));

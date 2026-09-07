@@ -6,18 +6,24 @@
 //   최근 100건을 **한 번만** 조회하고 분류·검색 필터는 화면에서 돌린다.
 //   필터를 서버 쿼리로 만들면 조합마다 복합 인덱스가 필요하고, 필터를 바꿀
 //   때마다 읽기가 다시 나간다. 100건이면 화면에서 걸러도 즉시 반응한다.
-//   다시 읽는 것은 사용자가 「새로 고침」을 누를 때뿐이다.
+//   다시 읽는 것은 (1) 이 세션에서 새 기록을 썼을 때와 (2) 사용자가
+//   「새로 고침」을 누를 때뿐이다. 다른 사람의 변경은 실시간일 필요가 없다.
 
 'use strict';
 
 import { toast, skeleton } from '../utils/ui.js';
-import { fetchRecentAuditLogs } from '../services/audit.js';
+import { fetchRecentAuditLogs, auditWriteToken } from '../services/audit.js';
 import { actionLabel, actionResource, summaryText, AUDIT_RESOURCES } from '../domain/audit.js';
 
 const PAGE_SIZE = 100;
 
-/** 이번 세션에서 읽어 둔 기록. 탭을 왕복해도 다시 읽지 않는다. */
+/**
+ * 이번 세션에서 읽어 둔 기록. 탭을 왕복해도 다시 읽지 않는다.
+ * 단 이 세션에서 새 기록을 쓰면(auditWriteToken 증가) 다시 읽는다 —
+ * 방금 한 변경이 목록에 없으면 "기록이 안 남았다"고 오해하게 된다.
+ */
 let cache = null;
+let cacheToken = -1;
 let filterResource = '';
 let filterText = '';
 
@@ -48,10 +54,11 @@ export async function renderSettingsAudit() {
   const host = document.getElementById('audit-tab-content');
   if (!host) return;
 
-  if (cache === null) {
+  if (cache === null || cacheToken !== auditWriteToken()) {
     host.innerHTML = skeleton('row', 6);
     try {
       cache = await fetchRecentAuditLogs(PAGE_SIZE);
+      cacheToken = auditWriteToken();
     } catch (e) {
       cache = [];
       host.textContent = '';
@@ -68,6 +75,7 @@ export async function renderSettingsAudit() {
 /** 다시 읽는다 (사용자가 눌렀을 때만). */
 export async function reloadSettingsAudit() {
   cache = null;
+  cacheToken = -1;
   await renderSettingsAudit();
 }
 
@@ -194,6 +202,7 @@ function paint(host) {
 /** 로그아웃 시 캐시를 비운다 — 다음 사람에게 남의 기록이 보이면 안 된다. */
 export function clearAuditCache() {
   cache = null;
+  cacheToken = -1;
   filterResource = '';
   filterText = '';
 }

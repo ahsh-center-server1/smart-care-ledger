@@ -46,7 +46,7 @@
   <script type="module">
     import {
       initializeApp,
-      getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch, connectFirestoreEmulator,
+      getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, limit, startAfter, writeBatch, getCountFromServer, increment, runTransaction, serverTimestamp, connectFirestoreEmulator,
       getAuth, signInWithCustomToken, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence, connectAuthEmulator,
       getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator,
       getFunctions, httpsCallable, connectFunctionsEmulator,
@@ -80,7 +80,10 @@
     );
 
     // 전역 노출
-    window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch, storage, ref, uploadBytes, getDownloadURL, deleteObject };
+    // ⚠️ 여기에 없는 심볼을 fb()에서 꺼내 쓰면 undefined가 되고, 보통 조용히
+    //    실패한다(batchMixedOps처럼 폴백이 있는 곳은 더 조용하다).
+    //    test/fb-surface.test.mjs가 코드에서 꺼내 쓰는 이름과 이 목록을 대조한다.
+    window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, limit, startAfter, writeBatch, getCountFromServer, increment, runTransaction, serverTimestamp, storage, ref, uploadBytes, getDownloadURL, deleteObject };
     window._fbAuth = { auth, signInWithCustomToken, signOut, onAuthStateChanged };
     // endpoint — 호출이 실패했을 때 "어느 주소에 못 닿았는지"를 화면에 보여주기 위해.
     // 그 주소를 새 탭에서 열면 403(비공개)인지 404(미배포)인지 바로 갈린다.
