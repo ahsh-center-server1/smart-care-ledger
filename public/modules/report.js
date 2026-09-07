@@ -9,6 +9,7 @@ import { S } from '../state.js';
 import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, makeDraggable } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
+import { chunkForInQuery } from '../services/in-query.js';
 import { can, requiredRank, ROLE_RANK, ADMIN_RANK } from './permissions.js';
 import { calcAccountBalanceAsOf, sumIncomeExpense } from '../services/balance.js';
 import { planTransition, availableActions, actorContext, normalizeStatus } from './report-workflow.js';
@@ -1124,13 +1125,38 @@ export async function loadReportList(opts){
   try{
     const{getDocs,collection,query,where}=fb();
     const minYear=reportListMinYear();
-    // 연도 하나에만 부등호를 걸므로 복합 인덱스가 필요 없다
-    const q=minYear>0
-      ? query(collection(fdb(),COLS.REPORTS),where('year','>=',minYear))
-      : collection(fdb(),COLS.REPORTS);
-    const snap=await getDocs(q);
-    S.reportList=snap.docs.map(d=>({id:d.id,...d.data()}))
-      .sort((a,b)=>(b.year*100+b.month)-(a.year*100+a.month));
+    const db=fdb();
+
+    // 담당자는 **담당 입주자의 보고서만** 읽는다.
+    //
+    // 예전에는 전 입주자의 보고서를 다 읽었다. 두 가지가 잘못됐다:
+    //   · 읽기 — 보고서 200건이면 담당 4명인 담당자도 200건을 낸다.
+    //     이것이 담당자 한 세션의 읽기에서 가장 큰 항목이었다.
+    //   · 범위 — 담당하지 않는 입주자의 결재 의견까지 브라우저로 내려온다.
+    //     규칙은 등급 2 이상에게 reports를 열어 두므로 규칙이 막지 못한다.
+    //     앱이 필요한 것만 요청해야 한다.
+    //
+    // 팀장·센터장(report.view.all)은 전체를 봐야 한다 — 결재 대기 목록이
+    // 담당 배정과 무관하게 올라오기 때문이다.
+    const rows=[];
+    if(can('report.view.all')){
+      const q=minYear>0
+        ? query(collection(db,COLS.REPORTS),where('year','>=',minYear))
+        : collection(db,COLS.REPORTS);
+      const snap=await getDocs(q);
+      snap.docs.forEach(d=>rows.push({id:d.id,...d.data()}));
+    }else{
+      // in 절은 30개 제한이 있으므로 나눠 조회한다. 담당 입주자가 없으면
+      // chunkForInQuery가 빈 배열을 돌려주므로 **무필터 조회로 흘러내리지 않는다.**
+      const myClientIds=(S.clients||[]).map(c=>c.id);
+      for(const chunk of chunkForInQuery(myClientIds)){
+        const clauses=[where('clientId','in',chunk)];
+        if(minYear>0)clauses.push(where('year','>=',minYear));
+        const snap=await getDocs(query(collection(db,COLS.REPORTS),...clauses));
+        snap.docs.forEach(d=>rows.push({id:d.id,...d.data()}));
+      }
+    }
+    S.reportList=rows.sort((a,b)=>(b.year*100+b.month)-(a.year*100+a.month));
   }catch(e){
     toast('보고서 목록 로드 실패: '+e.message,'error');
     if(!Array.isArray(S.reportList))S.reportList=[];

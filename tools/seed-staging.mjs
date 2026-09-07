@@ -8,9 +8,9 @@
  *
  * 만드는 것
  *   직원 4명 (센터장+관리자 / 팀장 / 담당자 / 입력자) — 비밀번호는 모두 아래 PASSWORD
- *   입주자 2명 · 계좌 3개 · 기본 카테고리 · 자동분류 규칙 3개
+ *   입주자 3명(1명은 담당자 미배정 — 범위 검증용) · 계좌 4개 · 기본 카테고리 · 자동분류 규칙 3개
  *   최근 2개월 거래 (자산이동 1쌍 · 취소 1건 · 입력자 작성분 포함)
- *   고정항목 1건 · 연간 예산 1건
+ *   고정항목 1건 · 연간 예산 1건 · 보고서 3건(제출·팀장결재·최종결재)
  *
  * 안전장치
  *   - **프로덕션 프로젝트 ID면 무조건 거부한다.** 이 스크립트는 데이터를 덮어쓴다.
@@ -102,6 +102,18 @@ const CLIENTS = [
     teamLeader: 'leader',
     contact: '010-0000-0002', memo: '시드 데이터', active: true,
   },
+  {
+    // 담당자가 배정되지 않은 입주자.
+    //
+    // 이 한 명이 있어야 **범위 검증이 가능하다.** 담당자에게 보이면 안 되는
+    // 것이 하나도 없으면 "담당분만 조회한다"를 확인할 방법이 없다.
+    // 담당자 화면에는 이 입주자와 그 보고서가 나오지 않아야 하고,
+    // 팀장·센터장 화면에는 나와야 한다.
+    id: 'cli_seed_3', name: '박철수',
+    userIds: '',
+    teamLeader: 'leader',
+    contact: '010-0000-0003', memo: '담당자 미배정 (범위 검증용)', active: true,
+  },
 ];
 
 /** 기준일 잔액 — 기준일 **다음날부터**의 거래가 여기에 합산된다 */
@@ -112,6 +124,8 @@ const ACCOUNTS = [
     initialBalance: 2000000, initialBalanceDate: baseDate(), bankStatements: [], active: true },
   { id: 'acc_seed_3', clientId: 'cli_seed_2', label: '생활비 통장', accountNumber: '987-654-3210',
     initialBalance: 300000, initialBalanceDate: baseDate(), bankStatements: [], active: true },
+  { id: 'acc_seed_4', clientId: 'cli_seed_3', label: '생활비 통장', accountNumber: '555-123-4567',
+    initialBalance: 250000, initialBalanceDate: baseDate(), bankStatements: [], active: true },
 ];
 
 const RULES = [
@@ -163,6 +177,13 @@ function transactions() {
           type: '수입', category: '수입', description: '기초생활수급비', amountIn: 620000 });
     add({ clientId: 'cli_seed_2', accountId: 'acc_seed_3', date: dayOf(monthsAgo, 9),
           type: '지출', category: '식비', description: '식자재 구입', amountOut: 74300 });
+    // 담당자 미배정 입주자 — 담당자 화면에 나오면 안 된다
+    add({ clientId: 'cli_seed_3', accountId: 'acc_seed_4', date: dayOf(monthsAgo, 5),
+          type: '수입', category: '수입', description: '장애인연금', amountIn: 380000,
+          createdBy: 'leader' });
+    add({ clientId: 'cli_seed_3', accountId: 'acc_seed_4', date: dayOf(monthsAgo, 8),
+          type: '지출', category: '식비', description: '반찬 구입', amountOut: 41000,
+          createdBy: 'leader' });
   }
 
   // 환불 (음수 지출) — 잔액이 다시 늘어나는 경로
@@ -194,6 +215,43 @@ const FIXED_ITEMS = [
   { id: 'fix_seed_1', clientId: 'cli_seed_1', accountId: 'acc_seed_1', type: '지출',
     day: 25, category: '세금공과', description: '휴대폰 요금', amount: 33000, isMandatory: true },
 ];
+
+/**
+ * 보고서 3건 — 입주자별 1건, 상태를 각각 다르게 둔다.
+ *
+ * 왜 필요한가
+ *   보고서가 하나도 없으면 결재 대기 뱃지·결재 버튼·목록 범위를 전부
+ *   빈 화면으로만 확인하게 된다. 특히 **cli_seed_3의 보고서**가 있어야
+ *   "담당자는 담당분만 읽는다"를 검증할 수 있다 — 담당자 목록에 이것이
+ *   나오면 범위가 새고 있는 것이다.
+ *
+ * 상태 배치
+ *   cli_seed_1 submitted     → 팀장 결재 대기 (팀장 뱃지가 잡혀야 한다)
+ *   cli_seed_2 team_approved → 센터장 결재 대기
+ *   cli_seed_3 confirmed     → 마감. 담당자에게는 아예 보이지 않아야 하고,
+ *                              마감 색인(config/lockedMonths)의 대상이기도 하다
+ */
+function reports() {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 1);
+  const year = d.getFullYear(), month = d.getMonth() + 1;
+  const at = new Date(year, month, 1).toISOString();
+  const base = { year, month, summary: {}, createdAt: at,
+                 staffComment: '시드 데이터', leaderComment: '', centerComment: '' };
+  return [
+    { id: `rpt_seed_1`, clientId: 'cli_seed_1', status: 'submitted', ...base,
+      createdBy: 'staff', submittedAt: at, submittedBy: 'staff', submittedByName: '이담당' },
+    { id: `rpt_seed_2`, clientId: 'cli_seed_2', status: 'team_approved', ...base,
+      createdBy: 'staff', submittedAt: at, submittedBy: 'staff', submittedByName: '이담당',
+      teamApprovedAt: at, teamApprovedBy: 'leader', teamApprovedByName: '박팀장' },
+    { id: `rpt_seed_3`, clientId: 'cli_seed_3', status: 'confirmed', ...base,
+      createdBy: 'leader', submittedAt: at, submittedBy: 'leader', submittedByName: '박팀장',
+      teamApprovedAt: at, teamApprovedBy: 'leader', teamApprovedByName: '박팀장',
+      centerApprovedAt: at, centerApprovedBy: 'center', centerApprovedByName: '김센터' },
+  ];
+}
+
+const REPORTS = reports();
 
 const BUDGETS = [
   { id: `cli_seed_1_${new Date().getFullYear()}`, clientId: 'cli_seed_1', year: new Date().getFullYear(),
@@ -303,6 +361,7 @@ for (const t of TRANSACTIONS) {
 }
 for (const f of FIXED_ITEMS) { const { id, ...data } = f; docs.push({ col: 'fixedItems', id, data }); }
 for (const b of BUDGETS) { const { id, ...data } = b; docs.push({ col: 'budgets', id, data }); }
+for (const r of REPORTS) { const { id, ...data } = r; docs.push({ col: 'reports', id, data }); }
 
 await writeAll(docs);
 log(`  문서 ${docs.length}건 기록 완료`);
@@ -315,7 +374,9 @@ for (const u of USERS) {
 }
 log('\n확인해 볼 것');
 log('  · typist(입력자)로 로그인 → 담당 입주자 1명, 본인이 쓴 거래 2건만 보인다');
-log('  · leader(팀장)로 로그인   → 결재 대기 뱃지가 잡힌다 (staff가 보고서를 제출한 뒤)');
+log('  · staff(담당자)로 로그인  → 입주자 2명만 보인다 (박철수는 담당 배정이 없다)');
+log('  · leader(팀장)로 로그인   → 입주자 3명 · 결재 대기 1건 (홍길동 제출분)');
+log('  · center(센터장)로 로그인 → 결재 대기 1건 (김영희 팀장결재분)');
 log('  · 대시보드 · 보고서 · 설정 세 화면의 계좌 잔액이 같은지');
 log('  · 계좌 "생활비 통장"의 자산이동 −100,000이 "저축 통장"에 +100,000으로 있는지\n');
 

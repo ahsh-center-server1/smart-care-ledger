@@ -102,9 +102,18 @@ function historyReads() {
   return cfg.trxPerClientMonth;
 }
 
-/** 보고서 탭 진입 — 목록 조회. */
-function reportListReads() {
-  return cfg.reports;
+/**
+ * 보고서 탭 진입 — 목록 조회.
+ *
+ * 팀장·센터장(report.view.all)은 결재 대기가 담당 배정과 무관하게 올라오므로
+ * 전체를 읽는다. 담당자는 담당 입주자의 것만 읽는다 — 예전에는 담당 4명인
+ * 담당자도 전 입주자의 보고서를 다 읽었고, 그것이 담당자 한 세션에서
+ * 가장 큰 항목이었다.
+ */
+function reportListReads(role) {
+  if (role === 'admin' || role === 'leader') return cfg.reports;
+  const share = cfg.clients > 0 ? cfg.clientsPerStaff / cfg.clients : 1;
+  return Math.ceil(cfg.reports * share);
 }
 
 /** 결재 대기 뱃지 — status in [...] 쿼리. */
@@ -127,7 +136,7 @@ for (const r of ROLES) {
   if (!r.count) continue;
   const perSession = loginReads(r.key)
     + historyReads() * cfg.clientSwitchesPerSession
-    + (r.report ? reportListReads() + pendingBadgeReads() : 0);
+    + (r.report ? reportListReads(r.key) + pendingBadgeReads() : 0);
   const daily = perSession * cfg.sessions * r.count;
   rows.push({ ...r, perSession, daily });
   total += daily;
@@ -155,6 +164,13 @@ function assertSourceShape() {
   if (!/fetchMonthlySummaries/.test(core)) {
     problems.push('core.js가 요약 캐시를 쓰지 않습니다 — '
       + '이 모델은 입주자 1명당 1 읽기를 가정합니다');
+  }
+
+  // 보고서 목록이 담당 입주자로 좁혀져 있는가
+  const report = read('../public/modules/report.js');
+  if (!/report\.view\.all/.test(report) || !/chunkForInQuery/.test(report)) {
+    problems.push('report.js가 보고서 목록을 담당 입주자로 좁히지 않습니다 — '
+      + '이 모델은 담당자가 담당분만 읽는다고 가정합니다');
   }
 
   const summary = read('../public/services/summary.js');

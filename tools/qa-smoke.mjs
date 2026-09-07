@@ -135,6 +135,7 @@ async function runRole(browser, actor) {
   check(clientCards > 0, `대시보드에 입주자 카드가 보인다 (${clientCards}개)`);
   await snap(page, actor, 'dashboard');
 
+  await checkClientScope(page, actor);
   await checkSummaryCache(page, actor);
 
   // 역할별 내비게이션 노출 — 입력자는 보고서·설정이 없어야 한다
@@ -164,6 +165,7 @@ async function runRole(browser, actor) {
     await page.locator('.nav-item[data-view="report"]').click();
     await page.waitForTimeout(2000);
     check(await page.isVisible('#view-report'), '보고서 화면이 열린다');
+    await checkReportScope(page, actor);
     await snap(page, actor, 'report');
   }
   if (navSettings) {
@@ -257,6 +259,102 @@ async function runRole(browser, actor) {
  *   1. 두 번째 조회가 재계산 없이 끝난다 (= 캐시가 쓰였고 다시 읽혔다)
  *   2. 캐시로 읽은 값이 직접 계산한 값과 **같다** (= 캐시가 틀린 금액을 만들지 않는다)
  */
+/**
+ * 담당 배정이 화면 범위를 실제로 좁히는가.
+ *
+ * 왜 브라우저에서 봐야 하는가
+ *   범위는 **쿼리에** 걸려야 한다. 가져온 뒤 걸러내면 데이터는 이미 브라우저에
+ *   내려온 것이고, 읽기도 그대로 과금된다. 그런데 두 방식은 화면상 구별되지
+ *   않는다 — 목록에 안 보이는 것은 똑같기 때문이다.
+ *
+ *   그래서 앱이 실제로 보유한 것(S.clients · S.reportList)을 본다.
+ *   시드의 cli_seed_3(담당자 미배정)이 담당자 쪽에 하나라도 있으면 범위가 새는 것이다.
+ *
+ *   보안 규칙은 이것을 막지 못한다 — reports는 등급 2 이상에게 열려 있다.
+ *   앱이 필요한 것만 요청해야 한다.
+ */
+const UNASSIGNED_CLIENT = 'cli_seed_3';
+
+async function checkClientScope(page, actor) {
+  const seen = await page.evaluate(async (unassigned) => {
+    const { S } = await import('./state.js');
+    return {
+      clients: (S.clients || []).map((c) => c.id),
+      hasUnassignedClient: (S.clients || []).some((c) => c.id === unassigned),
+    };
+  }, UNASSIGNED_CLIENT);
+
+  if (actor.role === '담당자' || actor.role === '입력자') {
+    check(!seen.hasUnassignedClient,
+      '담당 배정이 없는 입주자는 목록에 없다',
+      `보이는 입주자: ${seen.clients.join(', ')}`);
+  } else {
+    check(seen.hasUnassignedClient,
+      '팀장·센터장에게는 전 입주자가 보인다',
+      `보이는 입주자: ${seen.clients.join(', ')}`);
+  }
+}
+
+/**
+ * 보고서 목록이 담당 입주자로 좁혀지는가.
+ *
+ * 담당자가 전 입주자의 보고서를 읽으면 두 가지가 잘못된다: 읽기가 보고서 수만큼
+ * 늘고(담당 4명인 담당자도 200건을 낸다), 담당하지 않는 입주자의 결재 의견이
+ * 브라우저로 내려온다.
+ */
+async function checkReportScope(page, actor) {
+  const navReport = await page.locator('.nav-item[data-view="report"]').isVisible().catch(() => false);
+  if (!navReport) return;
+
+  const seen = await page.evaluate(async (unassigned) => {
+    try {
+      const Rpt = await import('./modules/report.js');
+      const { S } = await import('./state.js');
+      await Rpt.loadReportList({ force: true });
+      const list = S.reportList || [];
+      return {
+        ok: true,
+        total: list.length,
+        clientIds: [...new Set(list.map((r) => r.clientId))],
+        hasUnassigned: list.some((r) => r.clientId === unassigned),
+      };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  }, UNASSIGNED_CLIENT);
+
+  if (!check(seen.ok, '보고서 목록을 조회할 수 있다', seen.error)) return;
+  check(seen.total > 0, `보고서 목록이 비어 있지 않다 (${seen.total}건)`);
+
+  if (actor.role === '담당자') {
+    check(!seen.hasUnassigned,
+      '담당자의 보고서 목록에 담당 밖 입주자가 없다',
+      `조회된 입주자: ${seen.clientIds.join(', ')}`);
+  } else {
+    check(seen.hasUnassigned,
+      '팀장·센터장의 보고서 목록에는 전 입주자가 있다',
+      `조회된 입주자: ${seen.clientIds.join(', ')}`);
+  }
+
+  // 결재 대기 뱃지.
+  //
+  // 이 신호는 예전에 **항상 0건**이었다 — clients.teamLeader에 로그인 아이디와
+  // 문서 ID가 섞여 들어 있어 대조가 어긋났기 때문이다. 숫자가 0이어도 화면은
+  // 정상으로 보이므로 눈으로는 잡히지 않는다. 시드가 각 결재자에게 정확히
+  // 1건씩 걸리도록 만들어 두었으니 그 값을 고정한다.
+  //
+  //   팀장   → cli_seed_1 submitted     (그 입주자의 배정 팀장이다)
+  //   센터장 → cli_seed_2 team_approved (2차 결재 차례)
+  const badge = (await page.textContent('#nav-rpt-badge').catch(() => '')) || '';
+  if (actor.role === '팀장' || actor.role === '센터장') {
+    check(badge.trim() === '1', `${actor.role}의 결재 대기 뱃지가 1건이다`,
+      `뱃지 값: '${badge.trim()}'`);
+  } else {
+    check(badge.trim() === '', '담당자에게는 결재 대기 뱃지가 없다',
+      `뱃지 값: '${badge.trim()}'`);
+  }
+}
+
 async function checkSummaryCache(page, actor) {
   const result = await page.evaluate(async () => {
     try {
