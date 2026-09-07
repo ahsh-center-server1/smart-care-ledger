@@ -54,8 +54,51 @@ env:
   FIREBASE_PROJECT: smart-care-ledger-staging
 
 jobs:
+  # 시크릿이 없을 때 배포를 "실패"로 끝내면, 준비가 안 됐다는 이유로 PR이 계속
+  # 빨간불이 되어 나중에 진짜 실패를 가린다. 그래서 자동 실행(push)은 조용히
+  # 건너뛰고, 사람이 직접 누른 실행(workflow_dispatch)만 실패로 알려준다.
+  preflight:
+    name: 준비 확인
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - name: 시크릿 확인
+        id: check
+        run: |
+          if [ -n "${{ secrets.FIREBASE_SA_STAGING }}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "시크릿 확인됨 · 대상 프로젝트: $FIREBASE_PROJECT"
+            exit 0
+          fi
+
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          {
+            echo "## 배포를 건너뛰었습니다"
+            echo ""
+            echo "\`FIREBASE_SA_STAGING\` 시크릿이 없습니다. 준비는 한 번만 하면 됩니다 —"
+            echo "\`STAGING.md\`의 「명령어 없이 배포하기 → 준비」 1~4단계를 보세요."
+            echo ""
+            echo "1. Google Cloud 콘솔에서 배포용 서비스 계정 만들기 (소유자 역할)"
+            echo "2. 키 → JSON 내려받기"
+            echo "3. GitHub → Settings → Secrets and variables → Actions →"
+            echo "   \`FIREBASE_SA_STAGING\` 으로 JSON 전체 붙여넣기"
+            echo "4. Cloud Functions · Cloud Build · Artifact Registry · Cloud Run · Eventarc API 사용 설정"
+            echo ""
+            echo "시크릿을 넣으면 다음 푸시부터 자동으로 배포됩니다."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # 사람이 배포를 기대하고 눌렀다면 조용히 넘기지 않는다
+            echo "::error::FIREBASE_SA_STAGING 시크릿이 없습니다. 위 요약의 1~4단계를 먼저 하세요."
+            exit 1
+          fi
+          echo "::warning::FIREBASE_SA_STAGING 시크릿이 없어 배포를 건너뜁니다 (요약 참고)."
+
   deploy:
     name: Functions · 규칙 · 인덱스
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -66,16 +109,6 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-
-      # 준비가 안 됐으면 배포를 시작하기 전에 무엇이 없는지 알려준다.
-      - name: 준비 확인
-        run: |
-          if [ -z "${{ secrets.FIREBASE_SA_STAGING }}" ]; then
-            echo "::error::FIREBASE_SA_STAGING 시크릿이 없습니다."
-            echo "::error::STAGING.md 「명령어 없이 배포하기」의 1~4단계를 먼저 하세요."
-            exit 1
-          fi
-          echo "시크릿 확인됨 · 대상 프로젝트: $FIREBASE_PROJECT"
 
       - name: 의존성 설치 (루트)
         run: npm ci

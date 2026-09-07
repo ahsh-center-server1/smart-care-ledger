@@ -74,12 +74,41 @@ test('자격증명을 저장소나 로그에 남기지 않는다', () => {
   assert.ok(!/echo\s+"?\$SA_JSON/.test(src), '시크릿을 echo하고 있습니다');
 });
 
-test('시크릿이 없으면 배포 전에 멈추고 무엇이 없는지 알려준다', () => {
+test('시크릿이 없으면 배포에 들어가지 않는다', () => {
   const src = read(WORKFLOW);
-  const guard = src.indexOf('FIREBASE_SA_STAGING 시크릿이 없습니다');
+  assert.match(src, /needs: preflight/, '배포가 준비 확인에 의존하지 않습니다');
+  assert.match(src, /if: needs\.preflight\.outputs\.ready == 'true'/,
+    '준비되지 않았을 때 배포를 막는 조건이 없습니다');
+
+  const guard = src.indexOf('FIREBASE_SA_STAGING');
   const deploy = src.search(/^\s+firebase deploy/m);
-  assert.ok(guard > 0, '시크릿 누락 안내가 없습니다');
-  assert.ok(guard < deploy, '시크릿 확인이 배포 뒤에 있습니다');
+  assert.ok(guard > 0 && guard < deploy, '시크릿 확인이 배포 뒤에 있습니다');
+});
+
+test('준비가 안 된 것 때문에 PR이 빨간불이 되지 않는다', () => {
+  // 준비가 안 됐다는 이유로 계속 실패하면 나중에 진짜 실패를 가린다.
+  // 자동 실행(push)은 건너뛰고, 사람이 직접 누른 실행만 실패로 알려준다.
+  const src = read(WORKFLOW);
+  assert.match(src, /ready=false/, '건너뛰기 경로가 없습니다');
+  assert.match(src, /github\.event_name.*workflow_dispatch/s,
+    '직접 실행과 자동 실행을 구분하지 않습니다');
+
+  // 자동 실행에서 exit 1로 끝나면 안 된다 —
+  // ready=false를 쓴 다음의 exit 1은 workflow_dispatch 조건 안에만 있어야 한다
+  const skip = src.slice(src.indexOf('ready=false'));
+  const firstExit = skip.indexOf('exit 1');
+  assert.ok(firstExit > 0, '직접 실행 시 실패시키는 경로가 없습니다');
+  const beforeExit = skip.slice(0, firstExit);
+  assert.match(beforeExit, /workflow_dispatch/,
+    'exit 1이 workflow_dispatch 조건 밖에 있습니다 — 자동 실행도 실패합니다');
+});
+
+test('건너뛸 때 무엇을 해야 하는지 요약에 남긴다', () => {
+  // 사람이 로그를 뒤지지 않고도 다음에 할 일을 알 수 있어야 한다
+  const src = read(WORKFLOW);
+  const skip = src.slice(src.indexOf('ready=false'), src.indexOf('needs: preflight'));
+  assert.match(skip, /GITHUB_STEP_SUMMARY/, '건너뛴 이유를 요약에 쓰지 않습니다');
+  assert.match(skip, /STAGING\.md/, '어디를 보라는 안내가 없습니다');
 });
 
 test('문서에 명령어 없이 배포하는 절차가 있다', () => {
