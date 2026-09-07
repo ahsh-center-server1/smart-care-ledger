@@ -1,0 +1,192 @@
+# 스테이징 배포 — 명령어 없이, GitHub에서 돌린다.
+#
+# 왜 필요한가
+#   Cloud Functions는 **Firebase 콘솔에서 배포할 수 없다.** 콘솔의 Functions
+#   탭은 이미 배포된 것을 보고·삭제만 한다. 소스를 올리는 버튼이 없다.
+#   그래서 콘솔만 쓰는 사람은 로그인 함수를 올릴 방법이 없었다.
+#
+# 이 워크플로가 그 일을 대신한다. 준비는 한 번만 하면 되고 전부 클릭이다
+#   (절차는 STAGING.md 「명령어 없이 배포하기」).
+#
+# 대상은 **스테이징으로 고정**이다. 이 파일에서 프로덕션을 배포할 수 없다
+#   (test/deploy-workflow.test.mjs가 그것을 지킨다).
+
+name: 스테이징 배포
+
+on:
+  # GitHub Actions 탭에서 "Run workflow" 버튼으로 실행.
+  # (이 버튼은 워크플로 파일이 기본 브랜치에 있을 때 나타난다)
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: '테스트 데이터도 넣기 (역할별 계정 4개 + 거래)'
+        type: boolean
+        default: false
+      wipe:
+        description: '시드 전에 기존 스테이징 데이터를 지우기'
+        type: boolean
+        default: false
+
+  # 백엔드에 영향 있는 파일이 바뀌면 자동 배포.
+  # 문서만 고쳤을 때는 돌지 않는다.
+  push:
+    branches:
+      - 'claude/**'
+    paths:
+      - 'functions/**'
+      - 'firestore.rules'
+      - 'firestore.indexes.json'
+      - 'storage.rules'
+      - 'firebase.json'
+      - '.firebaserc'
+      - '.github/workflows/deploy-staging.yml'
+
+# 같은 브랜치의 배포가 겹치지 않게 한다 (뒤엣것만 남긴다)
+concurrency:
+  group: deploy-staging-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # 여기가 유일한 대상. 프로덕션은 이 워크플로로 배포하지 않는다.
+  FIREBASE_PROJECT: smart-care-ledger-staging
+
+jobs:
+  deploy:
+    name: Functions · 규칙 · 인덱스
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # 준비가 안 됐으면 배포를 시작하기 전에 무엇이 없는지 알려준다.
+      - name: 준비 확인
+        run: |
+          if [ -z "${{ secrets.FIREBASE_SA_STAGING }}" ]; then
+            echo "::error::FIREBASE_SA_STAGING 시크릿이 없습니다."
+            echo "::error::STAGING.md 「명령어 없이 배포하기」의 1~4단계를 먼저 하세요."
+            exit 1
+          fi
+          echo "시크릿 확인됨 · 대상 프로젝트: $FIREBASE_PROJECT"
+
+      - name: 의존성 설치 (루트)
+        run: npm ci
+
+      - name: 의존성 설치 (functions)
+        working-directory: functions
+        run: npm ci
+
+      # 매 스텝마다 npx로 내려받지 않도록 한 번만 설치한다
+      - name: firebase-tools 설치
+        run: npm i -g firebase-tools@13
+
+      # 깨진 코드를 배포하지 않는다. 여기서 막히면 배포는 시작되지 않는다.
+      - name: 검사 (ESLint + 테스트)
+        run: npm run check
+
+      - name: 서비스 계정 자격증명 준비
+        env:
+          SA_JSON: ${{ secrets.FIREBASE_SA_STAGING }}
+        run: |
+          # 홈 디렉터리에 두고 권한을 좁힌다. 로그에 찍히지 않게 echo하지 않는다.
+          printf '%s' "$SA_JSON" > "$HOME/sa.json"
+          chmod 600 "$HOME/sa.json"
+          # JSON이 맞는지, 어느 프로젝트 키인지 확인 (잘못된 프로젝트 키를 조기에 잡는다)
+          KEY_PROJECT=$(node -e "console.log(require(process.env.HOME + '/sa.json').project_id || '')")
+          echo "키의 프로젝트: $KEY_PROJECT"
+          if [ "$KEY_PROJECT" != "$FIREBASE_PROJECT" ]; then
+            echo "::error::시크릿의 서비스 계정 키가 '$KEY_PROJECT' 프로젝트 것입니다."
+            echo "::error::'$FIREBASE_PROJECT' 프로젝트에서 새 키를 만들어 시크릿을 교체하세요."
+            exit 1
+          fi
+
+      - name: 배포
+        run: |
+          export GOOGLE_APPLICATION_CREDENTIALS="$HOME/sa.json"
+          firebase deploy \
+            --only functions,firestore:rules,firestore:indexes,storage \
+            --project "$FIREBASE_PROJECT" \
+            --non-interactive \
+            --force
+
+      - name: 배포된 함수 확인
+        run: |
+          export GOOGLE_APPLICATION_CREDENTIALS="$HOME/sa.json"
+          firebase functions:list \
+            --project "$FIREBASE_PROJECT" --non-interactive | tee /tmp/fns.txt
+          # login이 없으면 배포가 반쪽이다 — 조용히 넘기지 않는다
+          if ! grep -qi 'login' /tmp/fns.txt; then
+            echo "::error::login 함수가 목록에 없습니다. 위 배포 로그를 확인하세요."
+            exit 1
+          fi
+
+      # 브라우저가 함수를 부를 수 있어야 한다. 막혀 있으면 화면에는 CORS 오류로만
+      # 보이므로(원인 찾기 최악) 여기서 확인해 둔다.
+      - name: 공개 호출 가능 여부 확인
+        run: |
+          URL="https://asia-northeast3-$FIREBASE_PROJECT.cloudfunctions.net/login"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS \
+            -H 'Origin: https://example.com' \
+            -H 'Access-Control-Request-Method: POST' "$URL")
+          echo "OPTIONS $URL → $CODE"
+          case "$CODE" in
+            204|200)
+              echo "✅ 브라우저에서 부를 수 있습니다." ;;
+            403)
+              echo "::error::403 — 함수가 공개 호출 불가 상태입니다."
+              echo "::error::Cloud Run → login → 보안 → '인증되지 않은 호출 허용'으로 바꾸세요."
+              echo "::error::(STAGING.md 「403일 때」 참고)"
+              exit 1 ;;
+            404)
+              echo "::error::404 — 그 이름·리전에 함수가 없습니다. 위 배포 로그를 확인하세요."
+              exit 1 ;;
+            *)
+              echo "::warning::예상하지 못한 응답($CODE)입니다. 브라우저에서 직접 확인해 보세요." ;;
+          esac
+
+      - name: 테스트 데이터 넣기
+        if: inputs.seed
+        run: |
+          export GOOGLE_APPLICATION_CREDENTIALS="$HOME/sa.json"
+          # 스크립트가 프로덕션 프로젝트 ID를 거부한다 (이중 안전장치)
+          node tools/seed-staging.mjs --apply \
+            --project "$FIREBASE_PROJECT" \
+            ${{ inputs.wipe && '--wipe' || '' }}
+
+      - name: 자격증명 삭제
+        if: always()
+        run: rm -f "$HOME/sa.json"
+
+      - name: 요약
+        if: success()
+        run: |
+          {
+            echo "## 스테이징 배포 완료"
+            echo ""
+            echo "| 항목 | 값 |"
+            echo "|---|---|"
+            echo "| 프로젝트 | \`$FIREBASE_PROJECT\` |"
+            echo "| 리전 | \`asia-northeast3\` |"
+            echo "| 커밋 | \`${GITHUB_SHA:0:7}\` |"
+            echo ""
+            echo "### 이제 확인할 것"
+            echo "1. 이 브랜치의 Vercel 프리뷰 URL을 엽니다."
+            echo "2. 화면 오른쪽 위에 **스테이징** 표시가 뜨는지 봅니다."
+            echo "3. 로그인해 봅니다."
+            if [ "${{ inputs.seed }}" = "true" ]; then
+              echo ""
+              echo "테스트 계정: \`center\` · \`leader\` · \`staff\` · \`typist\` (비밀번호 \`staging1234\`)"
+            else
+              echo ""
+              echo "계정이 아직 없으면 로그인 화면에서 **가입**하세요 —"
+              echo "\`users\`가 비어 있으면 첫 계정이 관리자로 만들어집니다."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
