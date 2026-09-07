@@ -5,11 +5,16 @@
     "lint": "eslint .",
     "test": "node --test test/*.test.mjs",
     "check": "npm run lint && npm test",
-    "lint:syntax": "node lint.cjs"
+    "lint:syntax": "node lint.cjs",
+    "emu": "firebase emulators:start --project staging",
+    "emu:seed": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 node tools/seed-staging.mjs",
+    "deploy:staging": "firebase deploy --project staging",
+    "deploy:staging:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage --project staging"
   },
   "type": "module",
   "devDependencies": {
     "eslint": "^9.39.5",
+    "firebase-admin": "^12.6.0",
     "globals": "^17.12.0"
   }
 }

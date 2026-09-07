@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "smart-care-ledger"
+    "default": "smart-care-ledger",
+    "staging": "smart-care-ledger-staging"
   }
 }

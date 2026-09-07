@@ -278,15 +278,28 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 
 ## 10. 핵심 설정값
 
-Firebase 설정(`firebaseConfig`)은 `public/index.html`에 정의되어 있으며, 파일
-업로드는 Firebase Storage(`services/storage.js`)를 사용한다. (Google Drive 업로드는
-더 이상 사용하지 않음 — 구형 Drive URL 표시 호환만 `getImageUrl`에 남아 있음.)
+Firebase 설정은 `public/firebase-env.js`에 있고, **어느 프로젝트에 붙을지는 실행 시점
+호스트명이 정한다.** 파일 업로드는 Firebase Storage(`services/storage.js`)를 사용한다.
+(Google Drive 업로드는 더 이상 사용하지 않음 — 구형 Drive URL 표시 호환만
+`getImageUrl`에 남아 있음.)
+
+| 접속 주소 | 붙는 곳 |
+|---|---|
+| `smart-care-ledger.web.app` · `.firebaseapp.com` | 프로덕션 (실데이터) |
+| 그 외 전부 (Vercel 프리뷰 · localhost · 스테이징 Hosting) | 스테이징 |
+| 아무 주소 + `?env=emulator` | 로컬 에뮬레이터 |
 
 ```javascript
-// public/index.html
-const firebaseConfig = { apiKey, authDomain, projectId,
-  storageBucket: 'smart-care-ledger.firebasestorage.app', ... };
+// public/index.html — 설정을 직접 쓰지 않는다
+const env = pickFirebaseEnv(location, window.sessionStorage);
+const app = initializeApp(env.config);
 ```
+
+**기본값이 스테이징인 것이 안전장치다.** 새 미리보기 URL이 생겨도 실데이터에 붙지
+않는다. 프로덕션은 `PROD_HOSTNAMES`에 적힌 호스트에서만 열린다.
+프로덕션이 아니면 화면 오른쪽 위에 주황색 표시가 뜬다.
+
+테스트 환경 구축·시드·확인 절차는 **`STAGING.md`** 참고.
 
 ---
 

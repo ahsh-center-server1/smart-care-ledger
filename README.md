@@ -198,12 +198,32 @@ firebase deploy
 ### 배포 URL
 https://smart-care-ledger.web.app
 
+### 테스트 환경
+
+어느 Firebase 프로젝트에 붙을지는 **접속 호스트명**이 정한다. 운영 URL
+(`smart-care-ledger.web.app` · `.firebaseapp.com`)에서만 실데이터에 붙고, Vercel
+프리뷰·localhost를 비롯한 나머지는 전부 스테이징 프로젝트를 쓴다. 프로덕션이
+아니면 화면 오른쪽 위에 주황색 표시가 뜬다.
+
+결제 수단 없이 전 기능을 확인하려면 로컬 에뮬레이터를 쓴다.
+
+```bash
+npm install && (cd functions && npm install)
+npm run emu                       # 에뮬레이터 기동
+npm run emu:seed -- --apply       # 테스트 계정·데이터 시드
+# http://localhost:5000/?env=emulator
+```
+
+절차와 확인 항목은 **[STAGING.md](./STAGING.md)** 참고.
+
 ---
 
 ## 📝 문서
 
 - **[사용자 매뉴얼](USER_MANUAL.md)** — 모든 사용자 대상
 - **[CLAUDE.md](CLAUDE.md)** — 개발자/유지보수 기술 문서
+- **[STAGING.md](STAGING.md)** — 스테이징·에뮬레이터 테스트 절차
+- **[RUNBOOK.md](RUNBOOK.md)** — 운영 배포 절차 (인증 전환·잔액 정정)
 
 ---
 

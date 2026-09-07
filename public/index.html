@@ -25,27 +25,31 @@
   <!-- Firebase SDK (Firestore + Auth + Storage) -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
-    import { getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
-    import { getAuth, signInWithCustomToken, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
-    import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js';
-    import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
+    import { getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch, connectFirestoreEmulator } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+    import { getAuth, signInWithCustomToken, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence, connectAuthEmulator } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
+    import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js';
+    import { getFunctions, httpsCallable, connectFunctionsEmulator } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
+    import { pickFirebaseEnv } from './firebase-env.js';
 
-    // ★ 본인 Firebase 설정으로 변경하세요
-    const firebaseConfig = {
-      apiKey:            "AIzaSyBYm__B_uz6hg_epUlpvI8jWdjhkRQgMuo",
-      authDomain:        "smart-care-ledger.firebaseapp.com",
-      projectId:         "smart-care-ledger",
-      storageBucket:     "smart-care-ledger.firebasestorage.app",
-      messagingSenderId: "731965168909",
-      appId:             "1:731965168909:web:1fa16a4b4d050a32e7e444"
-    };
+    // 접속 대상은 호스트명이 정한다 — 운영 URL에서만 프로덕션, 그 외는 스테이징.
+    // 설정값과 판정 규칙은 firebase-env.js에 있다 (STAGING.md 참고).
+    const env = pickFirebaseEnv(location, window.sessionStorage);
 
-    const app = initializeApp(firebaseConfig);
+    const app = initializeApp(env.config);
     const db  = getFirestore(app);
     const auth = getAuth(app);
     const storage = getStorage(app);
     // Cloud Functions는 Firestore와 같은 리전(서울)에 배포된다
     const functions = getFunctions(app, 'asia-northeast3');
+
+    // 에뮬레이터 모드(?env=emulator) — Blaze 플랜 없이 전 기능을 로컬에서 돌린다
+    if (env.emulators) {
+      const host = location.hostname || '127.0.0.1';
+      connectAuthEmulator(auth, `http://${host}:${env.emulators.auth.port}`, { disableWarnings: true });
+      connectFirestoreEmulator(db, host, env.emulators.firestore.port);
+      connectFunctionsEmulator(functions, host, env.emulators.functions.port);
+      connectStorageEmulator(storage, host, env.emulators.storage.port);
+    }
 
     // 세션을 탭 단위로 유지한다 (기존 sessionStorage 동작과 같은 수명).
     // 탭을 닫으면 로그아웃되지만, 새로고침으로는 로그아웃되지 않는다.
@@ -57,6 +61,18 @@
     window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch, storage, ref, uploadBytes, getDownloadURL, deleteObject };
     window._fbAuth = { auth, signInWithCustomToken, signOut, onAuthStateChanged };
     window._fbFn = { call: (name) => httpsCallable(functions, name) };
+    window._fbEnv = env;
+
+    // 프로덕션이 아니면 화면에 띠를 하나 붙인다. 스테이징을 실서비스로 착각한
+    // 채로 입력하는 사고를 막는 유일한 장치다.
+    if (!env.isProd) {
+      document.addEventListener('DOMContentLoaded', () => {
+        const bar = document.createElement('div');
+        bar.id = 'env-banner';
+        bar.textContent = `${env.label} 환경 · ${env.config.projectId} — 실제 데이터가 아닙니다`;
+        document.body.prepend(bar);
+      });
+    }
 
     // Firestore 준비 완료 → 앱 초기화 트리거
     window._fbReady = true;
@@ -70,6 +86,18 @@
   <!-- 파서 설정 — 은행/카드사 추가 시 이 파일만 수정 -->
 
   <style>
+    /* 비프로덕션 환경 표시 — 스테이징/에뮬레이터를 실서비스로 착각하지 않도록.
+       레이아웃에 영향을 주지 않게 화면 위에 떠 있고 클릭을 가로채지 않는다. */
+    #env-banner {
+      position: fixed; top: 0; right: 0; z-index: 99999;
+      padding: 4px 12px; border-bottom-left-radius: 8px;
+      background: #b45309; color: #fff;
+      font-size: 11px; font-weight: 700; letter-spacing: .02em;
+      pointer-events: none; user-select: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,.2);
+    }
+    @media print { #env-banner { display: none; } }
+
     :root {
       --bg:             #f8fafc;
       --surface:        #ffffff;

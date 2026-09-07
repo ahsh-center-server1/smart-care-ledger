@@ -17,6 +17,11 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
+// FieldValue/Timestamp는 서브경로에서 직접 가져온다.
+// `admin.firestore.FieldValue` 형태는 Functions 에뮬레이터가 admin 모듈을
+// 감쌀 때 정적 프로퍼티가 사라져 로그인이 INTERNAL로 실패한다
+// (배포본은 동작하므로 에뮬레이터에서만 드러난다).
+const { FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { hashPassword, verifyPassword } = require('./password');
 
 admin.initializeApp();
@@ -91,9 +96,9 @@ exports.login = onCall(async (request) => {
   const ok = await verifyPassword(password, secret);
   if (!ok) {
     const failed = (secret.failedCount || 0) + 1;
-    const update = { failedCount: failed, lastFailedAt: admin.firestore.FieldValue.serverTimestamp() };
+    const update = { failedCount: failed, lastFailedAt: FieldValue.serverTimestamp() };
     if (failed >= MAX_FAILED) {
-      update.lockedUntil = admin.firestore.Timestamp.fromMillis(Date.now() + LOCKOUT_MS);
+      update.lockedUntil = Timestamp.fromMillis(Date.now() + LOCKOUT_MS);
       update.failedCount = 0;
     }
     await secretRef.update(update);
@@ -115,7 +120,7 @@ exports.login = onCall(async (request) => {
 
   // 실패 카운트 초기화 (로그인 성공 경로를 막지 않도록 실패해도 무시)
   secretRef
-    .update({ failedCount: 0, lockedUntil: admin.firestore.FieldValue.delete() })
+    .update({ failedCount: 0, lockedUntil: FieldValue.delete() })
     .catch(() => {});
 
   return {
@@ -166,12 +171,12 @@ exports.signup = onCall(async (request) => {
       isAdmin: first,
       approved: first,
       active: true,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
     tx.set(secretRef, {
       ...secretRecord,
       failedCount: 0,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
     return first;
   });
@@ -298,7 +303,7 @@ exports.upsertStaff = onCall(async (request) => {
           userId, name, role, team,
           isAdmin: wantAdmin,
           ...(existing.exists ? {} : { approved: true, active: true }),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
@@ -306,7 +311,7 @@ exports.upsertStaff = onCall(async (request) => {
       if (password) {
         const record = await hashPassword(password);
         await db.collection(SECRETS).doc(userId).set(
-          { ...record, failedCount: 0, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+          { ...record, failedCount: 0, updatedAt: FieldValue.serverTimestamp() },
           { merge: true }
         );
       }
@@ -403,8 +408,8 @@ exports.changePassword = onCall(async (request) => {
     {
       ...record,
       failedCount: 0,
-      lockedUntil: admin.firestore.FieldValue.delete(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lockedUntil: FieldValue.delete(),
+      updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true }
   );
