@@ -188,3 +188,57 @@ export function toReceiptDraft(extracted, opts = {}) {
     cardLast4: /^\d{4}$/.test(String(e.cardLast4 || '')) ? String(e.cardLast4) : '',
   };
 }
+
+/**
+ * 통장 사진에서 읽은 줄들을 **엑셀 파서의 행 형태로** 바꾼다.
+ *
+ * 왜 이 형태인가
+ *   통장 사진과 은행 엑셀 파일은 같은 것을 담고 있다. 그래서 사진 전용 저장
+ *   경로를 새로 만들지 않고, 이미 검증된 엑셀 경로
+ *   (중복검사 → 미리보기 → 배치 저장)에 그대로 투입한다.
+ *   저장 로직이 두 벌이 되면 반드시 갈라진다 — 실제로 이 앱의 모바일 포크가
+ *   그렇게 갈라져 있었다.
+ *
+ * 읽을 수 없는 줄은 버리지 않고 `skipped`에 이유와 함께 담는다.
+ * 조용히 사라지면 사용자는 몇 줄이 누락됐는지 알 수 없다.
+ *
+ * @param {Object} extracted analyzeBankbook 결과 { rows: [...] }
+ * @param {Object} [opts]
+ * @param {Date}   [opts.today]
+ * @returns {{rows:Array, skipped:Array}}
+ *   rows: [{date, desc, descRaw, in, out}] — ExcelParser.parseFile와 같은 형태
+ */
+export function bankbookRowsToParsed(extracted, opts = {}) {
+  const today = opts.today || new Date();
+  const src = (extracted && Array.isArray(extracted.rows)) ? extracted.rows : [];
+
+  const rows = [];
+  const skipped = [];
+
+  for (const r of src) {
+    const raw = [r && r.dateRaw, r && r.description, r && r.withdraw, r && r.deposit]
+      .filter(Boolean).join(' | ');
+
+    const date = normalizeReceiptDate(r && r.dateRaw, today);
+    if (!date) { skipped.push({ reason: '날짜를 읽을 수 없음', raw }); continue; }
+
+    const out = normalizeAmount(r && r.withdraw);
+    const inn = normalizeAmount(r && r.deposit);
+    // 출금도 입금도 못 읽었으면 금액 없는 줄이다 — 거래로 만들 수 없다.
+    if ((out == null || out === 0) && (inn == null || inn === 0)) {
+      skipped.push({ reason: '금액을 읽을 수 없음', raw });
+      continue;
+    }
+
+    const desc = String((r && r.description) || '').trim();
+    rows.push({
+      date,
+      desc,
+      descRaw: desc,
+      in: inn == null ? 0 : inn,
+      out: out == null ? 0 : out,
+    });
+  }
+
+  return { rows, skipped };
+}

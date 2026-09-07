@@ -9,14 +9,17 @@ import { S } from '../state.js';
 import { COLS, cs } from '../constants.js';
 import { toast, showConfirm, escAttr, makeDraggable } from '../utils/ui.js';
 import { fb, fdb, batchAddDocs } from '../services/firestore.js';
-import { uploadToStorage, uploadImageWithThumb, uploadExcelOriginal, deleteFromStorage, deleteManyFromStorage, getImageUrl } from '../services/storage.js';
+import { uploadToStorage, uploadImageWithThumb, uploadExcelOriginal, deleteFromStorage, deleteManyFromStorage, getImageUrl, validateUploadSize } from '../services/storage.js';
 import { loadTransactions, refetchUsers, refetchClients, refetchAccounts, isConfirmedLocked } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
 import { can } from './permissions.js';
 import { refreshSetupAfterChange } from './setup.js';
 import * as ExcelParser from '../services/excel-parser.js';
-import { renderReceiptIntakeForm, cleanupReceiptIntake } from './receipt-intake.js';
+import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
+import { bankbookRowsToParsed } from '../domain/receipt.js';
+import { classifyMerchant } from '../domain/receipt-match.js';
+import { compressImage, heicToJpeg } from '../services/image.js';
 
 // ─────────────────────────────────────────────
 // 모달
@@ -302,6 +305,14 @@ export function renderExcelForm(){
         <div style="font-size:13px;font-weight:700;color:var(--sub);">클릭하거나 파일을 끌어다 놓으세요</div>
         <div style="font-size:11px;color:var(--muted);margin-top:4px;">xlsx · xls · html · xml · csv</div>
       </div>
+      <!-- 통장 사진 판독 — 서버에 AI가 설정되지 않았으면 숨는다.
+           읽은 줄은 엑셀과 **같은 경로**(중복검사 → 미리보기 → 저장)로 들어간다.
+           저장 로직을 두 벌로 만들면 반드시 갈라진다. -->
+      <div id="xl-photo-box" data-receipt-intake style="display:none;background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:10px 14px;font-size:12px;color:#115e59;">
+        📷 <strong>통장 거래내역 사진</strong>으로도 가져올 수 있습니다. 은행 파일이 없을 때 쓰세요.
+        <input type="file" id="xl-photo-file" accept="image/*,.heic,.heif" style="display:none;">
+        <button id="xl-photo-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #0d9488;color:#0d9488;background:#fff;cursor:pointer;font-size:12px;">📷 사진 선택</button>
+      </div>
       <div style="background:#f0fdf4;border:1px solid #a7f3d0;border-radius:8px;padding:10px 14px;font-size:12px;color:#065f46;">
         💡 은행 파일이 없으신가요? <strong>수기 입력 양식</strong>을 다운로드하여 직접 작성 후 업로드하세요.
         <button onclick="downloadManualTemplate()" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #059669;color:#059669;background:#fff;cursor:pointer;font-size:12px;">📥 양식 다운로드</button>
@@ -321,6 +332,14 @@ export function renderExcelForm(){
   zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('drag-over');if(e.dataTransfer.files.length){fi.files=e.dataTransfer.files;onXlFileSelect();}});
   fi.addEventListener('change',onXlFileSelect);
   document.getElementById('xl-btn').addEventListener('click',analyzeXlFile);
+
+  // 통장 사진 경로
+  const photoFi=document.getElementById('xl-photo-file');
+  document.getElementById('xl-photo-btn')?.addEventListener('click',()=>photoFi.click());
+  photoFi?.addEventListener('change',()=>{
+    if(photoFi.files&&photoFi.files.length)analyzeBankbookPhoto(photoFi.files[0]);
+  });
+  refreshReceiptIntakeButtons().catch(()=>{ /* 못 물어보면 숨긴 채로 둔다 */ });
 }
 export function downloadManualTemplate(){
   // CSV 형식 수기 입력 양식 생성 후 다운로드
@@ -519,6 +538,103 @@ export async function analyzeXlFile(){
   }catch(err){
     reset(); toast('파싱 오류: '+err.message,'error',5000);
   }
+}
+
+
+/**
+ * 통장 거래내역 사진을 판독해 **엑셀과 같은 미리보기 경로**에 투입한다.
+ *
+ * 새 저장 경로를 만들지 않는 것이 요점이다. 중복검사·미리보기·행 삭제·
+ * 배치 저장은 이미 엑셀 업로드가 하고 있고 검증돼 있다. 사진은 입력 형식만
+ * 다르므로 파서 행 형태로 바꿔서 그 뒤를 그대로 태운다.
+ */
+export async function analyzeBankbookPhoto(file){
+  const accId=document.getElementById('xl-acc')?.value;
+  if(!accId){toast('계좌를 선택하세요.','error');return;}
+
+  const btn=document.getElementById('xl-photo-btn');
+  const setBusy=(on)=>{ if(btn){btn.disabled=on;btn.textContent=on?'판독 중…':'📷 사진 선택';} };
+
+  setBusy(true);
+  try{
+    validateUploadSize(file);
+    const jpeg=await heicToJpeg(file);
+    const compressed=await compressImage(jpeg);
+    const base64=await new Promise((res,rej)=>{
+      const fr=new FileReader();
+      fr.onerror=()=>rej(new Error('사진을 읽을 수 없습니다.'));
+      fr.onload=()=>{const t=String(fr.result||'');const i=t.indexOf(',');res(i>=0?t.slice(i+1):t);};
+      fr.readAsDataURL(compressed);
+    });
+
+    const res=await window._fbFn.call('analyzeBankbook')({
+      imageBase64:base64,
+      mediaType:compressed.type||'image/jpeg',
+      clientId:S.accounts.find(a=>a.id===accId)?.clientId||'',
+    });
+
+    const { rows, skipped }=bankbookRowsToParsed(res.data&&res.data.extracted);
+    S.excelSkipped=skipped;
+
+    if(!rows.length){
+      S.excelTemp=[];
+      renderXlPreview();
+      toast(skipped.length
+        ? `읽을 수 있는 줄이 없습니다. 제외된 ${skipped.length}건의 이유를 아래에서 확인하세요.`
+        : '거래내역을 읽지 못했습니다. 사진이 선명한지 확인하거나 직접 입력하세요.','error',6000);
+      return;
+    }
+
+    // 카테고리는 사용자가 관리하는 규칙이 정한다 (모델이 아니라) — 엑셀과 동일.
+    const clientId=S.accounts.find(a=>a.id===accId)?.clientId||'';
+    const rules=S.categories.filter(c=>c&&c.keyword);
+    for(const r of rows){
+      const hit=classifyMerchant(r.desc,rules,clientId);
+      if(hit){r.cat=hit.category;r.sub=hit.subcategory;}
+    }
+
+    await fillExcelTempFromRows(rows,accId);
+    toast(`사진에서 ${rows.length}건을 읽었습니다. 저장 전에 확인하세요.`
+      +(skipped.length?` (제외 ${skipped.length}건)`:''),'success',6000);
+  }catch(err){
+    // 서버가 이미 사용자용 문장으로 바꿔 보낸다(끝이 "직접 입력할 수 있습니다").
+    toast(err.message||'판독에 실패했습니다. 직접 입력할 수 있습니다.','error',6000);
+  }finally{
+    setBusy(false);
+  }
+}
+
+/**
+ * 파서 행 → S.excelTemp. 엑셀 경로(analyzeXlFile)와 **같은 변환**을 쓴다.
+ * 여기가 두 벌이 되면 사진과 파일이 다르게 저장된다.
+ */
+async function fillExcelTempFromRows(rows,accId){
+  const existSet=await fetchExistingForDup(accId,rows);
+  const existingMaxOrder=S.transactions.length>0
+    ? Math.max(...S.transactions.map(t=>t.sortOrder??0)) : 0;
+
+  S.excelTemp=rows.map((p,i)=>{
+    const rawIn=p.in||0, rawOut=p.out||0;
+    let amIn=0, amOut=0, type='지출';
+    if(rawIn>0){amIn=rawIn;type='수입';}
+    else if(rawOut>0){amOut=rawOut;type='지출';}
+    else if(rawOut<0){amOut=rawOut;type='지출';}
+    else if(rawIn<0){amOut=Math.abs(rawIn);type='취소';}
+    const item={date:p.date,description:p.desc,descRaw:p.descRaw||p.desc,
+      amountIn:amIn,amountOut:amOut,type,
+      category:p.cat||'확인필요',subcategory:p.sub||'',receiptUrl:'',
+      sortOrder:existingMaxOrder+i+1};
+    item._dup=existSet.has(dupKey({...item,accountId:accId}));
+    return item;
+  });
+
+  const mCount={};
+  rows.forEach(p=>{const m=(p.date||'').substring(0,7);if(m)mCount[m]=(mCount[m]||0)+1;});
+  S.excelMonth=Object.entries(mCount).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
+
+  const dupCount=S.excelTemp.filter(x=>x._dup).length;
+  if(dupCount>0)toast(`⚠️ ${dupCount}건이 이미 등록된 거래와 같습니다. 저장 시 제외됩니다.`,'info',5000);
+  renderXlPreview();
 }
 
 /** 제외된 행 목록 — 조용히 사라지지 않도록 이유와 원문을 함께 보여준다 */

@@ -275,6 +275,23 @@ async function checkReceiptIntake(page, actor) {
   await snap(page, actor, 'receipt-intake');
   await page.evaluate(() => window.closeModal());
   await page.waitForTimeout(300);
+
+  // 엑셀 업로드 모달 — 통장 사진 경로가 같은 화면에 붙어 있다.
+  const xl = await page.evaluate(() => {
+    try { window.openModal('excel'); return { ok: true }; }
+    catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+  });
+  if (check(xl.ok, '파일 업로드 화면이 열린다', xl.error)) {
+    await page.waitForTimeout(500);
+    check(await page.locator('#xl-drop').isVisible().catch(() => false),
+      '엑셀 드롭 영역이 보인다');
+    // 통장 사진 상자는 서버에 AI가 없으면 숨는다(정상) — 존재만 확인한다.
+    check(await page.locator('#xl-photo-box').count() > 0,
+      '통장 사진 경로가 화면에 준비돼 있다');
+    await snap(page, actor, 'excel-upload');
+    await page.evaluate(() => window.closeModal());
+    await page.waitForTimeout(300);
+  }
 }
 
 /**
