@@ -37,7 +37,13 @@ export function renderDashboard() {
     const totalBal=S.accounts.filter(a=>a.clientId===client.id).reduce((s,a)=>s+Number(a.currentBalance||0),0);
     const balColor=totalBal>=0?'#10b981':'#ef4444';
     const stats=S.monthlyStats?.[client.id]||{inc:0,exp:0};
-    const statsText=stats.inc===0&&stats.exp===0?'당월 거래 없음':`당월 수입 <span style="color:#10b981;">+${stats.inc.toLocaleString()}</span> / 지출 <span style="color:#ef4444;">-${stats.exp.toLocaleString()}</span>원`;
+    // 입력자는 본인이 입력한 거래만 읽을 수 있으므로 그 합계는 당월 전체가 아니다.
+    // 그것을 「당월 수입/지출」로 적으면 같은 카드가 사람에 따라 다른 금액을 보여준다.
+    // 라벨을 바꿔 무엇을 더한 값인지 밝힌다.
+    const statsLabel=stats.partial?'당월 본인 입력분':'당월';
+    const statsText=stats.inc===0&&stats.exp===0
+      ?(stats.partial?'당월 본인 입력분 없음':'당월 거래 없음')
+      :`${statsLabel} 수입 <span style="color:#10b981;">+${stats.inc.toLocaleString()}</span> / 지출 <span style="color:#ef4444;">-${stats.exp.toLocaleString()}</span>원`;
     const unpaidCount=Number(S.mandatoryUnpaid?.[client.id]||0);
     const unpaidHTML=unpaidCount>0?`<div style="font-size:11px;color:#dc2626;font-weight:700;margin-top:3px;">⚠️ 필수항목 ${unpaidCount}건 미납</div>`:'';
     const safeName=client.name||'(이름 없음)';

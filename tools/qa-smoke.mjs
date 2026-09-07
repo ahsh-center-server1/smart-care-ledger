@@ -135,6 +135,8 @@ async function runRole(browser, actor) {
   check(clientCards > 0, `대시보드에 입주자 카드가 보인다 (${clientCards}개)`);
   await snap(page, actor, 'dashboard');
 
+  await checkSummaryCache(page, actor);
+
   // 역할별 내비게이션 노출 — 입력자는 보고서·설정이 없어야 한다
   const navReport = await page.locator('.nav-item[data-view="report"]').isVisible().catch(() => false);
   const navSettings = await page.locator('.nav-item[data-view="settings"]').isVisible().catch(() => false);
@@ -154,6 +156,7 @@ async function runRole(browser, actor) {
   notes.push(`    거래 행 ${rows}건`);
   await snap(page, actor, 'history');
 
+  await checkFixedItemEntry(page, actor);
   await checkReceiptIntake(page, actor);
 
   // 보고서 · 설정 (권한 있는 역할만)
@@ -240,6 +243,147 @@ async function runRole(browser, actor) {
  * 진입 버튼은 서버에 API 키가 없으면 숨으므로(정상 동작), 여기서는
  * 모달을 직접 열어 폼만 확인한다.
  */
+/**
+ * 월별 요약 캐시가 브라우저에서 실제로 듣는지.
+ *
+ * 왜 단위 테스트로는 부족한가
+ *   캐시의 순수 로직(낡음 판정·집계)은 test/monthly-summary.test.mjs가 전수로 본다.
+ *   하지만 **캐시 쓰기가 보안 규칙을 통과하는지**는 규칙과 앱이 만드는 문서 형태가
+ *   맞아야만 되고, 어긋나면 `catch`에 걸려 `console.warn` 한 줄로 끝난다 —
+ *   화면은 정상이고(직접 계산으로 떨어지므로) 읽기만 줄지 않는다. 즉
+ *   **최적화가 아무 일도 안 하는 상태가 조용히 성립한다.** 그것을 여기서 잡는다.
+ *
+ * 검증 두 가지
+ *   1. 두 번째 조회가 재계산 없이 끝난다 (= 캐시가 쓰였고 다시 읽혔다)
+ *   2. 캐시로 읽은 값이 직접 계산한 값과 **같다** (= 캐시가 틀린 금액을 만들지 않는다)
+ */
+async function checkSummaryCache(page, actor) {
+  const result = await page.evaluate(async () => {
+    try {
+      const svc = await import('./services/summary.js');
+      const { S } = await import('./state.js');
+      const ym = svc.currentMonth();
+      const ids = (S.clients || []).map((c) => c.id);
+      if (!ids.length) return { ok: false, error: '입주자가 없다' };
+
+      const first = await svc.fetchMonthlySummaries(ids, ym);
+
+      // 두 번째 조회 동안 캐시 쓰기를 감시한다. fb()가 window._fb를 그대로
+      // 돌려주므로 setDoc을 감싸면 시도 자체를 셀 수 있다.
+      const realSetDoc = window._fb.setDoc;
+      let cacheWritten = '';
+      window._fb.setDoc = (ref, ...rest) => {
+        const path = (ref && ref.path) || '';
+        if (path.startsWith('summaryCaches/')) cacheWritten = path;
+        return realSetDoc(ref, ...rest);
+      };
+      let second;
+      try {
+        second = await svc.fetchMonthlySummaries(ids, ym);
+      } finally {
+        window._fb.setDoc = realSetDoc;
+      }
+
+      return {
+        ok: true, ids, cacheWritten,
+        firstSummaries: first.summaries,
+        secondSummaries: second.summaries,
+        secondReads: second.reads,
+        secondRecomputed: second.recomputed,
+      };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+
+  if (!check(result.ok, '월별 요약을 조회할 수 있다', result.error)) return;
+
+  // 값이 같아야 한다 — 캐시 경로와 계산 경로가 다른 금액을 내면 그것이 최악이다.
+  const same = result.ids.every((id) => {
+    const a = result.firstSummaries[id] || {};
+    const b = result.secondSummaries[id] || {};
+    return a.inc === b.inc && a.exp === b.exp && a.count === b.count;
+  });
+  check(same, '캐시로 읽은 금액이 직접 계산한 금액과 같다',
+    JSON.stringify({ first: result.firstSummaries, second: result.secondSummaries }));
+
+  if (actor.role === '입력자') {
+    // 입력자는 본인 거래만 읽는다. 그래서 두 가지 값이 있을 수 있다:
+    //   · 캐시가 있으면 **당월 전체 합계**를 읽는다 (담당자가 계산해 둔 값)
+    //   · 캐시가 없으면 본인 입력분만 더한 **부분 합계**로 떨어진다
+    //
+    // 두 값은 다르다. 그러므로 부분 합계는 반드시 partial로 표시되어야 한다 —
+    // 표시가 없으면 같은 카드가 캐시 유무에 따라 다른 금액을 「당월 지출」로
+    // 보여주고, 어느 쪽이 맞는지 화면으로는 구별할 수 없다.
+    const labeled = result.ids.every((id) => {
+      const s = result.secondSummaries[id] || {};
+      const wasRecomputed = result.secondRecomputed.includes(id);
+      return wasRecomputed ? s.partial === true : !s.partial;
+    });
+    check(labeled, '입력자의 부분 합계는 partial로 표시된다',
+      JSON.stringify({ recomputed: result.secondRecomputed, summaries: result.secondSummaries }));
+
+    // 부분 합계가 캐시에 남으면 다른 사람이 금액이 빠진 값을 보게 된다.
+    // 규칙이 입력자 쓰기를 막지만, 코드도 시도하지 않는지 여기서 확인한다.
+    check(!result.cacheWritten, '입력자는 캐시에 쓰지 않는다', result.cacheWritten || '');
+    return;
+  }
+
+  check(result.secondRecomputed.length === 0,
+    '두 번째 조회는 재계산 없이 캐시로 끝난다',
+    `재계산된 입주자: ${result.secondRecomputed.join(', ')}`);
+  check(result.secondReads === result.ids.length,
+    `당월 집계가 입주자 1명당 1 읽기다 (${result.secondReads}/${result.ids.length})`);
+  // 캐시가 맞았는데도 다시 쓰면 조회마다 쓰기가 한 건 붙는다.
+  check(!result.cacheWritten, '캐시가 맞으면 다시 쓰지 않는다', result.cacheWritten || '');
+}
+
+/**
+ * 고정항목 일괄 입력이 규칙을 통과하는가.
+ *
+ * 왜 브라우저에서 봐야 하는가
+ *   이 경로는 거래를 **만든다.** 그런데 보안 규칙은 모든 거래 생성에
+ *   `createdBy == 본인 uid`를 요구하고, 이 코드는 그것을 남기지 않았다 —
+ *   즉 규칙을 적용하는 순간 기능이 통째로 permission-denied가 되는 상태였다.
+ *   규칙 단위 테스트는 규칙만 보고, 소스 검사(test/created-by.test.mjs)는
+ *   텍스트만 본다. **실제로 써지는지**는 여기서만 확인된다.
+ */
+async function checkFixedItemEntry(page, actor) {
+  if (!['담당자', '팀장', '센터장', '관리자'].includes(actor.role)) return;
+
+  const result = await page.evaluate(async () => {
+    try {
+      const { fb, fdb } = await import('./services/firestore.js');
+      const { batchAddDocs } = await import('./services/firestore.js');
+      const { S } = await import('./state.js');
+      const client = (S.clients || [])[0];
+      const acc = (S.accounts || []).find((a) => a.clientId === client.id);
+      if (!client || !acc) return { ok: false, error: '입주자·계좌가 없다' };
+
+      // applyFixedItems가 만드는 것과 같은 형태로 한 건 쓴다.
+      // (모달은 확인 대화상자를 거치므로 저장 형태만 같게 두고 직접 부른다)
+      const ids = await batchAddDocs([{ col: 'transactions', data: {
+        clientId: client.id, accountId: acc.id,
+        date: '2026-09-25', type: '지출', category: '세금공과',
+        description: 'QA 고정항목', amountIn: 0, amountOut: 33000,
+        receiptUrl: '', isFixed: true, fixedItemId: 'qa-fixed',
+        createdBy: String(S.user?.userId || ''),
+      } }]);
+
+      // 흔적을 남기지 않는다 — 다음 역할의 집계가 달라지면 검증이 흔들린다.
+      const { deleteDoc, doc } = fb();
+      for (const id of ids) await deleteDoc(doc(fdb(), 'transactions', id));
+
+      return { ok: true, written: ids.length };
+    } catch (e) {
+      return { ok: false, error: String((e && e.code) || (e && e.message) || e) };
+    }
+  });
+
+  check(result.ok && result.written === 1,
+    '고정항목 형태의 거래 생성이 규칙을 통과한다', result.error || '');
+}
+
 async function checkReceiptIntake(page, actor) {
   if (!['담당자', '팀장', '센터장', '관리자'].includes(actor.role)) return;
 

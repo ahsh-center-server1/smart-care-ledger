@@ -87,6 +87,7 @@ describe('비로그인 클라이언트', () => {
     'users', 'clients', 'accounts', 'transactions', 'categories',
     'fixedItems', 'reports', 'budgets', 'excelUploads', 'config',
     'userSecrets', 'archive_2025',
+    'auditLogs', 'systemOperations', 'summaryCaches',
   ];
 
   for (const col of COLLECTIONS) {
@@ -629,6 +630,133 @@ describe('systemOperations', () => {
     await assertSucceeds(getDoc(doc(as(ACTORS.관리자), 'systemOperations/data-reset')));
     await assertSucceeds(
       setDoc(doc(as(ACTORS.관리자), 'systemOperations/data-reset'), { status: 'running' }),
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// summaryCaches — 월별 요약 캐시
+//
+// 왜 규칙을 검증해야 하는가
+//   이 문서는 대시보드가 보여주는 **금액**을 담는다. 계산은 브라우저가 하므로
+//   쓰기를 열어야 하는데, 그러면 "낡은 캐시를 신선한 것으로 위장"하는 경로가
+//   생긴다. 그것을 막는 유일한 장치가 sourceVersion을 서버 트리거 전용으로
+//   두는 것이고, 그것이 지켜지는지는 규칙 평가로만 확인할 수 있다.
+// ─────────────────────────────────────────────────────────────
+describe('summaryCaches — 요약 캐시', () => {
+  const KEY = 'summaryCaches/c1_2026-09';
+
+  /** 갱신 쓰기 본문. merge 쓰기이므로 sourceVersion은 넣지 않는다. */
+  const update = (over = {}) => ({
+    clientId: 'c1', ym: '2026-09',
+    inc: 100, exp: 50, count: 3, paidFixedIds: [],
+    schemaVersion: 1, computedVersion: 4,
+    updatedAt: '2026-09-07T00:00:00.000Z', ...over,
+  });
+
+  /** 최초 생성 쓰기 본문. 버전 0을 심을 수 있다. */
+  const create = (over = {}) => update({ sourceVersion: 0, computedVersion: 0, ...over });
+
+  it('입력자도 읽을 수 있다 — 자기 담당 입주자 카드를 봐야 한다', async () => {
+    await seed(KEY, { clientId: 'c1', sourceVersion: 4 });
+    await assertSucceeds(getDoc(doc(as(ACTORS.입력자), KEY)));
+  });
+
+  it('입력자는 쓸 수 없다 — 본인 거래만 읽으므로 계산 결과가 부분 합계다', async () => {
+    // 이것이 열려 있으면 입력자가 계산한 "본인 것만" 합계가 캐시에 들어가고,
+    // 팀장·센터장이 그 값을 전체 합계로 믿게 된다.
+    await assertFails(setDoc(doc(as(ACTORS.입력자), 'summaryCaches/c9_2026-09'), create()));
+  });
+
+  it('담당자는 캐시를 처음 만들 수 있다', async () => {
+    await assertSucceeds(
+      setDoc(doc(as(ACTORS.담당자), 'summaryCaches/new1_2026-09'), create()),
+    );
+  });
+
+  it('처음 만들 때 sourceVersion을 0 아닌 값으로 심을 수 없다', async () => {
+    // 이것이 열려 있으면 아무 값이나 "이미 최신"으로 선언해 위조 합계를 굳힐 수 있다.
+    await assertFails(
+      setDoc(doc(as(ACTORS.담당자), 'summaryCaches/new2_2026-09'),
+        create({ sourceVersion: 99, computedVersion: 99 })),
+    );
+  });
+
+  it('처음 만들 때 sourceVersion을 빼면 거부된다', async () => {
+    // 빼는 것을 허용하면 isSummaryFresh가 영구히 false가 되어 캐시가 무용지물이 된다.
+    // 규칙이 거부하므로 코드가 반드시 0을 심게 된다.
+    const body = create();
+    delete body.sourceVersion;
+    await assertFails(setDoc(doc(as(ACTORS.담당자), 'summaryCaches/new3_2026-09'), body));
+  });
+
+  it('sourceVersion을 건드리지 않는 갱신은 통과한다', async () => {
+    await seed('summaryCaches/upd1_2026-09', { clientId: 'c1', sourceVersion: 4 });
+    await assertSucceeds(
+      updateDoc(doc(as(ACTORS.담당자), 'summaryCaches/upd1_2026-09'), update()),
+    );
+  });
+
+  it('sourceVersion을 내릴 수 없다 — 낡음 판정의 유일한 근거다', async () => {
+    await seed('summaryCaches/upd2_2026-09', { clientId: 'c1', sourceVersion: 4 });
+    await assertFails(
+      updateDoc(doc(as(ACTORS.담당자), 'summaryCaches/upd2_2026-09'),
+        update({ sourceVersion: 0 })),
+    );
+  });
+
+  it('sourceVersion을 올릴 수도 없다 — 트리거만 올린다', async () => {
+    await seed('summaryCaches/upd3_2026-09', { clientId: 'c1', sourceVersion: 4 });
+    await assertFails(
+      updateDoc(doc(as(ACTORS.담당자), 'summaryCaches/upd3_2026-09'),
+        update({ sourceVersion: 9 })),
+    );
+  });
+
+  it('아직 오지 않은 버전을 계산했다고 주장할 수 없다', async () => {
+    await seed('summaryCaches/upd4_2026-09', { clientId: 'c1', sourceVersion: 4 });
+    await assertFails(
+      updateDoc(doc(as(ACTORS.담당자), 'summaryCaches/upd4_2026-09'),
+        update({ computedVersion: 5 })),
+    );
+  });
+
+  it('낡은 상태로 두는 갱신(computedVersion < sourceVersion)은 허용한다', async () => {
+    // 계산 중에 트리거가 버전을 올린 정상 경우다. 다음 조회에서 다시 계산된다.
+    await seed('summaryCaches/upd5_2026-09', { clientId: 'c1', sourceVersion: 4 });
+    await assertSucceeds(
+      updateDoc(doc(as(ACTORS.담당자), 'summaryCaches/upd5_2026-09'),
+        update({ computedVersion: 2 })),
+    );
+  });
+
+  it('버전을 숫자가 아닌 값으로 쓸 수 없다', async () => {
+    await seed('summaryCaches/upd6_2026-09', { clientId: 'c1', sourceVersion: 4 });
+    await assertFails(
+      updateDoc(doc(as(ACTORS.담당자), 'summaryCaches/upd6_2026-09'),
+        update({ computedVersion: '4' })),
+    );
+    await assertFails(
+      updateDoc(doc(as(ACTORS.담당자), 'summaryCaches/upd6_2026-09'),
+        update({ schemaVersion: '1' })),
+    );
+  });
+
+  it('담당자는 캐시를 지울 수 없다 (읽기량이 튄다)', async () => {
+    await seed('summaryCaches/del1_2026-09', { clientId: 'c1', sourceVersion: 4 });
+    await assertFails(deleteDoc(doc(as(ACTORS.담당자), 'summaryCaches/del1_2026-09')));
+  });
+
+  it('관리자는 캐시를 지울 수 있다', async () => {
+    await seed('summaryCaches/del2_2026-09', { clientId: 'c1', sourceVersion: 4 });
+    await assertSucceeds(deleteDoc(doc(as(ACTORS.관리자), 'summaryCaches/del2_2026-09')));
+  });
+
+  it('알 수 없는 역할은 읽을 수 있어도 쓸 수 없다', async () => {
+    await seed('summaryCaches/weird_2026-09', { clientId: 'c1', sourceVersion: 4 });
+    await assertSucceeds(getDoc(doc(as(UNKNOWN_ROLE), 'summaryCaches/weird_2026-09')));
+    await assertFails(
+      updateDoc(doc(as(UNKNOWN_ROLE), 'summaryCaches/weird_2026-09'), update()),
     );
   });
 });

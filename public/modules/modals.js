@@ -210,13 +210,15 @@ export function renderTrxForm(t){
       if(!toAccId){toast('입금 계좌를 선택하세요.','error');return;}
       if(toAccId===accId){toast('출금 계좌와 입금 계좌가 같습니다.','error');return;}
       const toAcc=S.accounts.find(a=>a.id===toAccId);
-      const{addDoc,collection,updateDoc,doc}=fb();
-      const outRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:acc.clientId,accountId:accId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:0,amountOut:amount,receiptUrl:'',linkedAccountId:toAccId});
-      const inRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:toAcc.clientId,accountId:toAccId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:amount,amountOut:0,receiptUrl:'',linkedAccountId:accId,linkedTrxId:outRef.id});
-      await updateDoc(doc(fdb(),COLS.TRANSACTIONS,outRef.id),{linkedTrxId:inRef.id});
-      await updateAccBalance(accId); await updateAccBalance(toAccId);
-      if(S.activeClient===acc.clientId||S.activeClient===toAcc?.clientId)await loadTransactions(S.activeClient);
-      toast('✅ 거래가 복사되었습니다.','success');
+      // 자산이동은 saveTransfer 한 곳에서만 쓴다.
+      //
+      // 여기에 있던 addDoc → addDoc → updateDoc 3회 연속 쓰기는 두 가지가
+      // 잘못됐다: (1) 두 번째에서 끊기면 출금만 남아 장부에서 돈이 증발하고,
+      // (2) createdBy를 남기지 않아 보안 규칙이 **생성을 거부한다**
+      //     (규칙은 모든 거래 생성에 createdBy == 본인 uid를 요구한다).
+      // 짝을 한 배치로 쓰는 로직이 이미 있으므로 그것을 부른다.
+      // saveTransfer가 잔액 갱신·목록 재조회·토스트까지 마친다.
+      await saveTransfer({acc,toAcc,accId,toAccId,date,time,desc,amount});
     } else {
       const isCancelIn=type==='취소-수입';
       const isCancelOut=type==='취소-지출';
@@ -972,17 +974,18 @@ export async function applyFixedItems(){
     const toAdd=S.fixedItems.filter(f=>!existKeys.has(f.id));
     if(!toAdd.length){toast(`${yearMonth} 고정항목이 이미 입력되었습니다.`,'info');return;}
     showConfirm('고정항목 입력',`${yearMonth} 기준 고정항목 ${toAdd.length}건을 입력하시겠습니까?`,async()=>{
-      const{addDoc,collection}=fb();
-      for(const f of toAdd){
-        await addDoc(collection(fdb(),COLS.TRANSACTIONS),{
-          clientId,accountId:f.accountId,
-          date:f.day?yearMonth+'-'+String(f.day).padStart(2,'0'):yearMonth+'-01',
-          type:f.type,category:f.category,description:f.description,
-          amountIn:f.type==='수입'?Number(f.amount):0,
-          amountOut:f.type==='지출'?Number(f.amount):0,
-          receiptUrl:'',isFixed:true,fixedItemId:f.id
-        });
-      }
+      // 한 건씩 addDoc하면 중간에 끊겼을 때 절반만 들어간다 → 배치로 묶는다.
+      // createdBy를 반드시 남긴다 — 보안 규칙이 모든 거래 생성에
+      // createdBy == 본인 uid를 요구하므로, 없으면 **전부 거부된다.**
+      await batchAddDocs(toAdd.map(f=>({col:COLS.TRANSACTIONS,data:{
+        clientId,accountId:f.accountId,
+        date:f.day?yearMonth+'-'+String(f.day).padStart(2,'0'):yearMonth+'-01',
+        type:f.type,category:f.category,description:f.description,
+        amountIn:f.type==='수입'?Number(f.amount):0,
+        amountOut:f.type==='지출'?Number(f.amount):0,
+        receiptUrl:'',isFixed:true,fixedItemId:f.id,
+        createdBy:String(S.user?.userId||''),
+      }})));
       toast(`${toAdd.length}건 입력 완료`,'success');
       await loadTransactions(clientId);
     },'입력');

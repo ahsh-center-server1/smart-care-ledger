@@ -1,11 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { createRequire } from 'node:module';
 
 import { fnErrorMessage, isUnreachable, UNREACHABLE_MESSAGE, unreachableMessage } from '../public/services/fn-errors.js';
 
-const require = createRequire(import.meta.url);
 const read = (rel) => readFileSync(new URL('../' + rel, import.meta.url), 'utf8');
 
 /** Firebase SDK가 전송 실패(CORS 차단·미배포·네트워크)에 채워 넣는 모양 */

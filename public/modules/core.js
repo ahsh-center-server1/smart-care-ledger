@@ -13,7 +13,8 @@ import { S } from '../state.js';
 import { COLS, LOCKED_MONTHS_DOC, lockKey } from '../constants.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
-import { chunkForInQuery } from '../services/in-query.js';
+import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
+import { countUnpaidMandatory } from '../domain/monthly-summary.js';
 import * as Dash     from './dashboard.js';
 import * as Trx      from './transactions.js';
 import * as Rpt      from './report.js';
@@ -27,7 +28,7 @@ import { can } from './permissions.js';
  *                                  미지정 시 전체 로드 (로그인·새로고침용)
  */
 export async function fetchBaseData(opts) {
-  const { getDocs, getDoc, collection, doc, query, where } = fb();
+  const { getDocs, getDoc, collection, doc } = fb();
   // 담당 입주자만 볼지 전체를 볼지 — 네비게이션 메뉴 권한이 아니라 전용 키로 판정한다.
   // 예전에는 can('nav.staff')를 썼기 때문에 팀장의 메뉴 표시를 끄면
   // 팀장이 전 입주자를 못 보게 되는 숨은 부작용이 있었다.
@@ -94,66 +95,44 @@ export async function fetchBaseData(opts) {
   // 본인 담당 입주자만 쿼리하여 read 절감 (Firestore 'in' 절은 최대 30개)
   if (need('monthlyStats')) {
     try {
-      const now=new Date();
-      const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-      const ymStart=ym+'-01';
-      const lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
-      const ymEnd=ym+'-'+String(lastDay).padStart(2,'0');
-      const myClientIds = S.clients.map(c=>c.id);
-      // 입력자는 본인이 만든 거래만 읽을 수 있다. 규칙 엔진은 결과 전체가 조건을
-      // 충족함을 증명할 수 없으면 쿼리를 통째로 거부하므로, 클라이언트가
-      // createdBy 필터를 함께 걸어야 한다 (firestore.rules의 transactions 블록).
-      // 이 필터가 없어서 입력자의 대시보드 집계 쿼리가 조용히 거부되고 ₩0으로 보였다.
-      // 복합 인덱스: clientId + createdBy + date (firestore.indexes.json)
-      const scoped = !can('trx.view.all')
-        ? [where('createdBy','==',String(S.user.userId))]
-        : [];
-      let docs = [];
-      if (myClientIds.length === 0) {
-        docs = [];
-      } else {
-        // 'in' 절은 최대 30개 — 담당 입주자가 많으면 나눠서 조회한다.
-        // 예전에는 30명을 넘으면 **전 입주자 한 달치**를 스캔하는 폴백이 돌았고,
-        // 그것이 규칙상 거부되거나(입력자·담당자) 읽기 폭증의 원인이 됐다.
-        const chunks = chunkForInQuery(myClientIds);
-        const snaps = await Promise.all(chunks.map(ids => getDocs(query(
-          collection(db,COLS.TRANSACTIONS),
-          where('clientId','in',ids),
-          where('date','>=',ymStart),
-          where('date','<=',ymEnd),
-          ...scoped))));
-        docs = snaps.flatMap(s => s.docs);
-      }
-      const mStats={};
-      S.clients.forEach(c=>{ mStats[c.id]={inc:0,exp:0}; });
-      // 필수 고정항목 미납 카운트 계산을 위해 클라이언트별로 매칭된 fixedItemId 집합 수집
-      const paidFixedIdsByClient={};
-      S.clients.forEach(c=>{ paidFixedIdsByClient[c.id]=new Set(); });
-      docs.forEach(d=>{
-        const t=d.data();
-        if(!mStats[t.clientId])return;
-        if(t.type==='수입')       mStats[t.clientId].inc+=Number(t.amountIn||0);
-        else if(t.type==='지출') mStats[t.clientId].exp+=Number(t.amountOut||0);
-        // 자산이동, 취소 → 집계 제외
-        if(t.isFixed&&t.fixedItemId&&paidFixedIdsByClient[t.clientId]){
-          paidFixedIdsByClient[t.clientId].add(t.fixedItemId);
-        }
-      });
-      S.monthlyStats=mStats;
+      const ym = currentMonth();
+      const myClientIds = S.clients.map(c => c.id);
 
-      // 필수 고정항목 전체 로드 + 미납 카운트
+      // 당월 요약은 **캐시 문서 1건**으로 읽는다.
+      //
+      // 예전에는 담당 입주자 전원의 당월 거래를 전부 읽어 합산했다. 관리자가
+      // 입주자 30명을 보면 한 세션에 1,200건이고, 하루 두 번 접속하는 사람이
+      // 25명이면 그것만으로 무료 한도의 절반을 썼다
+      // (tools/read-budget.mjs 로 모델을 볼 수 있다).
+      //
+      // 캐시가 없거나 낡았으면 그 입주자만 직접 계산한다 —
+      // 서버 트리거가 배포되지 않았어도 **값은 항상 맞는다.**
+      const { summaries } = await fetchMonthlySummaries(myClientIds, ym);
+
+      const mStats = {};
+      S.clients.forEach(c => {
+        const sm = summaries[c.id] || { inc: 0, exp: 0 };
+        // partial: 입력자가 본인 입력분만 합산한 값. 카드가 라벨을 바꿔 표시한다.
+        mStats[c.id] = { inc: sm.inc, exp: sm.exp, partial: !!sm.partial };
+      });
+      S.monthlyStats = mStats;
+
+      // 필수 고정항목 미납 카운트
       try {
-        const fSnap=await getDocs(collection(db,'fixedItems'));
-        S.allFixedItems=fSnap.docs.map(d=>({id:d.id,...d.data()}));
-        const unpaid={};
-        S.clients.forEach(c=>{
-          const mandatory=S.allFixedItems.filter(f=>f.clientId===c.id&&f.isMandatory);
-          const paid=paidFixedIdsByClient[c.id]||new Set();
-          unpaid[c.id]=mandatory.filter(f=>!paid.has(f.id)).length;
+        const fSnap = await getDocs(collection(db, 'fixedItems'));
+        S.allFixedItems = fSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const unpaid = {};
+        S.clients.forEach(c => {
+          const mine = S.allFixedItems.filter(f => f.clientId === c.id);
+          unpaid[c.id] = countUnpaidMandatory(mine, (summaries[c.id] || {}).paidFixedIds);
         });
-        S.mandatoryUnpaid=unpaid;
-      } catch(e) { S.allFixedItems=[]; S.mandatoryUnpaid={}; }
-    } catch(e) { S.monthlyStats={}; S.mandatoryUnpaid={}; }
+        S.mandatoryUnpaid = unpaid;
+      } catch (e) { S.allFixedItems = []; S.mandatoryUnpaid = {}; }
+    } catch (e) {
+      // 집계 실패가 로그인을 막지는 않는다 — 카드에 0이 보이고 나머지는 동작한다.
+      console.warn('[core] 당월 집계 실패:', e);
+      S.monthlyStats = {}; S.mandatoryUnpaid = {};
+    }
   }
 
   rebuildSelectors();

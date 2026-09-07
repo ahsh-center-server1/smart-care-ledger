@@ -48,6 +48,10 @@ export const COLS = {
   // 오래 걸리는 파괴적 작업(전체 초기화 등)의 진행 상태.
   // 중단되어도 어디까지 했는지 남아 이어서 진행할 수 있다.
   SYSTEM_OPS:    'systemOperations',
+  // 월별 요약 캐시. 대시보드가 당월 거래 전체를 읽지 않게 하는 문서다
+  // (domain/monthly-summary.js 참고). 서버 트리거가 sourceVersion을 올려
+  // 낡음을 표시하고, 볼 수 있는 사람이 계산해서 채운다.
+  SUMMARY_CACHES:'summaryCaches',
   BUDGETS:       'budgets',
 };
 

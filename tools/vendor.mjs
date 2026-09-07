@@ -58,7 +58,7 @@ export { initializeApp } from 'firebase/app';
 export {
   getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc,
   deleteDoc, deleteField, query, where, orderBy, limit, startAfter, writeBatch,
-  getCountFromServer, increment, runTransaction, serverTimestamp,
+  getCountFromServer, increment, runTransaction, serverTimestamp, documentId,
   connectFirestoreEmulator, persistentLocalCache, persistentMultipleTabManager,
   initializeFirestore, CACHE_SIZE_UNLIMITED,
 } from 'firebase/firestore';

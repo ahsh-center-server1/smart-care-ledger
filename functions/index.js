@@ -827,3 +827,55 @@ async function writeAiAuditLog(request, action, summary) {
     logger.warn('[audit] AI 기록 실패', { action, message: err && err.message });
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// syncSummaryVersion — 월별 요약 캐시를 낡았다고 표시한다
+//
+// 대시보드는 입주자 카드마다 당월 수입·지출을 보여주는데, 그 값을 만들려고
+// **당월 거래 전체를 읽었다.** 관리자가 입주자 30명을 보면 한 세션에 1,200건이고,
+// 하루 두 번 접속하는 사람이 25명이면 그것만으로 무료 한도의 절반을 쓴다.
+//
+// 그 값은 거래가 바뀌지 않으면 바뀌지 않는다. 그래서 계산 결과를 문서 하나에
+// 담아 두고, 이 트리거가 **버전만 올려** 낡음을 표시한다. 계산은 클라이언트가
+// 한다 — 서버가 계산하면 입력자 권한으로는 읽을 수 없는 거래까지 합산해야 하고,
+// 그 값을 누구에게 보여줄지 다시 판단해야 한다.
+//
+// 클라이언트는 버전이 어긋나면 직접 계산으로 떨어진다. 따라서 이 트리거가
+// 배포되지 않았거나 실패해도 **화면 값은 항상 맞는다** — 읽기만 줄지 않는다.
+// ─────────────────────────────────────────────────────────────
+const {
+  affectedSummaryKeys,
+  affectsSummary,
+} = require('./summary-cache.cjs');
+
+const SUMMARY_CACHES = 'summaryCaches';
+
+exports.syncSummaryVersion = onDocumentWritten(
+  { document: 'transactions/{trxId}' },
+  async (event) => {
+    const before = event.data && event.data.before && event.data.before.data();
+    const after = event.data && event.data.after && event.data.after.data();
+
+    // 합계를 바꾸지 않는 쓰기(영수증 첨부·순서 변경·내용 수정)는 무시한다.
+    // 그런 쓰기까지 버전을 올리면 캐시가 계속 무효화되어 캐시가 없는 것과 같다.
+    if (!affectsSummary(before, after)) return;
+
+    const keys = affectedSummaryKeys(before, after);
+    if (!keys.length) return;
+
+    // 날짜나 입주자가 바뀐 수정이면 양쪽 달을 모두 올린다 —
+    // 8월 거래를 9월로 옮기면 두 달의 합계가 다 바뀐다.
+    await Promise.all(keys.map(async (key) => {
+      try {
+        await db.collection(SUMMARY_CACHES).doc(key).set({
+          sourceVersion: FieldValue.increment(1),
+        }, { merge: true });
+      } catch (err) {
+        // 표시 실패는 화면을 틀리게 만들지 않는다(클라이언트가 직접 계산한다).
+        logger.warn('[syncSummaryVersion] 버전 갱신 실패', {
+          key, message: err && err.message,
+        });
+      }
+    }));
+  }
+);

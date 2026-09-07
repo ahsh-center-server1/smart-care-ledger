@@ -107,6 +107,52 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ── 월별 요약 캐시 ──
+    //
+    // 대시보드가 당월 거래 전체를 읽지 않게 하는 파생 문서다
+    // (public/domain/monthly-summary.js 참고). 금액 합계가 들어 있지만
+    // 원본 거래에서 계산된 값이므로 조회는 로그인 전원에게 연다 —
+    // 입력자도 자기 담당 입주자의 카드를 봐야 한다.
+    //
+    // 쓰기가 미묘하다. 계산은 **브라우저가** 한다(서버가 하면 입력자에게
+    // 보여도 되는 범위를 서버가 다시 판단해야 한다). 그래서 신뢰의 근거를
+    // 규칙으로 좁힌다:
+    //
+    //   · 전 거래를 볼 수 있는 등급(2 이상)만 쓴다. 입력자는 본인 거래만
+    //     읽으므로 그 계산 결과는 부분 합계다 — 코드도 그 경우 캐시에 쓰지
+    //     않지만, 규칙에서도 막아 둔다.
+    //   · sourceVersion은 **서버 트리거만** 올린다. 클라이언트는 갱신 시
+    //     그 값을 바꿀 수 없다. 이 필드가 낡음 판정의 유일한 근거이므로,
+    //     클라이언트가 내릴 수 있으면 낡은 캐시를 영구히 신선한 것으로
+    //     위장할 수 있다.
+    //   · 처음 만들 때만 sourceVersion 0을 심을 수 있다(그 뒤 거래가 한 번만
+    //     바뀌어도 트리거가 1 이상으로 올려 무효화된다).
+    //   · 삭제는 관리자만 — 캐시를 지우는 것은 정확성을 해치지 않지만
+    //     (다시 계산된다) 읽기량이 튀므로 아무나 하지 않게 한다.
+    match /summaryCaches/{id} {
+      allow read: if signedIn();
+
+      allow create: if atLeast(2)
+                    && request.resource.data.clientId is string
+                    && request.resource.data.schemaVersion is int
+                    && request.resource.data.computedVersion is int
+                    && request.resource.data.get('sourceVersion', -1) == 0
+                    && request.resource.data.computedVersion == 0;
+
+      allow update: if atLeast(2)
+                    && request.resource.data.clientId is string
+                    && request.resource.data.schemaVersion is int
+                    && request.resource.data.computedVersion is int
+                    && request.resource.data.get('sourceVersion', 0)
+                       == resource.data.get('sourceVersion', 0)
+                    // 아직 오지 않은 버전을 계산했다고 주장할 수 없다.
+                    // (같으면 신선, 작으면 낡음 — 둘 다 정상이다)
+                    && request.resource.data.computedVersion
+                       <= resource.data.get('sourceVersion', 0);
+
+      allow delete: if isAdmin();
+    }
+
     // ── 오래 걸리는 파괴적 작업의 진행 상태 ──
     // 전체 초기화는 관리자만 실행하므로 상태도 관리자만 다룬다.
     // 다른 사람이 실행 중인지 확인하고 중단된 작업을 이어서 진행하기 위한 문서다.
