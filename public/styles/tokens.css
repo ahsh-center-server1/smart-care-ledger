@@ -1,0 +1,121 @@
+/* public/styles/tokens.css
+ *
+ * 디자인 토큰 — 색·반경·그림자·전환의 단일 출처.
+ *
+ * 어디서 왔나
+ *   같은 저자의 형제 프로젝트 smart-schedule-v2의 토큰을 가져왔다. 사용자층이
+ *   같고(40~60대 사회복지사) 이미 명암비 감사를 통과한 값이다. 각 값 옆의 비율은
+ *   흰 글자 또는 배경 대비 실측치다.
+ *
+ * 다크모드는 두지 않는다
+ *   고령 사용자에게 어두운 배경 + 밝은 글자는 글자 후광(halation)을 만들고
+ *   인지부하를 올린다. 대신 **글자 크기 3단계**(html[data-font-scale])를 제공한다.
+ *   모든 크기가 rem이므로 UI 전체가 함께 확대된다.
+ *
+ * 두 벌의 이름이 있는 이유
+ *   아래 「레거시 별칭」은 기존 코드가 쓰는 이름(--blue, --muted, --border …)을
+ *   새 토큰으로 연결한다. 코드에 var(--…) 참조가 395군데 있으므로, 이름을 유지하고
+ *   값만 바꾸면 **한 곳을 고쳐 전부가 개선된다.** 인라인 스타일을 하나씩 걷어내는
+ *   작업(리팩토링 단계)과 색 정비를 분리하기 위한 장치다.
+ *   새로 쓰는 코드는 의미 이름(--primary, --destructive …)을 쓴다.
+ */
+
+:root {
+  /* ── 바탕과 글자 ─────────────────────────────────────────── */
+  --background:            hsl(40 33% 99%);    /* #FEFDFB 웜 오프화이트 — 순백의 눈부심 완화 */
+  --foreground:            hsl(215 28% 17%);   /* #1F2A37 딥슬레이트 14.5:1 — 순흑이 아니라 후광이 준다 */
+  --card:                  hsl(0 0% 100%);     /* 순백 카드가 웜 배경 위로 떠 보인다 */
+  --card-foreground:       hsl(215 28% 17%);
+  --popover:               hsl(0 0% 100%);
+  --popover-foreground:    hsl(215 28% 17%);
+
+  /* ── 강조 ────────────────────────────────────────────────── */
+  --primary:               hsl(212 90% 38%);   /* #0A5FB8 신뢰감 딥블루, 흰 글자 6.3:1 AA */
+  --primary-foreground:    hsl(0 0% 100%);
+  --primary-hover:         hsl(212 90% 32%);
+  --secondary:             hsl(210 30% 94%);   /* #E9EEF4 보조 버튼·세그먼트 트랙 */
+  --secondary-foreground:  hsl(215 25% 27%);
+  --accent:                hsl(192 44% 93%);   /* #E1EFF2 소프트 틸 — primary 틴트와 구분되는 선택 표시 */
+  --accent-foreground:     hsl(196 60% 22%);
+
+  /* ── 의미색 ──────────────────────────────────────────────── */
+  --destructive:           hsl(0 62% 46%);     /* #C62828 흰 글자 5.6:1 — 종전 #f43f5e는 danger 버튼에서 AA 미달 */
+  --destructive-foreground:hsl(0 0% 100%);
+  --success:               hsl(152 55% 30%);   /* #22764B 흰 글자 ~5.9:1 */
+  --success-foreground:    hsl(0 0% 100%);
+  --warning:               hsl(32 85% 40%);    /* #BC7212 흰 글자 ~4.8:1 */
+  --warning-foreground:    hsl(0 0% 100%);
+
+  /* ── 중립 ────────────────────────────────────────────────── */
+  --muted-bg:              hsl(210 30% 96%);   /* #EFF2F6 행·hover 채움 */
+  --muted-foreground:      hsl(215 19% 40%);   /* #525E6E 6.5:1 — 보조 텍스트 하한(5.5:1)을 넘긴다 */
+  --border-color:          hsl(214 24% 87%);   /* #D8DFE8 고령 사용자용으로 종전보다 진하게 */
+  --input-border:          hsl(214 20% 82%);   /* #CAD2DD 입력칸이 '박스'로 읽히게 border보다 진하게 */
+  --ring:                  hsl(212 90% 45%);   /* #1877D9 포커스 링 */
+
+  /* ── 사이드바 (어두운 크롬 — 본문이 아니라 틀이라 다크 유지) ── */
+  --sidebar-bg:            hsl(215 28% 17%);
+  --sidebar-border-color:  hsl(215 19% 27%);
+  --sidebar-text:          hsl(214 20% 82%);   /* 종전 #94a3b8(3.4:1)은 AA 미달이라 밝게 올렸다 */
+  --sidebar-active:        hsl(205 90% 74%);
+
+  /* ── 형태 ────────────────────────────────────────────────── */
+  --radius:                0.75rem;
+  --radius-sm:             calc(var(--radius) - 4px);
+  --radius-md:             calc(var(--radius) - 2px);
+  --radius-lg:             var(--radius);
+  --shadow-sm:             0 1px 3px hsl(215 28% 17% / .06), 0 1px 2px hsl(215 28% 17% / .04);
+  --shadow-md:             0 4px 12px hsl(215 28% 17% / .08);
+  --shadow-lg:             0 8px 24px hsl(215 28% 17% / .12);
+  --transition:            all .18s cubic-bezier(.4, 0, .2, 1);
+
+  /* 터치 타깃 최소 크기. 44px은 iOS HIG·WCAG 2.5.5 권장치이며
+     고령 사용자에게는 그보다 작으면 오조작이 눈에 띄게 늘어난다. */
+  --touch-target:          44px;
+
+  /* ─────────────────────────────────────────────────────────
+   * 레거시 별칭 — 기존 코드가 쓰는 이름을 위 토큰으로 잇는다.
+   * 새 코드에서는 쓰지 말 것(위 의미 이름을 쓴다).
+   * ───────────────────────────────────────────────────────── */
+  --bg:             var(--background);
+  --surface:        var(--card);
+  --sidebar:        var(--sidebar-bg);
+  --sidebar-border: var(--sidebar-border-color);
+  --nav-text:       var(--sidebar-text);
+  --navy:           var(--sidebar-bg);
+  --border:         var(--border-color);
+  --bm:             var(--input-border);
+  --text:           var(--foreground);
+  --sub:            var(--secondary-foreground);
+  --muted:          var(--muted-foreground);
+  --blue:           var(--primary);
+  --blue2:          var(--primary-hover);
+  --green:          var(--success);
+  --red:            var(--destructive);
+  --amber:          var(--warning);
+  --shadow:         var(--shadow-sm);
+  --shadow2:        var(--shadow-md);
+  --r:              var(--radius);
+  --r2:             var(--radius);
+  --tr:             var(--transition);
+}
+
+/* ───────────────────────────────────────────────────────────
+ * 글자 크기 3단계 (카카오톡 글자 크기 설정과 같은 개념)
+ *
+ * 루트 font-size를 올리면 rem 기반 크기가 전부 함께 커진다. px로 박힌 값은
+ * 따라오지 않으므로, 새로 쓰는 CSS는 rem을 쓴다.
+ *
+ * 깜빡임 방지: index.html이 페인트 전에 인라인 스크립트로 data-font-scale을
+ * 적용한다. 스타일시트만으로는 첫 페인트가 기본 크기로 한 번 그려진다.
+ * ─────────────────────────────────────────────────────────── */
+html[data-font-scale="large"]  { font-size: 112.5%; }   /* 18px */
+html[data-font-scale="xlarge"] { font-size: 125%; }     /* 20px */
+
+/* 인쇄물은 종이 레이아웃이 사용자 설정에 따라 달라지면 안 된다.
+   보고서를 A4에 맞춰 짜 두었는데 글자 크기 설정 때문에 페이지가 밀리면
+   결재 문서로 쓸 수 없다. */
+@media print {
+  html[data-font-scale="large"],
+  html[data-font-scale="xlarge"] { font-size: 100% !important; }
+}

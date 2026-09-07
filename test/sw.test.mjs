@@ -28,14 +28,17 @@ function appShell() {
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
 }
 
-/** public/ 아래 모든 .js 파일을 '/경로' 형태로 모은다. */
-function allJsFiles(dir = PUBLIC, out = []) {
+/**
+ * public/ 아래 앱이 실제로 로드하는 정적 자원을 '/경로' 형태로 모은다.
+ * vendor/는 별도로 등록하므로 여기서 제외한다(파일이 크고 목록이 고정이다).
+ */
+function allAppAssets(dir = PUBLIC, out = []) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) {
-      if (name === 'icons') continue;
-      allJsFiles(p, out);
-    } else if (name.endsWith('.js')) {
+      if (name === 'icons' || name === 'vendor') continue;
+      allAppAssets(p, out);
+    } else if (name.endsWith('.js') || name.endsWith('.css')) {
       out.push('/' + relative(PUBLIC, p).split(/[\\/]/).join('/'));
     }
   }
@@ -52,16 +55,29 @@ test('APP_SHELL에 등록된 파일은 모두 실제로 존재한다', () => {
   );
 });
 
-test('앱이 쓰는 모든 JS 모듈이 APP_SHELL에 등록되어 있다', () => {
+test('앱이 쓰는 모든 JS·CSS가 APP_SHELL에 등록되어 있다', () => {
   const shell = new Set(appShell());
   // sw.js 자신은 캐시 대상이 아니다(항상 네트워크에서 받아야 갱신된다).
-  const expected = allJsFiles().filter((p) => p !== '/sw.js');
+  const expected = allAppAssets().filter((p) => p !== '/sw.js');
   const missing = expected.filter((p) => !shell.has(p));
   assert.deepEqual(
     missing, [],
-    '오프라인에서 로드 실패할 모듈이 있습니다. sw.js의 APP_SHELL에 추가하세요:\n  '
+    '오프라인에서 로드 실패할 자원이 있습니다. sw.js의 APP_SHELL에 추가하세요:\n  '
       + missing.join('\n  '),
   );
+});
+
+test('index.html이 링크하는 스타일시트는 모두 APP_SHELL에 있다', () => {
+  const html = readFileSync(join(PUBLIC, 'index.html'), 'utf8');
+  const shell = new Set(appShell());
+  const hrefs = [...html.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]*>/g)]
+    .map((m) => (m[0].match(/href=["']([^"']+)["']/) || [])[1])
+    .filter(Boolean)
+    .filter((h) => !/^https?:\/\//.test(h))          // 웹폰트는 외부 — 대체 폰트 스택이 있다
+    .map((h) => h.replace(/^\./, ''));               // './styles/x.css' → '/styles/x.css'
+  assert.ok(hrefs.length > 0, 'index.html에 로컬 스타일시트 링크가 없습니다');
+  const missing = hrefs.filter((h) => !shell.has(h));
+  assert.deepEqual(missing, [], 'APP_SHELL에 없는 스타일시트:\n  ' + missing.join('\n  '));
 });
 
 test('외부 CDN에서 스크립트를 받지 않는다 — 오프라인·폐쇄망에서도 떠야 한다', () => {

@@ -328,8 +328,10 @@ export function changeView(view) {
   setText('view-title',t); setText('view-sub',s);
   if (view==='dashboard') { Dash.renderDashboard(); Rpt.refreshPendingApprovalBadge(); }
   if (view==='settings')  {
-    // 캐시된 데이터로 즉시 렌더 (CRUD 시 부분 갱신으로 최신 상태 유지)
-    Settings.renderManagement(); Settings.loadSettings();
+    // 캐시된 데이터로 즉시 렌더 (CRUD 시 부분 갱신으로 최신 상태 유지).
+    // 어떤 패널을 그릴지는 initSettingsTabs가 세운 셸이 정한다 —
+    // 여기서 renderManagement를 직접 부르면 열려 있지 않은 탭까지 그린다.
+    Settings.loadSettings();
   }
   if (view==='report')    { Rpt.loadReportList(); switchRptSubtab('monthly'); }
 }

@@ -19,6 +19,8 @@ import { COLS, DEFAULT_CATEGORIES } from '../constants.js';
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
+import { initSettingsShell, switchSettingsTab, registerPanel } from './settings-shell.js';
+import { renderSettingsOverview, refreshOverviewBadges } from './settings-overview.js';
 import { can, savePermissions, requiredRank, DEFAULT_MIN_RANK,
          SELECTABLE_RANKS, RANK_LABEL, PERM_SECTIONS } from './permissions.js';
 
@@ -201,12 +203,8 @@ export function confirmDelete(type,id){
 export async function loadSettings(){
   const isArchive=can('settings.archive');
   const isResetAdmin=can('settings.reset');          // 전체 초기화
-  const canPerm=can('settings.permissions');        // 권한 설정 탭
-  // 권한 없는 탭 버튼은 아예 숨김 (누르면 alert만 뜨는 '유령 탭' 제거)
-  const archiveTabBtn=document.querySelector('.settings-tab-btn[data-tab="archive"]');
-  if(archiveTabBtn)archiveTabBtn.style.display=isArchive?'':'none';
-  const permTabBtn=document.querySelector('.settings-tab-btn[data-tab="permissions"]');
-  if(permTabBtn)permTabBtn.style.display=canPerm?'':'none';
+  // 권한별 탭 노출은 settings-shell이 SETTINGS_TABS의 perm으로 판정한다
+  // (화면에서 안 보이는 것과 눌러도 안 되는 것이 같은 근거를 쓴다).
   if(isArchive){
     const ySel=document.getElementById('archive-year');
     if(ySel&&!ySel.options.length){const cy=new Date().getFullYear();for(let y=cy-1;y>=cy-6;y--)ySel.add(new Option(y+'년',y));}
@@ -240,8 +238,7 @@ export async function loadSettings(){
       S.activeClient=cid; openModal('fixed-item');
     });
   }
-  // 이미 패널이 렌더링된 경우 재호출 금지 (편집 중 draft 초기화 방지)
-  if(canPerm&&!document.getElementById('btn-perm-save'))renderPermissionPanel();
+  // 권한 패널은 셸이 그 탭을 열 때 그린다(registerPanel).
   initBudgetSection();
   // 탭 초기화
   renderCategoryTarget();
@@ -763,44 +760,44 @@ export function renderPermissionPanel(){
 }
 
 // ─────────────────────────────────────────────
-// 탭 전환 함수
+// 탭 전환
 // ─────────────────────────────────────────────
 /**
- * 설정 탭 버튼 바인딩.
- * loadSettings()가 부를 때마다 실행되므로 **같은 버튼에 핸들러가 쌓인다.**
- * 설정 화면을 열 때마다 탭 한 번 클릭에 switchSettingsTab이 n번 돌았다.
- * 이미 건 버튼은 건너뛴다.
+ * 설정 탭 초기화.
+ *
+ * 탭 목록·권한·전환은 settings-shell.js(+settings-nav.js)가 담당한다.
+ * 여기서는 각 탭이 열릴 때 어떤 렌더 함수를 부를지 등록하고, 카테고리
+ * 서브탭만 바인딩한다.
+ *
+ * 왜 옮겼나: 종전에는 탭을 추가할 때 HTML 버튼 · 패널 div · 권한 if문 ·
+ * 클래스 토글 네 곳을 손대야 했고, 가로 탭이라 개수가 늘면 무너졌다.
+ * 이제 SETTINGS_TABS 배열 한 줄 + 패널 div 하나로 끝난다.
  */
 export function initSettingsTabs(){
-  document.querySelectorAll('.settings-tab-btn').forEach(btn=>{
-    if(btn.dataset.bound)return; btn.dataset.bound='1';
-    btn.addEventListener('click',e=>{
-      switchSettingsTab(e.currentTarget.dataset.tab);
-    });
+  // 탭별 렌더 함수 등록 (없는 탭은 정적 HTML만 보여진다)
+  registerPanel('overview',    renderSettingsOverview);
+  registerPanel('list',        renderManagement);
+  // 권한 패널은 편집 중인 draft를 들고 있다. 이미 그려져 있으면 다시 그리지 않는다
+  // — 탭을 왕복할 때마다 저장하지 않은 변경이 사라지면 쓸 수 없다.
+  registerPanel('permissions', () => {
+    if (!document.getElementById('btn-perm-save')) renderPermissionPanel();
   });
+
   document.querySelectorAll('.category-subtab-btn').forEach(btn=>{
     if(btn.dataset.bound)return; btn.dataset.bound='1';
     btn.addEventListener('click',e=>{
       switchCategorySubtab(e.currentTarget.dataset.subtab);
     });
   });
+
+  initSettingsShell();
+  // 열려 있지 않은 탭에도 알림 개수가 붙어야 한다 — 「개요」를 보지 않아도
+  // 승인 대기나 미납이 있다는 것이 레일에서 보이게.
+  refreshOverviewBadges();
 }
 
-export function switchSettingsTab(tab){
-  // 마감은 settings.archive(센터장·관리자), 권한 관리는 settings.reset(관리자)로 각각 게이트
-  if(tab==='archive'&&!can('settings.archive')){
-    alert('데이터 마감은 센터장·관리자만 사용할 수 있습니다.');
-    return;
-  }
-  if(tab==='permissions'&&!can('settings.permissions')){
-    alert('권한 관리는 관리자만 사용할 수 있습니다.');
-    return;
-  }
-  document.querySelectorAll('.settings-tab-btn').forEach(b=>b.classList.remove('active'));
-  document.querySelector(`[data-tab="${tab}"]`)?.classList.add('active');
-  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
-  document.getElementById(`${tab}-tab-content`)?.classList.add('active');
-}
+// 다른 모듈·인라인 onclick이 부르던 이름을 유지한다.
+export { switchSettingsTab };
 
 export function switchCategorySubtab(subtab){
   document.querySelectorAll('.category-subtab-btn').forEach(b=>b.classList.remove('active'));

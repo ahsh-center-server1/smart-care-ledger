@@ -22,6 +22,24 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 
+  <!-- 디자인 토큰 · 컴포넌트 클래스 (styles/) -->
+  <link rel="stylesheet" href="./styles/tokens.css">
+  <link rel="stylesheet" href="./styles/components.css">
+
+  <!-- 글자 크기 설정을 **페인트 전에** 적용한다.
+       스타일시트나 모듈에서 적용하면 기본 크기로 한 번 그려진 뒤 커지면서
+       화면이 눈에 띄게 튄다(고령 사용자에게 특히 거슬린다). 그래서 인라인 동기
+       스크립트로 <html>에 속성만 먼저 박는다. localStorage가 막힌 환경(사생활
+       보호 모드 등)에서도 앱이 죽지 않도록 try/catch로 감싼다. -->
+  <script>
+    (function () {
+      try {
+        var v = localStorage.getItem('scl_fontScale');
+        if (v === 'large' || v === 'xlarge') document.documentElement.dataset.fontScale = v;
+      } catch (e) { /* 저장소를 못 읽는 환경 — 기본 크기로 둔다 */ }
+    })();
+  </script>
+
   <!-- Firebase SDK (Firestore + Auth + Storage) — public/vendor/ 에서 로컬 로드.
        CDN(gstatic)에서 받아오던 것을 npm 결과물로 바꿨다. 이유는 tools/vendor.mjs 참고:
        PWA 오프라인 동작, 폐쇄망 화면 검증, 서드파티 런타임 의존 제거. -->
@@ -103,9 +121,11 @@
   <style>
     /* 비프로덕션 환경 표시 — 스테이징/에뮬레이터를 실서비스로 착각하지 않도록.
        레이아웃에 영향을 주지 않게 화면 위에 떠 있고 클릭을 가로채지 않는다. */
+    /* 오른쪽 아래에 둔다. 위쪽은 헤더 조작 영역(글자 크기 설정 등)이라
+       띠가 겹쳐 버튼을 가린다. */
     #env-banner {
-      position: fixed; top: 0; right: 0; z-index: 99999;
-      padding: 4px 12px; border-bottom-left-radius: 8px;
+      position: fixed; bottom: 0; right: 0; z-index: 99999;
+      padding: 4px 12px; border-top-left-radius: 8px;
       background: #b45309; color: #fff;
       font-size: 11px; font-weight: 700; letter-spacing: .02em;
       pointer-events: none; user-select: none;
@@ -113,31 +133,9 @@
     }
     @media print { #env-banner { display: none; } }
 
-    :root {
-      --bg:             #f8fafc;
-      --surface:        #ffffff;
-      --green:          #10b981;
-      --card:           #ffffff;
-      --sidebar:        #1e293b;
-      --sidebar-border: #334155;
-      --nav-text:       #94a3b8;
-      --navy:           #0f172a;
-      --border:         #e2e8f0;
-      --bm:             #cbd5e1;
-      --text:           #1e293b;
-      --sub:            #475569;
-      --muted:          #556070;
-      --blue:           #0ea5e9;
-      --blue2:          #0284c7;
-      --green:          #10b981;
-      --red:            #f43f5e;
-      --amber:          #f59e0b;
-      --shadow:         0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);
-      --shadow2:        0 4px 12px rgba(0,0,0,0.08);
-      --r:              12px;
-      --r2:             18px;
-      --tr:             all 0.18s cubic-bezier(0.4,0,0.2,1);
-    }
+    /* 디자인 토큰은 styles/tokens.css 로 옮겼다 (--blue 등 기존 이름은 별칭으로 유지).
+       색 정의가 여기 있으면 값 하나 바꿀 때마다 index.html을 건드려야 하고,
+       --green 이 두 번 선언돼 있던 것처럼 중복도 눈에 띄지 않는다. */
     *{box-sizing:border-box;margin:0;padding:0;}
     /* Tailwind CDN에서 유일하게 쓰던 유틸리티. CDN을 뺐으므로 여기서 정의한다. */
     .hidden{display:none;}
@@ -410,25 +408,58 @@
     .category-subtab-btn.active{color:var(--blue);border-bottom-color:var(--blue);}
     .subtab-content{display:none;}
     .subtab-content.active{display:block;}
-    /* 큰 글씨 모드 — 40~60대 사용자 가독성 향상 (토글 시 body.large-text) */
-    body.large-text{font-size:17px;}
-    body.large-text table tbody td{font-size:16px;}
-    body.large-text table thead th{font-size:14px;}
-    body.large-text .col-in,body.large-text .col-out{font-size:17px;}
-    body.large-text .label{font-size:14px;}
-    body.large-text .btn{font-size:16px;min-height:50px;}
-    body.large-text .btn-sub{font-size:15px;padding:9px 15px;}
-    body.large-text .input{font-size:16px;min-height:50px;}
-    body.large-text .badge,body.large-text .period-btn,body.large-text .cat-chip,body.large-text .cat-dd-item{font-size:14px;}
-    body.large-text .nav-item{font-size:16px;}
-    body.large-text .nav-sub{font-size:15px;}
-    body.large-text .mobile-nav-item{font-size:12px;}
-    body.large-text .mobile-nav-item .nav-icon{font-size:24px;}
-    body.large-text #view-title{font-size:23px;}
-    body.large-text #btn-csv-export,body.large-text #btn-bulk-del,body.large-text #btn-trx-view-toggle,body.large-text #btn-filter-reset{font-size:14px;}
-    #btn-large-text{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9px;font-size:13px;font-weight:700;color:var(--sub);background:#fff;border:1.5px solid var(--bm);cursor:pointer;transition:var(--tr);white-space:nowrap;}
-    #btn-large-text:hover{border-color:var(--blue);color:var(--blue);}
-    #btn-large-text.on{background:var(--blue);color:#fff;border-color:var(--blue);}
+    /* ── 글자 크기 3단계 (기존 화면) ──────────────────────────────
+       styles/tokens.css의 html[data-font-scale]가 루트 font-size를 올리지만,
+       그것만으로는 **rem 기반 크기만** 커진다. 이 화면의 기존 CSS는 값이 px로
+       박혀 있어 따라오지 않으므로 아래에서 함께 올린다.
+
+       종전에는 이 목록이 body.large-text 아래 12줄로 손으로 나열돼 있었고,
+       새 UI를 만들 때마다 한 줄씩 추가해야 했다(빠뜨린 곳은 그 부분만 작게 남았다).
+       그래서 크기를 변수로 뽑아 단계별로 재정의한다 — 규칙은 한 벌이고
+       단계를 늘릴 때 값 블록만 추가한다.
+
+       새로 쓰는 CSS는 rem을 쓴다(styles/components.css). 그러면 이 목록에
+       손댈 필요가 없다. 인라인 스타일의 px는 리팩토링 단계에서 걷어낸다. */
+    :root {
+      --fs-body: 15px; --fs-td: 14px; --fs-th: 12px; --fs-amount: 15px;
+      --fs-label: 12px; --fs-btn: 14px; --fs-btn-sub: 13px; --fs-input: 14px;
+      --fs-chip: 12px; --fs-nav: 14px; --fs-nav-sub: 13px;
+      --fs-mnav: 11px; --fs-mnav-icon: 22px; --fs-title: 21px; --fs-toolbtn: 13px;
+      --ctl-min: 44px;
+    }
+    html[data-font-scale="large"] {
+      --fs-body: 17px; --fs-td: 16px; --fs-th: 14px; --fs-amount: 17px;
+      --fs-label: 14px; --fs-btn: 16px; --fs-btn-sub: 15px; --fs-input: 16px;
+      --fs-chip: 14px; --fs-nav: 16px; --fs-nav-sub: 15px;
+      --fs-mnav: 12px; --fs-mnav-icon: 24px; --fs-title: 23px; --fs-toolbtn: 14px;
+      --ctl-min: 50px;
+    }
+    html[data-font-scale="xlarge"] {
+      --fs-body: 19px; --fs-td: 18px; --fs-th: 15px; --fs-amount: 19px;
+      --fs-label: 15px; --fs-btn: 18px; --fs-btn-sub: 16px; --fs-input: 18px;
+      --fs-chip: 15px; --fs-nav: 18px; --fs-nav-sub: 16px;
+      --fs-mnav: 13px; --fs-mnav-icon: 26px; --fs-title: 26px; --fs-toolbtn: 15px;
+      --ctl-min: 54px;
+    }
+    body{font-size:var(--fs-body);}
+    table tbody td{font-size:var(--fs-td);}
+    table thead th{font-size:var(--fs-th);}
+    .col-in,.col-out{font-size:var(--fs-amount);}
+    .label{font-size:var(--fs-label);}
+    .btn{font-size:var(--fs-btn);min-height:var(--ctl-min);}
+    .btn-sub{font-size:var(--fs-btn-sub);}
+    .input{font-size:var(--fs-input);min-height:var(--ctl-min);}
+    .badge,.period-btn,.cat-chip,.cat-dd-item{font-size:var(--fs-chip);}
+    .nav-item{font-size:var(--fs-nav);}
+    .nav-sub{font-size:var(--fs-nav-sub);}
+    .mobile-nav-item{font-size:var(--fs-mnav);}
+    .mobile-nav-item .nav-icon{font-size:var(--fs-mnav-icon);}
+    #view-title{font-size:var(--fs-title);}
+    #btn-csv-export,#btn-bulk-del,#btn-trx-view-toggle,#btn-filter-reset{font-size:var(--fs-toolbtn);}
+    /* 인쇄물은 사용자 설정에 따라 페이지가 밀리면 안 된다 (A4 결재 문서) */
+    @media print { :root, html[data-font-scale="large"], html[data-font-scale="xlarge"] {
+      --fs-body:15px; --fs-td:14px; --fs-th:12px; --fs-amount:15px; --fs-title:21px;
+    } }
   </style>
 </head>
 <body>
@@ -561,7 +592,8 @@
           <h2 id="view-title" style="font-size:20px;font-weight:900;color:var(--text);letter-spacing:-0.02em;">대시보드</h2>
           <p  id="view-sub"   style="color:var(--muted);font-size:13px;margin-top:3px;">관리 중인 입주자를 선택하세요</p>
         </div>
-        <button id="btn-large-text" onclick="toggleLargeText()" title="글씨 크기를 크게/작게 전환합니다" aria-pressed="false">🔎 큰 글씨</button>
+        <!-- 글자 크기 3단계 — modules/font-scale.js가 버튼을 렌더한다 -->
+        <div id="font-scale-control"></div>
       </header>
 
       <div style="flex:1;padding:22px 28px 28px;">
@@ -873,22 +905,61 @@
 
         <!-- 설정 (관리 통합) -->
         <div id="view-settings" style="display:none;" class="animate-in">
-          <!-- 설정 탭 래퍼 -->
-          <div style="display:flex;flex-direction:column;gap:14px;">
-            <!-- 탭 버튼 -->
-            <div class="settings-tab-buttons">
-              <button class="settings-tab-btn active" data-tab="list">목록</button>
-              <button class="settings-tab-btn" data-tab="category">카테고리</button>
-              <button class="settings-tab-btn" data-tab="fixed">고정 수입/지출</button>
-              <button class="settings-tab-btn" data-tab="budget">예산 관리</button>
-              <button class="settings-tab-btn admin-only" data-tab="archive">데이터 초기화/마감</button>
-              <button class="settings-tab-btn admin-only" data-tab="permissions">권한</button>
+          <!-- 설정 화면 — 좌측 그룹 레일(데스크톱) / 상단 select(모바일) + 패널.
+               레일과 select, 패널 표시는 모두 modules/settings-nav.js의
+               SETTINGS_TABS 배열 하나가 구동한다. 탭을 늘릴 때 HTML에서
+               손댈 것은 패널 div 하나뿐이다. -->
+          <div class="ui-settings">
+            <!-- 데스크톱: 그룹별 사이드 레일 -->
+            <nav id="settings-rail" class="ui-settings__rail" aria-label="설정 메뉴"></nav>
+
+            <!-- 모바일: 그룹(optgroup)으로 묶은 선택 -->
+            <div class="ui-settings__picker">
+              <label class="ui-label" for="settings-tab-picker">설정 항목</label>
+              <select id="settings-tab-picker" class="ui-select"></select>
             </div>
 
             <!-- 탭 콘텐츠 -->
             <div class="settings-tab-content">
+              <!-- 패널 제목·설명 — settings-nav가 채운다 -->
+              <h2 id="settings-panel-title" class="ui-settings__panel-title"></h2>
+              <p id="settings-panel-desc" class="ui-settings__panel-desc"></p>
+
+              <!-- 개요: 해야 할 일 -->
+              <div id="overview-tab-content" class="tab-content active"></div>
+
+              <!-- 변경 이력 -->
+              <div id="audit-tab-content" class="tab-content"></div>
+
+              <!-- 전체 초기화 — 되돌릴 수 없는 작업이라 별도 탭으로 분리했다.
+                   연도 마감(정상적인 연간 업무)과 같은 화면에 두면 실수로 누를 수 있다. -->
+              <div id="danger-tab-content" class="tab-content">
+                <div class="ui-card" style="border-color:var(--destructive);border-width:2px;">
+                  <div style="display:flex;align-items:center;gap:.625rem;margin-bottom:.5rem;">
+                    <span style="font-size:1.25rem;" aria-hidden="true">🗑️</span>
+                    <h3 class="ui-card__title" style="color:var(--destructive);margin:0;">전체 초기화</h3>
+                    <span class="ui-badge ui-badge--danger" style="margin-left:auto;">관리자 전용</span>
+                  </div>
+                  <p class="ui-card__desc" style="margin-bottom:.75rem;">
+                    거래·계좌·입주자·보고서·증빙 파일을 모두 삭제합니다.
+                    <strong style="color:var(--destructive);">되돌릴 수 없습니다.</strong>
+                  </p>
+                  <p class="ui-hint" style="margin-bottom:1rem;">
+                    지울 대상과 진행 상황은 실행할 때 확인 창에서 보여 드립니다.
+                    중단되어도 이어서 진행할 수 있습니다.
+                  </p>
+                  <button id="btn-firebase-reset" type="button" class="ui-btn ui-btn--danger">
+                    🗑️ 전체 초기화
+                  </button>
+                  <div id="reset-progress" style="display:none;margin-top:1rem;">
+                    <div class="ui-progress"><div id="reset-progress-bar" class="ui-progress__bar" style="width:0%;"></div></div>
+                    <div id="reset-progress-label" class="ui-progress__label"></div>
+                  </div>
+                </div>
+              </div>
+
               <!-- 목록 탭 (3열 그리드) -->
-              <div id="list-tab-content" class="tab-content active">
+              <div id="list-tab-content" class="tab-content">
                 <div class="list-grid">
                   <!-- 직원 목록 -->
                   <div class="list-column">
@@ -1037,16 +1108,6 @@
                     </div>
                     <div id="archive-history"></div>
                   </div>
-                </div>
-                <!-- Firebase 초기화 -->
-                <div style="background:#fef2f2;border:2px solid #dc2626;border-radius:8px;padding:20px;margin:0 0 20px 0;">
-                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                    <span style="font-size:20px;">🗑️</span>
-                    <h3 style="margin:0;color:#dc2626;font-size:15px;font-weight:800;">Firebase 전체 초기화</h3>
-                    <span style="font-size:11px;font-weight:700;color:#fff;background:#dc2626;padding:3px 8px;border-radius:99px;margin-left:auto;">관리자 전용</span>
-                  </div>
-                  <p style="margin:0 0 15px 0;color:#7f1d1d;font-size:14px;">모든 거래, 계좌, 입주자, 보고서 데이터를 삭제합니다. <span style="color:#dc2626;font-weight:700;">절대 되돌릴 수 없습니다.</span></p>
-                  <button id="btn-firebase-reset" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;">🗑️ 전체 초기화</button>
                 </div>
               </div>
 

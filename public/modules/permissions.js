@@ -88,6 +88,9 @@ export const DEFAULT_MIN_RANK = {
   'settings.client':       3,
   'settings.account':      3,
   'settings.staff':        3,
+  // 변경 이력 조회. 누가 무엇을 바꿨는지는 관리 책임이 있는 사람이 봐야 하고,
+  // 동시에 다른 직원의 활동 기록이므로 담당자 등급에는 열지 않는다.
+  'audit.view':            3,
   // 공통 카테고리·규칙은 전 입주자에게 영향을 주므로 한 단계 높다.
   // 기본값 초기화도 이 권한으로 막는다 — 예전에는 검사가 아예 없어서
   // 담당자가 버튼 하나로 전 입주자의 분류와 자동분류 규칙을 지울 수 있었다.
@@ -136,6 +139,7 @@ export const PERM_SECTIONS = [
     'settings.category': '입주자 전용 카테고리·규칙',
     'settings.category.common': '공통 카테고리·규칙 (전 입주자 영향)',
     'settings.fixed': '고정항목', 'settings.budget': '예산',
+    'audit.view': '변경 이력 조회',
     'settings.archive': '연도 마감', 'settings.permissions': '권한 설정',
     'settings.reset': '전체 초기화', 'lock.bypass': '결재 완료 월 편집',
   }},

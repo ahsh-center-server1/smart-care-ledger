@@ -39,6 +39,7 @@ import * as Rpt      from './modules/report.js';
 import * as Settings from './modules/settings.js';
 import * as Modals   from './modules/modals.js';
 import * as Parser   from './services/excel-parser.js';
+import { initFontScale, setFontScale } from './modules/font-scale.js';
 
 // ─────────────────────────────────────────────
 // ExcelParser — services/excel-parser.js로 옮겼다.
@@ -76,25 +77,10 @@ window.onFirebaseReady = function() {
 // → modules/core.js로 이동됨
 
 
-// ─────────────────────────────────────────────
-// 큰 글씨 모드 (40~60대 가독성) — body.large-text 토글 + sessionStorage 기억
-// ─────────────────────────────────────────────
-function setLargeText(on){
-  document.body.classList.toggle('large-text',on);
-  const btn=document.getElementById('btn-large-text');
-  if(btn){
-    btn.classList.toggle('on',on);
-    btn.setAttribute('aria-pressed',on?'true':'false');
-    btn.innerHTML=on?'🔎 작은 글씨':'🔎 큰 글씨';
-  }
-  try{sessionStorage.setItem('scl_largeText',on?'1':'0');}catch(e){}
-}
-function toggleLargeText(){ setLargeText(!document.body.classList.contains('large-text')); }
-function applyLargeTextPref(){
-  let on=false;
-  try{on=sessionStorage.getItem('scl_largeText')==='1';}catch(e){}
-  if(on)setLargeText(true);
-}
+// 글자 크기 설정은 modules/font-scale.js로 옮겼다.
+// 종전 2단계 토글(body.large-text + sessionStorage)은 요소별 px 오버라이드를
+// 손으로 나열하는 구조라 새 UI를 만들 때마다 빠지는 곳이 생겼고, 탭을 닫으면
+// 설정이 사라져 매번 다시 눌러야 했다. 3단계 + localStorage + 변수 기반으로 대체.
 
 
 // ─────────────────────────────────────────────
@@ -114,8 +100,8 @@ Object.assign(window, {
   switchRptSubtab: Core.switchRptSubtab,
   isConfirmedLocked: Core.isConfirmedLocked,
   ExcelParser,
-  // 큰 글씨 모드
-  toggleLargeText,
+  // 글자 크기 3단계
+  setFontScale,
   // auth
   handleLogin: Auth.handleLogin, handleLogout: Auth.handleLogout, handleSignup: Auth.handleSignup,
   // dashboard
@@ -236,8 +222,9 @@ if (window._fbReady) window.onFirebaseReady();
 // 이벤트 바인딩
 // ─────────────────────────────────────────────
 function bindEvents(){
-  // 큰 글씨 모드 저장값 적용
-  applyLargeTextPref();
+  // 글자 크기 설정 — 저장값을 DOM과 맞추고 세그먼트 컨트롤을 그린다.
+  // (페인트 전 적용은 index.html의 인라인 스크립트가 이미 했다)
+  initFontScale();
   // 화면이 좁아지면 PC 전용 화면(보고서·설정)에서 빠져나온다
   Core.watchViewportForDesktopOnlyViews();
   // 로그인
