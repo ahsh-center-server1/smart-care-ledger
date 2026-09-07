@@ -114,7 +114,22 @@ access control check: No 'Access-Control-Allow-Origin' header is present
 | **403** | 함수가 공개 호출 불가 상태 | 아래 `allUsers` 부여 |
 | **404** | 그 이름·리전에 함수가 없다 | 배포 확인 (`--project staging`, 리전 `asia-northeast3`) |
 
-어느 쪽인지 5초 만에 확인합니다.
+#### 어느 쪽인지 가리기 — 터미널 없이도 됩니다
+
+**함수 주소를 새 탭에서 그대로 엽니다.** 주소창 이동은 CORS 검사를 받지 않으므로
+진짜 응답이 보입니다. 로그인 실패 안내(`E_UNREACHABLE`)에 그 주소가 함께 뜹니다.
+
+```
+https://asia-northeast3-smart-care-ledger-staging.cloudfunctions.net/login
+```
+
+| 화면에 보이는 것 | 뜻 |
+|---|---|
+| `Error: Forbidden` · `Your client does not have permission` | **403** — 공개 호출 불가. 아래 조치 |
+| `Error: Not Found` · `Page not found` | **404** — 그 이름·리전에 함수가 없다. 배포 확인 |
+| `Bad Request` · `Method Not Allowed` · JSON 오류 | 함수는 **살아 있다.** 원인은 다른 곳 |
+
+터미널을 쓸 수 있다면 사전 요청을 직접 보내는 쪽이 더 정확합니다.
 
 ```bash
 curl -i -X OPTIONS \
@@ -123,25 +138,44 @@ curl -i -X OPTIONS \
   https://asia-northeast3-smart-care-ledger-staging.cloudfunctions.net/login
 ```
 
-`204`에 `access-control-allow-origin`이 있으면 정상입니다. `403`이면 다음을
-콜러블 **6개 전부**에 적용합니다.
+`204` + `access-control-allow-origin` 이면 정상입니다.
+
+#### 403일 때 — 공개 호출 열기
+
+**콘솔에서 (gcloud 없이):** Google Cloud 콘솔 → **Cloud Run** → 리전
+`asia-northeast3` → 서비스 `login` 클릭 → **보안(Security)** 탭 →
+인증에서 **"인증되지 않은 호출 허용"** 선택 → 저장. 콜러블 6개에 각각 합니다.
+
+**CLI로:**
 
 ```bash
 PROJECT_ID=smart-care-ledger-staging
 for FN in login signup approveStaff upsertStaff setStaffActive changePassword; do
-  gcloud run services add-iam-policy-binding "$FN" \
-    --region=asia-northeast3 --project="$PROJECT_ID" \
-    --member=allUsers --role=roles/run.invoker
+  gcloud functions add-invoker-policy-binding "$FN" \
+    --region=asia-northeast3 --project="$PROJECT_ID" --member=allUsers
 done
 ```
+
+> `gcloud functions`(2세대를 아는 명령)를 씁니다. `gcloud run services`로 직접
+> 할 수도 있지만 **Cloud Run 서비스 이름은 소문자**라 `upsertstaff`처럼 적어야
+> 하고, 그대로 `upsertStaff`를 넣으면 "서비스 없음"이 납니다.
+> 실제 이름은 `gcloud run services list --region=asia-northeast3`로 확인하세요.
 
 > 2세대 함수는 Cloud Run 서비스로 돕니다. `firebase deploy`가 보통 공개 호출을
 > 열어 주지만, 조직 정책 **도메인 제한 공유**(`constraints/iam.allowedPolicyMemberDomains`)가
 > 켜져 있으면 `allUsers` 부여가 조용히 실패합니다. 회사·학교 계정으로 만든
 > 프로젝트에서 흔합니다. 그 경우 정책 예외를 두거나 개인 프로젝트를 쓰세요.
 
-로그인 화면에도 이제 `E_UNREACHABLE`로 뜹니다 — 예전에는 이 경우와 서버 내부
-오류가 똑같이 "로그인 실패. 다시 시도하세요."로 보여 구분할 수 없었습니다.
+#### 404일 때 — 정말 배포됐는지
+
+Firebase 콘솔 → **Functions** 목록에 6개가 있고 리전이 `asia-northeast3`인지 봅니다.
+비어 있으면 배포가 안 된 것입니다.
+
+```bash
+firebase deploy --only functions --project staging
+```
+
+배포 로그 끝에 `functions[asia-northeast3-login]` 같은 줄이 6개 나와야 합니다.
 
 ### 7번이 왜 필요한가 — 토큰 서명 권한
 

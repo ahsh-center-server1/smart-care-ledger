@@ -22,6 +22,20 @@ export const UNREACHABLE_MESSAGE =
   '서버에 연결하지 못했습니다. 로그인 기능(Cloud Functions)이 배포되지 않았거나, ' +
   '외부 호출이 차단되어 있을 수 있습니다. 관리자에게 문의하세요. (E_UNREACHABLE)';
 
+/**
+ * 못 닿은 주소를 안내에 덧붙인다.
+ *
+ * 이 주소를 **새 탭에서 그대로 열면** 원인이 바로 갈린다 — 주소창 이동은 CORS
+ * 검사를 받지 않으므로 진짜 응답이 보인다.
+ *   403 → 함수가 공개 호출 불가 (Cloud Run 호출자 권한)
+ *   404 → 그 이름·리전에 함수가 없다 (배포 안 됨)
+ *   400/405 → 함수는 살아 있다. 원인은 다른 곳
+ */
+export function unreachableMessage(endpoint) {
+  if (!endpoint) return UNREACHABLE_MESSAGE;
+  return `${UNREACHABLE_MESSAGE}\n주소를 새 탭에서 열어 확인하세요: ${endpoint}`;
+}
+
 /** SDK가 코드 앞에 붙이는 접두사를 떼어 낸다 (`functions/internal` → `internal`) */
 function bareCode(code) {
   const c = String(code || '');
@@ -49,8 +63,8 @@ export function isUnreachable(e) {
  * - 서버가 만든 메시지 → 그대로 (설정 오류 진단 E_... 이 여기로 온다)
  * - 그 외 → 호출부가 준 fallback
  */
-export function fnErrorMessage(e, fallback) {
-  if (isUnreachable(e)) return UNREACHABLE_MESSAGE;
+export function fnErrorMessage(e, fallback, endpoint) {
+  if (isUnreachable(e)) return unreachableMessage(endpoint);
   if (e && typeof e.message === 'string' && e.message && bareCode(e.code) !== 'internal') {
     return e.message;
   }

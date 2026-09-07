@@ -46,12 +46,17 @@ export async function handleLogin() {
     btn.disabled=false; btn.textContent='시스템 접속';
     await _enterApp();
   } catch(e) {
-    errEl.textContent = fnErrorMessage(e, '로그인 실패. 다시 시도하세요.');
+    errEl.textContent = fnErrorMessage(e, '로그인 실패. 다시 시도하세요.', fnEndpoint('login'));
     errEl.style.display='block';
     btn.disabled=false; btn.textContent='시스템 접속';
   }
 }
 
+
+/** 호출 대상 주소 — 실패 안내에 붙여 사용자가 직접 열어 볼 수 있게 한다 */
+function fnEndpoint(name) {
+  try { return window._fbFn?.endpoint?.(name) || ''; } catch (_) { return ''; }
+}
 
 export async function _enterApp() {
   showLoading(true);
@@ -165,7 +170,7 @@ export async function handleSignup() {
     errEl.style.display='block';
     document.getElementById('login-id').value=id;
   } catch(e) {
-    errEl.textContent = fnErrorMessage(e, '가입 오류. 다시 시도하세요.');
+    errEl.textContent = fnErrorMessage(e, '가입 오류. 다시 시도하세요.', fnEndpoint('signup'));
     errEl.style.display='block';
   } finally {
     btn.disabled=false; btn.textContent='가입 신청';

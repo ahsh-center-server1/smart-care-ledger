@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
-import { fnErrorMessage, isUnreachable, UNREACHABLE_MESSAGE } from '../public/services/fn-errors.js';
+import { fnErrorMessage, isUnreachable, UNREACHABLE_MESSAGE, unreachableMessage } from '../public/services/fn-errors.js';
 
 const require = createRequire(import.meta.url);
 const read = (rel) => readFileSync(new URL('../' + rel, import.meta.url), 'utf8');
@@ -34,6 +34,31 @@ test('전송 실패에는 무엇이 잘못됐는지 알려 준다', () => {
   assert.equal(msg, UNREACHABLE_MESSAGE);
   assert.match(msg, /E_UNREACHABLE/);
   assert.notEqual(msg, '로그인 실패. 다시 시도하세요.', 'fallback에 묻혔습니다');
+});
+
+test('전송 실패 안내에 못 닿은 주소를 담는다', () => {
+  // 이 주소를 새 탭에서 열면 403(비공개)인지 404(미배포)인지 바로 갈린다.
+  // 터미널을 못 쓰는 사람에게는 이게 유일한 진단 수단이다.
+  const url = 'https://asia-northeast3-smart-care-ledger-staging.cloudfunctions.net/login';
+  const msg = fnErrorMessage(transportFailure(), 'fallback', url);
+  assert.ok(msg.includes(url), '안내에 주소가 없습니다');
+  assert.match(msg, /E_UNREACHABLE/);
+
+  // 주소를 모를 때도 안내는 나와야 한다
+  assert.equal(unreachableMessage(''), UNREACHABLE_MESSAGE);
+  assert.equal(unreachableMessage(undefined), UNREACHABLE_MESSAGE);
+  assert.equal(fnErrorMessage(transportFailure(), 'fallback'), UNREACHABLE_MESSAGE);
+});
+
+test('주소를 담아도 줄바꿈이 살아 있어야 화면에 읽힌다', () => {
+  // textContent에 넣으므로 #login-err에 white-space:pre-line이 없으면 한 줄로 뭉친다
+  const msg = unreachableMessage('https://example.com/login');
+  assert.ok(msg.includes('\n'), '줄바꿈이 없습니다');
+  const html = read('public/index.html');
+  const el = /<p id="login-err"[^>]*>/.exec(html);
+  assert.ok(el, '#login-err를 찾지 못했습니다');
+  assert.match(el[0], /white-space\s*:\s*pre-line/,
+    '#login-err에 white-space:pre-line이 없어 안내가 한 줄로 뭉칩니다');
 });
 
 test('서버가 만든 메시지는 그대로 보여준다', () => {

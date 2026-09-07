@@ -60,7 +60,15 @@
     // 전역 노출
     window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch, storage, ref, uploadBytes, getDownloadURL, deleteObject };
     window._fbAuth = { auth, signInWithCustomToken, signOut, onAuthStateChanged };
-    window._fbFn = { call: (name) => httpsCallable(functions, name) };
+    // endpoint — 호출이 실패했을 때 "어느 주소에 못 닿았는지"를 화면에 보여주기 위해.
+    // 그 주소를 새 탭에서 열면 403(비공개)인지 404(미배포)인지 바로 갈린다.
+    const FN_REGION = 'asia-northeast3';
+    window._fbFn = {
+      call: (name) => httpsCallable(functions, name),
+      endpoint: (name) => (env.emulators
+        ? `http://${location.hostname || '127.0.0.1'}:${env.emulators.functions.port}/${env.config.projectId}/${FN_REGION}/${name}`
+        : `https://${FN_REGION}-${env.config.projectId}.cloudfunctions.net/${name}`),
+    };
     window._fbEnv = env;
 
     // 프로덕션이 아니면 화면에 띠를 하나 붙인다. 스테이징을 실서비스로 착각한
@@ -473,7 +481,9 @@
         <a href="#" id="goto-login" style="font-size:13px;color:var(--blue);text-decoration:none;">로그인으로 돌아가기</a>
       </div>
     </div>
-    <p id="login-err" style="color:var(--red);font-size:13px;text-align:center;margin-top:10px;display:none;"></p>
+    <!-- white-space:pre-line — 설정 오류 안내는 줄바꿈과 주소를 담는다.
+         overflow-wrap — 긴 함수 주소가 카드 밖으로 삐져나가지 않게. -->
+    <p id="login-err" style="color:var(--red);font-size:13px;text-align:center;margin-top:10px;display:none;white-space:pre-line;overflow-wrap:anywhere;"></p>
   </div>
 </div>
 

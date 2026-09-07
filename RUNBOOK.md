@@ -58,11 +58,14 @@ curl -i -X OPTIONS \
 
 ```bash
 for FN in login signup approveStaff upsertStaff setStaffActive changePassword; do
-  gcloud run services add-iam-policy-binding "$FN" \
-    --region=asia-northeast3 --project=smart-care-ledger \
-    --member=allUsers --role=roles/run.invoker
+  gcloud functions add-invoker-policy-binding "$FN" \
+    --region=asia-northeast3 --project=smart-care-ledger --member=allUsers
 done
 ```
+
+> `gcloud run services`로 직접 해도 되지만 **Cloud Run 서비스 이름은 소문자**라
+> `upsertstaff`처럼 적어야 합니다. 콘솔이라면 Cloud Run → 서비스 → 보안 탭 →
+> "인증되지 않은 호출 허용".
 
 `404`면 그 이름·리전에 함수가 없다는 뜻입니다 — 배포가 실제로 됐는지 보세요.
 
