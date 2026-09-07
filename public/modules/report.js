@@ -6,7 +6,7 @@
 'use strict';
 
 import { S } from '../state.js';
-import { COLS, STATUS_LABELS, STATUS_CLASSES, cs } from '../constants.js';
+import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, makeDraggable } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { can, requiredRank, ROLE_RANK, ADMIN_RANK } from './permissions.js';
@@ -1045,8 +1045,8 @@ export async function refreshPendingApprovalBadge(){
   }
 }
 
-/** confirmedMonths 키 */
-const monthKey=r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`;
+/** confirmedMonths 키 — 서버 트리거와 같은 형식이어야 하므로 lockKey를 쓴다. */
+const monthKey=r=>lockKey(r.clientId, r.year, r.month);
 
 /**
  * 보고서 하나가 바뀌었을 때 캐시를 제자리에서 고친다.

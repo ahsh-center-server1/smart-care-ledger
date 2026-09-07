@@ -8,6 +8,32 @@
 // ─────────────────────────────────────────────
 // Firestore 컬렉션명
 // ─────────────────────────────────────────────
+/**
+ * 최종 결재 완료(마감) 월 색인 문서.
+ *
+ * 왜 별도 문서인가
+ *   마감 여부는 **모든 역할이 알아야 한다** — 입력자도 마감된 달에는 거래를 넣을 수
+ *   없어야 한다. 그런데 그 정보를 reports 컬렉션에서 직접 읽으면 보안 규칙과 충돌한다:
+ *   reports는 담당자(등급 2) 이상만 읽을 수 있고, 입력자가 조회하면 쿼리가 거부되어
+ *   **앱 초기화가 통째로 실패한다**(실제로 그런 상태였다).
+ *
+ *   그래서 "어느 (입주자, 월)이 잠겼는지"만 담은 문서를 따로 둔다. 금액·의견·결재자
+ *   같은 내용은 들어가지 않으므로 전원 조회를 허용해도 안전하고, 조회는 쿼리 대신
+ *   **문서 1건 읽기**라 읽기량도 준다.
+ *
+ *   이 문서는 Cloud Functions의 syncLockedMonths 트리거만 쓴다(Admin SDK).
+ *   클라이언트는 규칙상 config를 쓸 수 없어 위조가 불가능하다.
+ */
+export const LOCKED_MONTHS_DOC = 'lockedMonths';
+
+/**
+ * 마감 색인의 키. 서버(functions/locked-months.cjs)와 **같은 형식**이어야 한다.
+ * test/locked-months.test.mjs가 양쪽을 대조한다.
+ */
+export function lockKey(clientId, year, month) {
+  return `${clientId}_${year}-${String(month).padStart(2, '0')}`;
+}
+
 export const COLS = {
   USERS:         'users',
   CLIENTS:       'clients',

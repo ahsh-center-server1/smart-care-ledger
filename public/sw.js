@@ -13,10 +13,14 @@
  */
 'use strict';
 
-const CACHE_VERSION = 'scl-v2';
+const CACHE_VERSION = 'scl-v3';
 const SHELL_CACHE = `shell-${CACHE_VERSION}`;
 
 // 오프라인 폴백을 위해 미리 캐시할 앱 셸 (동일 출처 정적 자원)
+//
+// ⚠️ 여기서 빠진 모듈이 있으면 그 모듈만 오프라인에서 로드 실패해 앱이 조용히 깨진다.
+//    ES 모듈은 하나만 못 받아도 그래프 전체가 죽는다.
+//    test/sw.test.mjs 가 public/ 의 실제 파일 목록과 이 배열을 대조해 누락을 잡는다.
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -24,18 +28,30 @@ const APP_SHELL = [
   '/state.js',
   '/constants.js',
   '/parser-config.js',
+  '/firebase-env.js',
   '/utils/ui.js',
+  '/services/balance.js',
+  '/services/excel-parser.js',
   '/services/firestore.js',
+  '/services/fn-errors.js',
+  '/services/in-query.js',
   '/services/image.js',
   '/services/storage.js',
   '/modules/auth.js',
   '/modules/core.js',
   '/modules/dashboard.js',
-  '/modules/permissions.js',
-  '/modules/transactions.js',
-  '/modules/report.js',
-  '/modules/settings.js',
   '/modules/modals.js',
+  '/modules/permissions.js',
+  '/modules/report.js',
+  '/modules/report-workflow.js',
+  '/modules/settings.js',
+  '/modules/setup.js',
+  '/modules/transactions.js',
+  // 외부 라이브러리를 로컬로 가져왔으므로 이제 오프라인에서도 앱이 뜬다.
+  // 예전에는 Firebase SDK·Chart.js·xlsx를 CDN에서 받아 망이 없으면 PWA가 아예 죽었다.
+  '/vendor/firebase.js',
+  '/vendor/chart.umd.js',
+  '/vendor/xlsx.bundle.js',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

@@ -10,9 +10,10 @@
 'use strict';
 
 import { S } from '../state.js';
-import { COLS } from '../constants.js';
+import { COLS, LOCKED_MONTHS_DOC, lockKey } from '../constants.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
+import { chunkForInQuery } from '../services/in-query.js';
 import * as Dash     from './dashboard.js';
 import * as Trx      from './transactions.js';
 import * as Rpt      from './report.js';
@@ -26,7 +27,7 @@ import { can } from './permissions.js';
  *                                  미지정 시 전체 로드 (로그인·새로고침용)
  */
 export async function fetchBaseData(opts) {
-  const { getDocs, collection, query, where } = fb();
+  const { getDocs, getDoc, collection, doc, query, where } = fb();
   // 담당 입주자만 볼지 전체를 볼지 — 네비게이션 메뉴 권한이 아니라 전용 키로 판정한다.
   // 예전에는 can('nav.staff')를 썼기 때문에 팀장의 메뉴 표시를 끄면
   // 팀장이 전 입주자를 못 보게 되는 숨은 부작용이 있었다.
@@ -40,8 +41,15 @@ export async function fetchBaseData(opts) {
   if (need('clients'))    tasks.push(['clients',    getDocs(collection(db,COLS.CLIENTS))]);
   if (need('accounts'))   tasks.push(['accounts',   getDocs(collection(db,COLS.ACCOUNTS))]);
   if (need('categories')) tasks.push(['categories', getDocs(collection(db,COLS.CATEGORIES))]);
-  // reports: confirmedMonths 만들기용 — status='confirmed'만 필요
-  if (need('reports'))    tasks.push(['reports',    getDocs(query(collection(db,COLS.REPORTS),where('status','==','confirmed')))]);
+  // 마감 월 색인 — 예전에는 reports를 status='confirmed'로 조회해 만들었다.
+  // 그런데 보안 규칙은 reports를 담당자(등급 2) 이상만 읽게 하므로, 입력자가
+  // 로그인하면 이 조회가 거부되고 아래 Promise.all이 깨져 **앱 초기화가 통째로
+  // 실패**했다(화면이 빈 채로 멈춤). 규칙을 적용한 뒤에야 드러나는 문제였다.
+  //
+  // 그래서 금액·의견 없이 잠긴 (입주자, 월) 키만 담은 config/lockedMonths 문서를
+  // 읽는다. 전 역할이 조회할 수 있고, 쿼리가 아니라 문서 1건이라 읽기도 준다.
+  // 갱신은 Cloud Functions의 syncLockedMonths 트리거만 한다.
+  if (need('reports'))    tasks.push(['lockedMonths', getDoc(doc(db,COLS.CONFIG,LOCKED_MONTHS_DOC))]);
 
   const results = await Promise.all(tasks.map(t=>t[1]));
   const snapMap = {};
@@ -75,9 +83,11 @@ export async function fetchBaseData(opts) {
     S.accounts = activeAccounts.filter(a=>S.clients.some(c=>c.id===a.clientId));
   }
 
-  if (snapMap.reports) {
-    // status='confirmed' 필터가 이미 적용되어 있으므로 추가 필터 불필요
-    S.confirmedMonths=new Set(snapMap.reports.docs.map(d=>d.data()).map(r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`));
+  if (snapMap.lockedMonths) {
+    // 문서가 없으면(최초 배포·백필 전) 빈 집합이 된다. 그 상태에서는 잠금이 걸리지
+    // 않으므로, 관리자가 설정에서 「마감 색인 재생성」을 눌러 백필해야 한다.
+    const months = (snapMap.lockedMonths.exists() ? snapMap.lockedMonths.data().months : null) || {};
+    S.confirmedMonths = new Set(Object.keys(months).filter(k => months[k]));
   }
 
   // 당월 수입/지출 집계 (대시보드 카드 표시용)
@@ -90,20 +100,29 @@ export async function fetchBaseData(opts) {
       const lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
       const ymEnd=ym+'-'+String(lastDay).padStart(2,'0');
       const myClientIds = S.clients.map(c=>c.id);
+      // 입력자는 본인이 만든 거래만 읽을 수 있다. 규칙 엔진은 결과 전체가 조건을
+      // 충족함을 증명할 수 없으면 쿼리를 통째로 거부하므로, 클라이언트가
+      // createdBy 필터를 함께 걸어야 한다 (firestore.rules의 transactions 블록).
+      // 이 필터가 없어서 입력자의 대시보드 집계 쿼리가 조용히 거부되고 ₩0으로 보였다.
+      // 복합 인덱스: clientId + createdBy + date (firestore.indexes.json)
+      const scoped = !can('trx.view.all')
+        ? [where('createdBy','==',String(S.user.userId))]
+        : [];
       let docs = [];
       if (myClientIds.length === 0) {
         docs = [];
-      } else if (myClientIds.length <= 30) {
-        const tSnap = await getDocs(query(collection(db,COLS.TRANSACTIONS),
-          where('clientId','in',myClientIds),
-          where('date','>=',ymStart),
-          where('date','<=',ymEnd)));
-        docs = tSnap.docs;
       } else {
-        const tSnap = await getDocs(query(collection(db,COLS.TRANSACTIONS),
+        // 'in' 절은 최대 30개 — 담당 입주자가 많으면 나눠서 조회한다.
+        // 예전에는 30명을 넘으면 **전 입주자 한 달치**를 스캔하는 폴백이 돌았고,
+        // 그것이 규칙상 거부되거나(입력자·담당자) 읽기 폭증의 원인이 됐다.
+        const chunks = chunkForInQuery(myClientIds);
+        const snaps = await Promise.all(chunks.map(ids => getDocs(query(
+          collection(db,COLS.TRANSACTIONS),
+          where('clientId','in',ids),
           where('date','>=',ymStart),
-          where('date','<=',ymEnd)));
-        docs = tSnap.docs;
+          where('date','<=',ymEnd),
+          ...scoped))));
+        docs = snaps.flatMap(s => s.docs);
       }
       const mStats={};
       S.clients.forEach(c=>{ mStats[c.id]={inc:0,exp:0}; });
@@ -150,11 +169,14 @@ export const refetchCategories = () => fetchBaseData({ only: ['categories'] });
 export const refetchReports    = () => fetchBaseData({ only: ['reports'] });
 
 export function isConfirmedLocked(clientId, dateStr){
-  // 관리자는 최종 결재 완료 월도 추가/수정/삭제 가능 (잠금 우회).
-  // 마이그레이션 후 관리자는 role='센터장' + isAdmin=true 이므로 플래그로 판정한다.
-  if(S.user?.isAdmin===true)return false;
-  const ym=(dateStr||'').substring(0,7);
-  return !!(S.confirmedMonths?.has(`${clientId}_${ym}`));
+  // 잠금 우회는 전용 권한 키로 판정한다. 역할 문자열이나 isAdmin 플래그를 직접 보면
+  // 설정 화면의 권한 등급표로 이 동작을 조정할 수 없다(등급표에 있는데 안 먹는 키가 된다).
+  if(can('lock.bypass'))return false;
+  const ym=(dateStr||'').substring(0,7);          // 'YYYY-MM'
+  if(ym.length!==7)return false;
+  // 키 형식은 lockKey 한 곳에서만 만든다 — 서버 트리거(functions/locked-months.cjs)와
+  // 같은 형식이어야 하고, 손으로 조립한 곳이 늘면 반드시 어긋난다.
+  return !!(S.confirmedMonths?.has(lockKey(clientId, ym.substring(0,4), ym.substring(5,7))));
 }
 
 /**

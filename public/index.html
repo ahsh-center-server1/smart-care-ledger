@@ -22,13 +22,17 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 
-  <!-- Firebase SDK (Firestore + Auth + Storage) -->
+  <!-- Firebase SDK (Firestore + Auth + Storage) — public/vendor/ 에서 로컬 로드.
+       CDN(gstatic)에서 받아오던 것을 npm 결과물로 바꿨다. 이유는 tools/vendor.mjs 참고:
+       PWA 오프라인 동작, 폐쇄망 화면 검증, 서드파티 런타임 의존 제거. -->
   <script type="module">
-    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
-    import { getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch, connectFirestoreEmulator } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
-    import { getAuth, signInWithCustomToken, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence, connectAuthEmulator } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
-    import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js';
-    import { getFunctions, httpsCallable, connectFunctionsEmulator } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
+    import {
+      initializeApp,
+      getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch, connectFirestoreEmulator,
+      getAuth, signInWithCustomToken, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence, connectAuthEmulator,
+      getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator,
+      getFunctions, httpsCallable, connectFunctionsEmulator,
+    } from './vendor/firebase.js';
     import { pickFirebaseEnv } from './firebase-env.js';
 
     // 접속 대상은 호스트명이 정한다 — 운영 URL에서만 프로덕션, 그 외는 스테이징.
@@ -87,10 +91,13 @@
     if (window.onFirebaseReady) window.onFirebaseReady();
   </script>
 
-  <!-- 외부 라이브러리 -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 외부 라이브러리 — public/vendor/ 에서 로컬 로드 (npm run vendor 로 재생성).
+       Tailwind CDN은 제거했다: 전 소스에서 유틸리티 클래스가 실제로 쓰인 곳이 없었고
+       (index.html의 class="hidden" 하나뿐인데 그마저 inline display:none과 중복),
+       매 로드마다 CSS를 재컴파일하는 런타임 스크립트를 금전 장부에 둘 이유가 없다.
+       그 한 줄은 아래 .hidden 규칙이 대신한다. -->
+  <script src="./vendor/chart.umd.js"></script>
+  <script src="./vendor/xlsx.bundle.js"></script>
   <!-- 파서 설정 — 은행/카드사 추가 시 이 파일만 수정 -->
 
   <style>
@@ -132,6 +139,8 @@
       --tr:             all 0.18s cubic-bezier(0.4,0,0.2,1);
     }
     *{box-sizing:border-box;margin:0;padding:0;}
+    /* Tailwind CDN에서 유일하게 쓰던 유틸리티. CDN을 뺐으므로 여기서 정의한다. */
+    .hidden{display:none;}
     body{font-family:'Noto Sans KR',-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;}
     .spinner{width:32px;height:32px;border:3px solid #e2e8f0;border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;}
     @keyframes spin{to{transform:rotate(360deg);}}

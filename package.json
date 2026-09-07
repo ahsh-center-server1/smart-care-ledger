@@ -4,9 +4,12 @@
   "scripts": {
     "lint": "eslint .",
     "test": "node --test test/*.test.mjs",
-    "check": "npm run lint && npm test",
+    "check": "npm run lint && npm run vendor:check && npm test",
     "lint:syntax": "node lint.cjs",
+    "vendor": "node tools/vendor.mjs",
+    "vendor:check": "node tools/vendor.mjs --check",
     "test:rules": "firebase emulators:exec --only firestore --project smart-care-ledger-rules-test \"node --test test/rules/*.test.mjs\"",
+    "qa:smoke": "node tools/qa-smoke.mjs",
     "emu": "firebase emulators:start --project staging",
     "emu:seed": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 node tools/seed-staging.mjs",
     "deploy:staging": "firebase deploy --project staging",
@@ -17,10 +20,14 @@
   "type": "module",
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.2",
+    "chart.js": "^4.5.1",
+    "esbuild": "^0.28.2",
     "eslint": "^9.39.5",
     "firebase": "^12.18.0",
     "firebase-admin": "^12.6.0",
     "firebase-tools": "^15.29.0",
-    "globals": "^17.12.0"
+    "globals": "^17.12.0",
+    "playwright": "^1.63.0",
+    "xlsx-js-style": "^1.2.0"
   }
 }

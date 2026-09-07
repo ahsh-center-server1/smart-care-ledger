@@ -563,3 +563,81 @@ exports.syncAccountOnSettingsChange = onDocumentWritten(
     }
   }
 );
+
+// ─────────────────────────────────────────────────────────────
+// syncLockedMonths — 마감(최종 결재 완료) 월 색인을 유지한다
+//
+// 왜 필요한가
+//   마감 여부는 모든 역할이 알아야 한다 — 입력자도 마감된 달에는 거래를 넣을 수
+//   없어야 한다. 그런데 앱은 그 정보를 reports 컬렉션을 조회해서 만들고 있었고,
+//   보안 규칙은 reports를 담당자(등급 2) 이상만 읽게 한다. 그래서 입력자가
+//   로그인하면 그 조회가 거부되고 Promise.all이 깨져 **앱 초기화가 통째로 실패**했다
+//   (화면이 빈 채로 멈춘다). 규칙을 적용한 뒤에야 드러나는 문제였다.
+//
+//   금액·의견 없이 "어느 (입주자, 월)이 잠겼는지"만 담은 문서를 두면 전원 조회를
+//   허용해도 안전하고, 조회가 쿼리 대신 문서 1건 읽기라 읽기량도 줄어든다.
+//
+//   클라이언트는 규칙상 config를 쓸 수 없다(관리자 예외뿐). 이 트리거만 Admin SDK로
+//   갱신하므로 잠금을 위조해 풀 수 없다.
+// ─────────────────────────────────────────────────────────────
+const {
+  LOCKED_MONTHS_DOC,
+  lockIndexChange,
+  buildLockIndex,
+} = require('./locked-months.cjs');
+
+const CONFIG = 'config';
+const REPORTS = 'reports';
+
+exports.syncLockedMonths = onDocumentWritten(
+  { document: 'reports/{reportId}' },
+  async (event) => {
+    const before = event.data && event.data.before && event.data.before.data();
+    const after = event.data && event.data.after && event.data.after.data();
+
+    const change = lockIndexChange(before, after);
+    if (!change) return;                        // 마감 여부가 안 바뀌면 할 일 없음
+
+    const ref = db.collection(CONFIG).doc(LOCKED_MONTHS_DOC);
+    try {
+      await ref.set({
+        months: {
+          [change.key]: change.locked ? true : FieldValue.delete(),
+        },
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+    } catch (err) {
+      // 색인 갱신 실패가 결재 자체를 되돌리지는 않는다. rebuildLockedMonths로 복구한다.
+      logger.error('[syncLockedMonths] 색인 갱신 실패', {
+        key: change.key, locked: change.locked, message: err && err.message,
+      });
+    }
+  }
+);
+
+/**
+ * rebuildLockedMonths — 색인을 reports 전체에서 다시 만든다.
+ *
+ * 쓰는 때
+ *   · 마이그레이션 직후 최초 백필 (트리거는 그때부터의 변경만 본다)
+ *   · 트리거가 실패해 색인이 어긋났을 때 복구
+ *
+ * 전체 스캔이므로 관리자만, 그리고 사람이 눌러야 돈다.
+ */
+exports.rebuildLockedMonths = callable('rebuildLockedMonths', async (request) => {
+  if (callerRank(request.auth) < 99) {
+    throw new HttpsError('permission-denied', '관리자만 실행할 수 있습니다.');
+  }
+
+  const snap = await db.collection(REPORTS).where('status', '==', 'confirmed').get();
+  const months = buildLockIndex(snap.docs.map((d) => d.data()));
+
+  // set(merge 없이)으로 통째로 교체한다 — 지워져야 할 낡은 키가 남지 않게.
+  await db.collection(CONFIG).doc(LOCKED_MONTHS_DOC).set({
+    months,
+    updatedAt: new Date().toISOString(),
+    rebuiltBy: request.auth.uid,
+  });
+
+  return { count: Object.keys(months).length };
+});

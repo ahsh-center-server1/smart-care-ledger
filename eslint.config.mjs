@@ -19,6 +19,11 @@ export default [
       'node_modules/**',
       'functions/node_modules/**',
       'public/lib/**',
+      // 외부 라이브러리 결과물 — tools/vendor.mjs가 npm에서 만들어 넣는다.
+      // 우리 코드가 아니고 minify돼 있어 검사할 것도, 고칠 수도 없다.
+      'public/vendor/**',
+      // 화면 검증 산출물(스크린샷·요약)
+      'qa-artifacts/**',
     ],
   },
 
@@ -93,6 +98,16 @@ export default [
     rules: {
       'no-undef': 'error',
       'no-unused-vars': ['warn', { args: 'none', caughtErrors: 'none' }],
+    },
+  },
+
+  // ── 브라우저 안에서 실행되는 코드를 품은 Node 스크립트 ──
+  // qa-smoke.mjs는 Node에서 돌지만 page.evaluate(() => window...) 콜백은
+  // 브라우저 컨텍스트에서 실행된다. 그 window는 진짜 전역이므로 선언해 준다.
+  {
+    files: ['tools/qa-smoke.mjs'],
+    languageOptions: {
+      globals: { ...globals.node, window: 'readonly' },
     },
   },
 ];

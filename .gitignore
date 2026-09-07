@@ -84,3 +84,6 @@ serviceAccountKey*.json
 
 # 에뮬레이터 데이터 내보내기 (--export-on-exit)
 .emu/
+
+# 화면 검증 산출물 (스크린샷·요약)
+qa-artifacts/
