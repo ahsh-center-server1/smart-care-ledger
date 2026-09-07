@@ -13,6 +13,35 @@ Firebase 콘솔 → 프로젝트 설정 → 사용량 및 결제 → 요금제 �
 이 앱 규모라면 무료 한도 안에 들어갈 가능성이 높지만, 예산 알림을 걸어두면 안전합니다.
 콘솔에서 **예산 알림을 월 1만 원 정도로 설정**해 두세요.
 
+### 0-1-b. 커스텀 토큰 서명 권한 부여 ⚠️ 빠뜨리면 배포 2에서 전원 로그인 불가
+
+`login`은 비밀번호를 확인한 뒤 **커스텀 토큰에 서명**합니다. 서비스 계정 키 없이
+도는 함수(정상입니다)는 이 서명을 IAM API에 맡기는데, 그러려면 실행 계정에
+`iam.serviceAccounts.signBlob` 권한이 필요합니다.
+
+**Cloud Functions 2세대의 기본 실행 계정에는 이 권한이 없습니다.** 1세대가 쓰던
+App Engine 기본 계정에는 있었기 때문에, 2세대로 올리는 이번 전환에서 처음 걸립니다.
+
+```bash
+PROJECT_ID=smart-care-ledger
+PROJECT_NUM=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${PROJECT_NUM}-compute@developer.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
+
+콘솔이라면 **IAM 및 관리자 → IAM** → `<프로젝트번호>-compute@developer.gserviceaccount.com`
+→ 연필 → 역할 추가 → **서비스 계정 토큰 생성자**.
+
+반영에 1~2분 걸립니다. 재배포는 필요 없습니다 — 권한은 실행 시점에 확인합니다.
+
+> 이 단계를 빠뜨린 채 배포 2를 하면 **모든 로그인이 실패합니다.** 지금은 화면에
+> `E_SIGNBLOB`과 조치 방법이 뜨므로 바로 알 수 있지만, 그때는 이미 사용자가
+> 못 들어오는 상태입니다. **배포 1 전에 미리 해 두세요.**
+>
+> 배포 1 직후 스테이징에서 확인하는 방법: `STAGING.md` 참고.
+
 ### 0-2. 서비스 계정 키 발급
 마이그레이션 스크립트가 Admin SDK로 접속하는 데 필요합니다.
 

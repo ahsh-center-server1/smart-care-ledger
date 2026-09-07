@@ -83,9 +83,41 @@ Vercel 프리뷰 URL처럼 **실제로 배포된 주소**에서 확인해야 할
 6. **Blaze(종량제) 플랜으로 전환합니다.** 이 앱의 로그인은 Cloud Functions를 거치므로
    Functions 없이는 아무도 로그인할 수 없습니다. 스테이징은 호출량이 거의 없어
    무료 한도 안에 머물지만, 예산 알림을 걸어두면 안전합니다.
+7. **함수 실행 서비스 계정에 "서비스 계정 토큰 생성자" 역할을 부여합니다.**
+   ← 콘솔에서 잊기 가장 쉬운 단계입니다. 아래 설명 참고.
 
-> 3~4번까지만 하고 5~6번을 건너뛰면 화면은 뜨지만 로그인이 되지 않습니다.
+> 3~4번까지만 하고 5~7번을 건너뛰면 화면은 뜨지만 로그인이 되지 않습니다.
 > 그 경우 방법 A(에뮬레이터)를 쓰세요.
+
+### 7번이 왜 필요한가 — 로그인이 `INTERNAL`로 실패하는 원인
+
+`login` 함수는 비밀번호를 확인한 뒤 **커스텀 토큰에 서명**해야 합니다. 서비스 계정
+키 없이 도는 함수(정상입니다)는 이 서명을 IAM API(`iamcredentials...:signBlob`)에
+맡기는데, 그러려면 실행 계정에 `iam.serviceAccounts.signBlob` 권한이 있어야 합니다.
+
+**Cloud Functions 2세대의 기본 실행 계정에는 이 권한이 없습니다.** 1세대가 쓰던
+App Engine 기본 계정에는 있었기 때문에, 2세대로 만든 새 프로젝트에서만 걸립니다.
+Blaze도 켜고 Authentication도 켰는데 로그인만 안 되는 상태가 이것입니다.
+
+콘솔에서: **IAM 및 관리자 → IAM** → `<프로젝트번호>-compute@developer.gserviceaccount.com`
+→ 연필 → 역할 추가 → **서비스 계정 토큰 생성자**
+
+또는 CLI로:
+
+```bash
+PROJECT_ID=smart-care-ledger-staging
+PROJECT_NUM=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${PROJECT_NUM}-compute@developer.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
+
+반영에 1~2분 걸립니다. 그 뒤 다시 로그인해 보세요. **함수를 다시 배포할 필요는
+없습니다** — 권한은 실행 시점에 확인합니다.
+
+> 이제 이 상태에서 로그인하면 화면에 `E_SIGNBLOB`과 무엇을 해야 하는지가 뜹니다.
+> 예전에는 "로그인 실패. 다시 시도하세요."만 나와 단서가 없었습니다.
 
 ### 배포
 
@@ -163,10 +195,21 @@ node tools/seed-staging.mjs --apply --wipe  # 기존 데이터를 지우고 새�
 
 ## 자주 막히는 곳
 
-| 증상 | 원인 |
+화면에 `E_...` 코드가 뜨면 그 줄이 곧 원인입니다. 더 자세한 내용은
+`firebase functions:log --project staging` 에 남습니다.
+
+| 화면에 뜨는 것 | 원인 | 고치는 법 |
+|---|---|---|
+| `E_SIGNBLOB` | 실행 서비스 계정에 토큰 서명 권한이 없다 (**2세대 신규 프로젝트의 기본 상태**) | 위 「7번이 왜 필요한가」 |
+| `E_NO_AUTH` | Authentication 미활성화 | 콘솔 → Authentication → 시작하기 |
+| `E_NO_FIRESTORE` | Firestore 데이터베이스가 없다 | 콘솔 → Firestore Database → 만들기 |
+| `E_FIRESTORE_PERM` | 실행 계정이 Firestore에 접근 못 한다 | `roles/datastore.user` 부여 |
+| `E_BILLING` | Blaze 미전환 | 콘솔 → 사용량 및 결제 |
+
+| 그 밖의 증상 | 원인 |
 |---|---|
-| 로그인이 `internal` 오류 | Functions가 배포되지 않았거나(스테이징) 에뮬레이터가 안 떠 있다 |
-| `auth/configuration-not-found` | 스테이징 콘솔에서 Authentication을 활성화하지 않았다 |
+| "로그인 실패. 다시 시도하세요."만 뜬다 | 진단되지 않은 오류다. `firebase functions:log`를 보세요 |
+| 로그인 요청이 아예 안 나간다 | Functions가 배포되지 않았거나(스테이징) 에뮬레이터가 안 떠 있다 |
 | 대시보드가 전부 0원 | 복합 인덱스가 아직 빌드 중이다 |
 | 오른쪽 위 표시가 없다 | 프로덕션에 붙어 있다. **입력하지 마세요** |
 | 에뮬레이터인데 데이터가 안 보인다 | `?env=emulator` 없이 열어 스테이징 클라우드에 붙었다 |

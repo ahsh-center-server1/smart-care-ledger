@@ -15,7 +15,7 @@
  */
 
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
-const { setGlobalOptions } = require('firebase-functions/v2');
+const { setGlobalOptions, logger } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 // FieldValue/Timestamp는 서브경로에서 직접 가져온다.
 // `admin.firestore.FieldValue` 형태는 Functions 에뮬레이터가 admin 모듈을
@@ -23,12 +23,45 @@ const admin = require('firebase-admin');
 // (배포본은 동작하므로 에뮬레이터에서만 드러난다).
 const { FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { hashPassword, verifyPassword } = require('./password');
+const { diagnose } = require('./errors');
 
 admin.initializeApp();
 const db = admin.firestore();
 
 // Firestore가 asia-northeast3(서울)에 있으므로 함수도 같은 리전에 둔다.
 setGlobalOptions({ region: 'asia-northeast3', maxInstances: 10 });
+
+/**
+ * 모든 콜러블을 감싼다 — 잡히지 않은 예외가 그대로 나가지 않게.
+ *
+ * Cloud Functions는 잡히지 않은 예외를 `INTERNAL`로 돌려주고, 클라이언트는
+ * `code === 'internal'`이면 메시지를 버린다. 그래서 프로젝트 설정이 하나
+ * 빠졌을 때 화면에 단서가 하나도 남지 않았다 — 신규 배포에서 가장 오래
+ * 붙잡히는 지점이다.
+ *
+ * 알아본 설정 오류는 `failed-precondition`으로 바꿔 **메시지가 화면까지**
+ * 가게 하고, 구체적인 값(서비스 계정 이메일·스택)은 로그에만 남긴다.
+ */
+function callable(name, handler) {
+  return onCall(async (request) => {
+    try {
+      return await handler(request);
+    } catch (err) {
+      if (err instanceof HttpsError) throw err;   // 의도한 거부는 그대로
+
+      const setup = diagnose(err);
+      logger.error(`[${name}] 처리 실패${setup ? ' — ' + setup.code : ''}`, {
+        code: err && err.code,
+        message: err && err.message,
+        fix: setup && setup.fix,
+        stack: err && err.stack,
+      });
+
+      if (setup) throw new HttpsError('failed-precondition', setup.message);
+      throw new HttpsError('internal', '처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+    }
+  });
+}
 
 const USERS = 'users';
 const SECRETS = 'userSecrets';
@@ -59,7 +92,7 @@ function callerRank(auth) {
 // ─────────────────────────────────────────────────────────────
 // login — 비밀번호 검증 후 커스텀 토큰 발급
 // ─────────────────────────────────────────────────────────────
-exports.login = onCall(async (request) => {
+exports.login = callable('login', async (request) => {
   const userId = String((request.data && request.data.userId) || '').trim();
   const password = String((request.data && request.data.password) || '');
 
@@ -133,7 +166,7 @@ exports.login = onCall(async (request) => {
 // signup — 가입 신청. users가 비어 있으면 첫 계정을 관리자로 만든다.
 //          (신규 배포 시 아무도 로그인할 수 없던 부트스트랩 교착 해소)
 // ─────────────────────────────────────────────────────────────
-exports.signup = onCall(async (request) => {
+exports.signup = callable('signup', async (request) => {
   const d = request.data || {};
   const userId = String(d.userId || '').trim();
   const password = String(d.password || '');
@@ -198,7 +231,7 @@ exports.signup = onCall(async (request) => {
 //   호출자보다 높은 등급은 부여할 수 없다.
 //   (기존에는 팀장이 신규 가입자를 센터장으로 승인할 수 있었다)
 // ─────────────────────────────────────────────────────────────
-exports.approveStaff = onCall(async (request) => {
+exports.approveStaff = callable('approveStaff', async (request) => {
   const auth = request.auth;
   if (!auth) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
 
@@ -238,7 +271,7 @@ exports.approveStaff = onCall(async (request) => {
 // 등록·수정·비밀번호 변경이 모두 이 함수를 거친다.
 // 호출자보다 높은 등급은 부여할 수 없다.
 // ─────────────────────────────────────────────────────────────
-exports.upsertStaff = onCall(async (request) => {
+exports.upsertStaff = callable('upsertStaff', async (request) => {
   const auth = request.auth;
   if (!auth) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
 
@@ -332,7 +365,7 @@ exports.upsertStaff = onCall(async (request) => {
 // 마지막 관리자를 비활성화하면 권한 설정·전체 초기화가 영구히 불가능해지므로
 // 서버에서 막는다(로그인 자체가 차단되기 때문에 되돌릴 방법이 없다).
 // ─────────────────────────────────────────────────────────────
-exports.setStaffActive = onCall(async (request) => {
+exports.setStaffActive = callable('setStaffActive', async (request) => {
   const auth = request.auth;
   if (!auth) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
   if (callerRank(auth) < 3) {
@@ -373,7 +406,7 @@ exports.setStaffActive = onCall(async (request) => {
 // ─────────────────────────────────────────────────────────────
 // changePassword — 본인 또는 관리자가 변경
 // ─────────────────────────────────────────────────────────────
-exports.changePassword = onCall(async (request) => {
+exports.changePassword = callable('changePassword', async (request) => {
   const auth = request.auth;
   if (!auth) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
 
