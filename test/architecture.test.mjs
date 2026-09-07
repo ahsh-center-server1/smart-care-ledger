@@ -44,7 +44,7 @@ const PENDING_SPLIT = {
   'public/modules/modals.js':         1669,
   'public/modules/report.js':         1451,
   'public/modules/settings.js':       980,
-  'functions/index.js':               882,
+  'functions/index.js':               719,
   'public/modules/transactions.js':   728,
   'public/modules/receipt-intake.js': 619,
 };

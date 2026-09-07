@@ -208,13 +208,13 @@ test('content가 비어 있어도 깨지지 않는다', () => {
 // ─────────────────────────────────────────────────────────────
 test('AI 콜러블 세 개 모두에 시크릿이 선언돼 있다', async () => {
   const { readFileSync } = await import('node:fs');
-  const src = readFileSync(new URL('../functions/index.js', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../functions/ai-fns.js', import.meta.url), 'utf8');
 
   assert.match(src, /const AI_SECRETS = \{ secrets: \['ANTHROPIC_API_KEY'\] \}/,
     'AI_SECRETS 선언을 찾을 수 없습니다');
 
   for (const fn of ['getAiStatus', 'analyzeReceipt', 'analyzeBankbook']) {
-    const re = new RegExp(`exports\\.${fn} = callable\\('${fn}'[\\s\\S]*?\\n\\}, AI_SECRETS\\);`);
+    const re = new RegExp(`\\b${fn} = callable\\('${fn}'[\\s\\S]*?\\n  \\}, AI_SECRETS\\);`);
     assert.match(src, re,
       `${fn}에 AI_SECRETS가 붙어 있지 않습니다 — 배포본에서 키를 읽을 수 없습니다`);
   }

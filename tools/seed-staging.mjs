@@ -38,6 +38,11 @@ import { readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 const { hashPassword } = require('../functions/password.js');
+// 명부는 서버가 만드는 것과 **같은 함수**로 만든다. 시드가 따로 조립하면
+// 형태가 어긋나도 여기서는 통과하고 배포 후에만 드러난다.
+const {
+  buildStaffDirectory, buildCategoryDirectory, DIRECTORIES,
+} = require('../functions/directories.cjs');
 
 // ── 인자 파싱 ────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -316,7 +321,10 @@ admin.initializeApp(
 const db = admin.firestore();
 
 const SEEDED_COLLECTIONS = ['users', 'userSecrets', 'clients', 'accounts', 'categories',
-  'transactions', 'fixedItems', 'budgets', 'reports', 'excelUploads'];
+  'transactions', 'fixedItems', 'budgets', 'reports', 'excelUploads',
+  // 파생 문서도 비운다. 남겨 두면 지워진 직원이 명부에 유령으로 남고,
+  // 낡은 요약 캐시가 새 거래와 어긋난 금액을 보여준다.
+  'directories', 'summaryCaches'];
 
 async function wipe(name) {
   const snap = await db.collection(name).get();
@@ -368,6 +376,19 @@ for (const t of TRANSACTIONS) {
 for (const f of FIXED_ITEMS) { const { id, ...data } = f; docs.push({ col: 'fixedItems', id, data }); }
 for (const b of BUDGETS) { const { id, ...data } = b; docs.push({ col: 'budgets', id, data }); }
 for (const r of REPORTS) { const { id, ...data } = r; docs.push({ col: 'reports', id, data }); }
+
+// 파생 명부 — 실제 배포에서는 Cloud Functions 트리거가 만든다.
+// 시드가 미리 넣어 두면 에뮬레이터에서도 "명부가 있는" 경로를 눌러볼 수 있다.
+// (Functions 에뮬레이터가 뜨지 않는 환경이라 트리거를 기다릴 수 없다)
+docs.push({
+  col: 'directories', id: DIRECTORIES.STAFF,
+  data: buildStaffDirectory(USERS.map((u) => ({ id: u.userId, data: u }))),
+});
+docs.push({
+  col: 'directories', id: DIRECTORIES.CATEGORIES,
+  data: buildCategoryDirectory(
+    CATEGORIES.map((c, i) => ({ id: `cat_seed_${i}`, data: c }))),
+});
 
 await writeAll(docs);
 log(`  문서 ${docs.length}건 기록 완료`);

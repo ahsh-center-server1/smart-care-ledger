@@ -125,9 +125,19 @@ test('auth.js가 자체 fnErrorMessage를 다시 만들지 않는다', () => {
 
 test('콜러블 함수 이름이 클라이언트와 서버에서 일치한다', () => {
   // 이름이 어긋나면 404 → 브라우저에는 CORS 오류로 보인다 (원인 찾기 최악)
-  const server = new Set(
-    [...read('functions/index.js').matchAll(/^exports\.(\w+)\s*=\s*callable\(/gm)].map((m) => m[1])
-  );
+  // functions/ 전체를 훑는다. 콜러블은 index.js에만 있지 않다 —
+  // 명부·AI처럼 인증과 무관한 것들은 별도 모듈로 나가 있고,
+  // 그때 `exports.X = callable(...)`가 아니라 `X: callable(...)` 형태가 된다.
+  const server = new Set();
+  for (const f of readdirSync(new URL('../functions/', import.meta.url))) {
+    if (!f.endsWith('.js') && !f.endsWith('.cjs')) continue;
+    const src = read(`functions/${f}`);
+    for (const m of src.matchAll(/^\s*(?:exports\.)?(\w+)\s*[:=]\s*callable\(/gm)) server.add(m[1]);
+    // callable('이름', ...) 형태의 이름 인자도 함께 본다 (변수명과 다를 수 있다)
+    for (const m of src.matchAll(/\bcallable\(\s*'(\w+)'/g)) server.add(m[1]);
+  }
+  assert.ok(server.size >= 8,
+    `서버 콜러블을 ${server.size}개만 찾았습니다 — 스캔이 형태를 놓치고 있습니다`);
   // 세 파일만 훑으면 다른 곳의 호출을 놓친다 — public 전체를 본다
   const client = new Set();
   for (const dir of ['public/modules', 'public/services', 'public/utils']) {

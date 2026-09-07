@@ -87,7 +87,7 @@ describe('비로그인 클라이언트', () => {
     'users', 'clients', 'accounts', 'transactions', 'categories',
     'fixedItems', 'reports', 'budgets', 'excelUploads', 'config',
     'userSecrets', 'archive_2025',
-    'auditLogs', 'systemOperations', 'summaryCaches',
+    'auditLogs', 'systemOperations', 'summaryCaches', 'directories',
   ];
 
   for (const col of COLLECTIONS) {
@@ -758,5 +758,49 @@ describe('summaryCaches — 요약 캐시', () => {
     await assertFails(
       updateDoc(doc(as(UNKNOWN_ROLE), 'summaryCaches/weird_2026-09'), update()),
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// directories — 파생 명부 (서버 전용 쓰기)
+//
+// 명부에는 직원의 **역할**이 들어 있다. 클라이언트가 쓸 수 있으면 자기 역할을
+// '센터장'으로 적어 화면 권한을 넓힐 수 있다. 실제 데이터 권한은 토큰 클레임이
+// 정하므로 장부는 못 건드리지만, 결재 버튼이 뜨는 것만으로 혼란이 생긴다.
+// ─────────────────────────────────────────────────────────────
+describe('directories — 파생 명부', () => {
+  before(async () => {
+    await seed('directories/staff', {
+      entries: { 'staff-owner': { userId: 'staff-owner', name: '이담당', role: '담당자' } },
+      schemaVersion: 1, count: 1,
+    });
+    await seed('directories/categories', { entries: {}, schemaVersion: 1, count: 0 });
+  });
+
+  for (const [name, actor] of Object.entries(ACTORS)) {
+    it(`${name}는 명부를 읽을 수 있다`, async () => {
+      // 앱이 뜨려면 직원 이름과 분류 목록이 필요하고, 그것은 모든 역할에 해당한다.
+      await assertSucceeds(getDoc(doc(as(actor), 'directories/staff')));
+      await assertSucceeds(getDoc(doc(as(actor), 'directories/categories')));
+    });
+
+    it(`${name}도 명부를 쓸 수 없다`, async () => {
+      await assertFails(
+        updateDoc(doc(as(actor), 'directories/staff'), { count: 99 }));
+      await assertFails(
+        setDoc(doc(as(actor), 'directories/new'), { entries: {}, schemaVersion: 1 }));
+    });
+  }
+
+  it('자기 역할을 올려 적을 수 없다', async () => {
+    // 이것이 이 규칙의 존재 이유다.
+    await assertFails(setDoc(doc(as(ACTORS.입력자), 'directories/staff'), {
+      entries: { 'staff-input': { userId: 'staff-input', role: '센터장' } },
+      schemaVersion: 1, count: 1,
+    }));
+  });
+
+  it('관리자도 명부를 지울 수 없다 (서버가 소유한다)', async () => {
+    await assertFails(deleteDoc(doc(as(ACTORS.관리자), 'directories/staff')));
   });
 });

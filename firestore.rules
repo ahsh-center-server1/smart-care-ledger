@@ -107,6 +107,25 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ── 파생 명부 (directories/staff · directories/categories) ──
+    //
+    // 로그인 한 번에 users·categories 컬렉션을 통째로 읽지 않기 위한 문서다
+    // (functions/directories.cjs 참고). 조회는 로그인 전원 — 앱이 뜨려면
+    // 직원 이름과 분류 목록이 필요하고, 그것은 모든 역할에 해당한다.
+    //
+    // 쓰기는 **전면 차단**한다. 요약 캐시와 달리 클라이언트가 이것을 계산할
+    // 이유가 전혀 없다(서버가 원본을 그대로 옮겨 담을 뿐이다). Cloud Functions는
+    // Admin SDK라 규칙을 우회하므로 트리거는 그대로 동작한다.
+    //
+    // 이 차단이 중요한 이유: 명부에는 직원의 역할이 들어 있다. 클라이언트가
+    // 쓸 수 있으면 자기 역할을 '센터장'으로 적어 화면 권한을 넓힐 수 있다
+    // (실제 권한은 토큰 클레임이 정하므로 데이터는 못 건드리지만, 화면에
+    //  결재 버튼이 뜨는 것만으로도 혼란과 오탐 신고가 생긴다).
+    match /directories/{id} {
+      allow read:  if signedIn();
+      allow write: if false;
+    }
+
     // ── 월별 요약 캐시 ──
     //
     // 대시보드가 당월 거래 전체를 읽지 않게 하는 파생 문서다

@@ -77,10 +77,13 @@ function loginReads(role) {
   const isAdminLike = role === 'admin' || role === 'leader';
   let r = 0;
 
-  r += cfg.users;         // users 전체 (팀장·결재자 이름 표시용)
-  r += cfg.clients;       // clients 전체
-  r += cfg.accounts;      // accounts 전체
-  r += cfg.categories;    // categories 전체
+  // 직원·분류는 파생 명부 문서 1건씩 (예전에는 컬렉션 전체 = users+categories)
+  r += 1;                 // directories/staff
+  r += 1;                 // directories/categories
+  // 입주자·계좌는 아직 컬렉션 전체다 — 앱이 모든 필드를 쓰고(설정 화면이 편집한다),
+  // accounts.bankStatements가 해마다 늘어 한 문서에 담으면 1 MiB 한도에 부딪힌다.
+  r += cfg.clients;
+  r += cfg.accounts;
   r += 1;                 // config/lockedMonths (문서 1건 — 예전에는 reports 쿼리였다)
   r += 1;                 // config/permissions
 
@@ -171,6 +174,12 @@ function assertSourceShape() {
   if (!/report\.view\.all/.test(report) || !/chunkForInQuery/.test(report)) {
     problems.push('report.js가 보고서 목록을 담당 입주자로 좁히지 않습니다 — '
       + '이 모델은 담당자가 담당분만 읽는다고 가정합니다');
+  }
+
+  // 직원·분류를 명부로 읽는가
+  if (!/fetchStaffDirectory/.test(core) || !/fetchCategoryDirectory/.test(core)) {
+    problems.push('core.js가 파생 명부를 쓰지 않습니다 — '
+      + '이 모델은 직원·분류를 각 1 읽기로 가정합니다');
   }
 
   const summary = read('../public/services/summary.js');

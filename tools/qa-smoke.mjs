@@ -135,6 +135,7 @@ async function runRole(browser, actor) {
   check(clientCards > 0, `대시보드에 입주자 카드가 보인다 (${clientCards}개)`);
   await snap(page, actor, 'dashboard');
 
+  await checkDirectories(page);
   await checkClientScope(page, actor);
   await checkSummaryCache(page, actor);
 
@@ -275,6 +276,66 @@ async function runRole(browser, actor) {
  *   앱이 필요한 것만 요청해야 한다.
  */
 const UNASSIGNED_CLIENT = 'cli_seed_3';
+
+/**
+ * 파생 명부 — 있으면 1 읽기, 없으면 컬렉션 직접 조회.
+ *
+ * 확인하는 것이 **폴백**이라는 점이 중요하다. 명부는 Cloud Functions 트리거가
+ * 만드는데, 이 환경에서는 Functions 에뮬레이터가 뜨지 않는다. 즉 QA는
+ * "트리거가 아직 배포되지 않은 상태"를 그대로 재현한다 — 실제 배포 순서에서
+ * 반드시 지나가는 구간이다. 그때 앱이 정상 동작해야 한다.
+ *
+ * 명부가 있을 때의 경로는 시드가 명부를 심어 두므로 fromDirectory로 확인된다.
+ */
+async function checkDirectories(page) {
+  const res = await page.evaluate(async () => {
+    try {
+      const dir = await import('./services/directory.js');
+      const { S } = await import('./state.js');
+      const staff = await dir.fetchStaffDirectory();
+      const cats = await dir.fetchCategoryDirectory();
+      return {
+        ok: true,
+        staff: { n: staff.rows.length, reads: staff.reads, fromDirectory: staff.fromDirectory },
+        cats: { n: cats.rows.length, reads: cats.reads, fromDirectory: cats.fromDirectory },
+        // 화면이 실제로 쓰는 값과 일치하는가
+        usersOnScreen: (S.users || []).length,
+        catsOnScreen: (S.categories || []).length,
+        // 명부에 비밀이 섞여 있지 않은가
+        staffKeys: [...new Set(staff.rows.flatMap((r) => Object.keys(r)))].sort(),
+      };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+
+  if (!check(res.ok, '직원·분류 명부를 읽을 수 있다', res.error)) return;
+
+  check(res.staff.n > 0 && res.staff.n === res.usersOnScreen,
+    `직원 목록이 화면 값과 일치한다 (${res.staff.n}명)`,
+    `명부 ${res.staff.n} / 화면 ${res.usersOnScreen}`);
+  check(res.cats.n > 0 && res.cats.n === res.catsOnScreen,
+    `분류 목록이 화면 값과 일치한다 (${res.cats.n}건)`,
+    `명부 ${res.cats.n} / 화면 ${res.catsOnScreen}`);
+
+  // 비밀번호·해시가 명부를 타고 브라우저로 오면 안 된다.
+  const SECRET_ISH = ['password', 'passwd', 'hash', 'salt', 'secret', 'token', 'apikey'];
+  const leaked = res.staffKeys.filter(
+    (k) => SECRET_ISH.some((sfx) => k.toLowerCase().includes(sfx)));
+  check(leaked.length === 0, '직원 목록에 비밀 필드가 없다', leaked.join(', '));
+
+  if (res.staff.fromDirectory) {
+    check(res.staff.reads === 1 && res.cats.reads === 1,
+      '명부가 있으면 각 1 읽기다',
+      `직원 ${res.staff.reads} · 분류 ${res.cats.reads}`);
+  } else {
+    // 트리거 미배포 상태. 읽기는 줄지 않지만 화면은 맞아야 한다.
+    check(res.staff.n > 0,
+      '명부가 없어도 컬렉션 직접 조회로 정상 동작한다',
+      `직원 ${res.staff.reads} 읽기 · 분류 ${res.cats.reads} 읽기`);
+    notes.push(`    (명부 없음 — 컬렉션 직접 조회로 폴백: 직원 ${res.staff.reads} · 분류 ${res.cats.reads} 읽기)`);
+  }
+}
 
 async function checkClientScope(page, actor) {
   const seen = await page.evaluate(async (unassigned) => {

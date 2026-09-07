@@ -14,6 +14,7 @@ import { COLS, LOCKED_MONTHS_DOC, lockKey } from '../constants.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
+import { fetchStaffDirectory, fetchCategoryDirectory } from '../services/directory.js';
 import { countUnpaidMandatory } from '../domain/monthly-summary.js';
 import * as Dash     from './dashboard.js';
 import * as Trx      from './transactions.js';
@@ -38,10 +39,21 @@ export async function fetchBaseData(opts) {
 
   // 각 컬렉션을 필요한 경우에만 fetch (병렬)
   const tasks = [];
-  if (need('users'))      tasks.push(['users',      getDocs(collection(db,COLS.USERS))]);
+  // 직원·분류는 **파생 명부 문서 1건**으로 읽는다(services/directory.js).
+  // 예전에는 컬렉션을 통째로 읽어 직원 25명 + 분류 60개 = 85 읽기였고,
+  // 그것이 로그인마다 전 역할에 걸렸다. 명부가 없거나 낡으면 컬렉션 직접
+  // 조회로 떨어지므로 트리거 미배포·실패가 화면을 깨뜨리지 않는다.
+  if (need('users'))      tasks.push(['users',      fetchStaffDirectory()]);
+  if (need('categories')) tasks.push(['categories', fetchCategoryDirectory()]);
+  // 입주자·계좌는 명부로 만들지 않는다.
+  //   · 앱이 이 두 컬렉션의 **모든 필드**를 쓴다(설정 화면이 연락처·메모·계좌번호·
+  //     기초잔액을 편집한다). 부분 명부로는 그 화면이 깨진다.
+  //   · accounts.bankStatements는 통장 사진 URL 배열이라 해마다 늘어난다.
+  //     전 계좌를 한 문서에 담으면 1 MiB 한도에 부딪힐 수 있고, 그때 명부 쓰기가
+  //     조용히 실패해 명부가 낡은 채로 남는다.
+  //   좁히려면 로그인용 필드만 담고 설정 화면이 원본을 따로 읽게 해야 한다.
   if (need('clients'))    tasks.push(['clients',    getDocs(collection(db,COLS.CLIENTS))]);
   if (need('accounts'))   tasks.push(['accounts',   getDocs(collection(db,COLS.ACCOUNTS))]);
-  if (need('categories')) tasks.push(['categories', getDocs(collection(db,COLS.CATEGORIES))]);
   // 마감 월 색인 — 예전에는 reports를 status='confirmed'로 조회해 만들었다.
   // 그런데 보안 규칙은 reports를 담당자(등급 2) 이상만 읽게 하므로, 입력자가
   // 로그인하면 이 조회가 거부되고 아래 Promise.all이 깨져 **앱 초기화가 통째로
@@ -57,10 +69,10 @@ export async function fetchBaseData(opts) {
   tasks.forEach((t,i)=>{ snapMap[t[0]] = results[i]; });
 
   if (snapMap.users) {
-    S.users = snapMap.users.docs.map(d=>{const u={id:d.id,...d.data()};u.team=u.team||'';return u;});
+    S.users = snapMap.users.rows.map(u=>({...u, team: u.team || ''}));
   }
   if (snapMap.categories) {
-    S.categories = snapMap.categories.docs.map(d=>({id:d.id,...d.data()}));
+    S.categories = snapMap.categories.rows;
   }
 
   // clients/accounts는 활성/비활성 + 권한 필터링이 함께 들어가므로 한 묶음으로 처리
