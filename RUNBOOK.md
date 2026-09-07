@@ -99,6 +99,21 @@ npm install -g firebase-tools    # 이미 있으면 생략
 firebase login
 ```
 
+### 0-5. ⚠️ 배포 대상은 항상 명시합니다
+
+`.firebaserc`의 **기본 별칭은 스테이징**입니다. `--project`를 빠뜨리면 실데이터가
+아니라 스테이징으로 갑니다(안전한 쪽으로 틀리게 해 둔 것입니다).
+
+| 하려는 것 | 명령 |
+|---|---|
+| 프로덕션 (실데이터) | `firebase deploy ... --project prod` |
+| 스테이징 | `firebase deploy ... --project staging` |
+| 확인만 | `firebase projects:list` · `firebase use` |
+
+**이 절차서의 모든 명령에는 `--project prod`가 붙어 있습니다. 지우지 마세요.**
+배포 후 `firebase functions:list --project prod`로 실제로 어디에 올라갔는지
+확인하는 습관을 들이세요.
+
 ---
 
 ## 배포 1 — 데이터 준비 (앱 동작은 그대로)
@@ -107,10 +122,10 @@ firebase login
 
 ```bash
 # 1. Cloud Functions 배포 (아직 아무도 호출하지 않음)
-firebase deploy --only functions
+firebase deploy --only functions --project prod
 
 # 2. 복합 인덱스 배포 (없으면 거래 조회가 실패함)
-firebase deploy --only firestore:indexes
+firebase deploy --only firestore:indexes --project prod
 #    콘솔 → Firestore → 색인 에서 '빌드 중'이 '사용 설정됨'이 될 때까지 기다립니다.
 
 # 3. 마이그레이션 — 먼저 드라이런으로 무엇이 바뀌는지 확인
@@ -144,7 +159,7 @@ node tools/migrate-auth.mjs --apply
 ## 배포 2 — 앱 전환
 
 ```bash
-firebase deploy --only hosting
+firebase deploy --only hosting --project prod
 ```
 
 이 배포에 포함된 변경:
@@ -179,7 +194,7 @@ firebase deploy --only hosting
 하루 이상 확인한 뒤 진행하세요.
 
 ```bash
-firebase deploy --only firestore:rules,storage:rules
+firebase deploy --only firestore:rules,storage:rules --project prod
 ```
 
 ### ✅ 배포 3 확인
@@ -212,11 +227,11 @@ curl -s "https://firestore.googleapis.com/v1/projects/smart-care-ledger/database
 
 ```bash
 # 1. 트리거 + 잔액 단일화 코드 배포
-firebase deploy --only functions,hosting
+firebase deploy --only functions,hosting --project prod
 
 # 2. 트리거가 실제로 도는지 먼저 확인
 #    거래를 하나 저장한 뒤 로그를 본다
-firebase functions:log --only syncAccountBalance
+firebase functions:log --only syncAccountBalance --project prod
 ```
 
 - [ ] 거래 저장 시 로그에 실행 기록이 남는가

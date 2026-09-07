@@ -341,8 +341,13 @@ HANA_BANK: {
 ## 12. 배포
 
 ### 배포 명령어
+
+**배포 대상은 항상 명시한다.** `.firebaserc`의 기본 별칭은 **스테이징**이라,
+`--project`를 빠뜨리면 실데이터가 아니라 스테이징으로 간다(안전한 쪽으로 틀림).
+
 ```bash
-firebase deploy
+npm run deploy:prod        # 프로덕션 (firebase deploy --project prod)
+npm run deploy:staging     # 스테이징
 ```
 
 ### 배포 파일

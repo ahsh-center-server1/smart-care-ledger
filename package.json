@@ -9,7 +9,9 @@
     "emu": "firebase emulators:start --project staging",
     "emu:seed": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 node tools/seed-staging.mjs",
     "deploy:staging": "firebase deploy --project staging",
-    "deploy:staging:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage --project staging"
+    "deploy:staging:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage --project staging",
+    "deploy:prod": "firebase deploy --project prod",
+    "deploy:prod:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage --project prod"
   },
   "type": "module",
   "devDependencies": {

@@ -191,8 +191,13 @@ config(+permissions), fixedItems, budgets, excelUploads, archive_YYYY
 ## 🚢 배포
 
 ### Firebase 배포
+
+`.firebaserc`의 기본 별칭은 **스테이징**이다. `--project`를 빠뜨리면 실데이터가
+아니라 스테이징으로 간다.
+
 ```bash
-firebase deploy
+npm run deploy:prod        # 프로덕션 (실데이터)
+npm run deploy:staging     # 스테이징
 ```
 
 ### 배포 URL

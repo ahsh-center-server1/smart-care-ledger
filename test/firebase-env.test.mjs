@@ -136,10 +136,43 @@ test('에뮬레이터 포트가 firebase.json과 같다', () => {
   }
 });
 
-test('.firebaserc에 staging 별칭이 스테이징 projectId로 있다', () => {
+test('.firebaserc의 별칭이 각 환경의 projectId와 맞는다', () => {
   const rc = JSON.parse(read('.firebaserc'));
   assert.equal(rc.projects.staging, FIREBASE_ENVS.staging.config.projectId);
-  assert.equal(rc.projects.default, FIREBASE_ENVS.prod.config.projectId);
+  assert.equal(rc.projects.prod, FIREBASE_ENVS.prod.config.projectId);
+});
+
+test('배포 기본 별칭이 프로덕션이 아니다', () => {
+  // `firebase deploy`를 --project 없이 치면 default로 간다.
+  // 그게 프로덕션이면 스테이징에 올리려던 배포가 실데이터를 덮어쓴다.
+  // 접속 환경 판정과 같은 원칙 — 틀리더라도 안전한 쪽으로 틀린다.
+  const rc = JSON.parse(read('.firebaserc'));
+  assert.notEqual(rc.projects.default, FIREBASE_ENVS.prod.config.projectId,
+    '.firebaserc의 default가 프로덕션입니다 — --project를 빠뜨리면 실데이터로 배포됩니다');
+  assert.equal(rc.projects.default, FIREBASE_ENVS.staging.config.projectId);
+});
+
+test('프로덕션 배포 명령에는 --project prod가 붙어 있다', () => {
+  // 절차서의 명령을 그대로 복사해 쓰므로, 하나라도 빠지면 스테이징에 올라가
+  // "배포했는데 아무것도 안 바뀐다"가 된다 (반대 방향 사고).
+  const runbook = read('RUNBOOK.md');
+  const bare = [];
+  for (const m of runbook.matchAll(/^firebase (deploy|functions:log)([^\n]*)$/gm)) {
+    if (!m[2].includes('--project')) bare.push(m[0]);
+  }
+  assert.deepEqual(bare, [],
+    `RUNBOOK에 대상을 명시하지 않은 명령이 있습니다:\n${bare.join('\n')}`);
+});
+
+test('배포 스크립트가 두 환경 모두 명시적이다', () => {
+  const pkg = JSON.parse(read('package.json'));
+  for (const name of ['deploy:prod', 'deploy:staging']) {
+    assert.ok(pkg.scripts[name], `${name} 스크립트가 없습니다`);
+    assert.match(pkg.scripts[name], /--project (prod|staging)\b/,
+      `${name}에 --project가 없습니다`);
+  }
+  assert.match(pkg.scripts['deploy:prod'], /--project prod\b/);
+  assert.match(pkg.scripts['deploy:staging'], /--project staging\b/);
 });
 
 test('index.html이 설정을 직접 쓰지 않고 firebase-env.js를 통한다', () => {
