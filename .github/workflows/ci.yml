@@ -1,0 +1,65 @@
+# 검사 — 푸시할 때마다 돈다.
+#
+# 왜 별도 워크플로인가
+#   `deploy-staging.yml`도 `npm run check`를 하지만, 그것은 **배포 잡 안에** 있고
+#   배포 잡은 `FIREBASE_SA_STAGING` 시크릿이 있을 때만 돈다. 시크릿이 없으면
+#   워크플로는 「준비 확인」에서 조용히 끝나고 **초록불이 뜬다.**
+#
+#   즉 테스트가 한 줄도 돌지 않았는데 PR은 통과한 것처럼 보였다.
+#   게다가 그 워크플로는 `functions/**`·규칙·인덱스가 바뀔 때만 돌아서,
+#   `public/**`만 고친 커밋은 아무 검사도 받지 않았다.
+#
+#   이 파일은 시크릿도 경로 필터도 없다. 배포와 무관하게 **항상** 돈다.
+#
+# 브라우저 검증(tools/qa-smoke.mjs)은 여기에 없다 — 에뮬레이터 3종 + 시드 +
+# Chromium이 필요해 별도 잡이 필요하고, 이 저장소에서 아직 돌려 본 적이 없다.
+# 로컬에서 `npm run qa:smoke`로 돌린다(STAGING.md 참고).
+
+name: 검사
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ESLint · 단위 테스트
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      # vendor:check가 포함된다 — public/vendor/의 번들이 package.json의
+      # 버전과 어긋나면 실패한다(커밋된 번들이 낡은 채로 배포되는 것을 막는다).
+      - run: npm run check
+
+  rules:
+    name: 보안 규칙
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      # Firestore 에뮬레이터는 JVM에서 돈다.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci
+      # 규칙을 **실제로 평가한다.** RUNBOOK의 「배포 3」(규칙 잠금)은 되돌리기가
+      # 가장 어려운 단계이므로, 배포가 규칙의 첫 실행이 되면 안 된다.
+      - run: npm run test:rules

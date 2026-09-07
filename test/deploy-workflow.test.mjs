@@ -120,3 +120,44 @@ test('문서에 명령어 없이 배포하는 절차가 있다', () => {
   assert.match(doc, /콘솔에서 배포할 수 없/,
     'Functions를 콘솔에서 배포할 수 없다는 사실이 문서에 없습니다');
 });
+
+// ─────────────────────────────────────────────────────────────
+// 검사 워크플로 — 초록불이 실제로 검사를 뜻하는가
+//
+// 이 저장소는 한동안 **테스트가 한 줄도 돌지 않는데 PR이 초록불**이었다.
+// `npm run check`가 배포 잡 안에 있었고, 그 잡은 FIREBASE_SA_STAGING 시크릿이
+// 있을 때만 돌았기 때문이다. 시크릿이 없으니 「준비 확인」에서 조용히 끝나고
+// 성공으로 표시됐다. 게다가 그 워크플로는 functions·규칙·인덱스가 바뀔 때만
+// 돌아서, public/만 고친 커밋은 아무 검사도 받지 않았다.
+//
+// 아래 세 가지가 그 상태로 되돌아가는 것을 막는다.
+// ─────────────────────────────────────────────────────────────
+const CI = '.github/workflows/ci.yml';
+
+test('검사 워크플로가 있다', () => {
+  assert.ok(existsSync(path(CI)), `${CI}가 없습니다`);
+});
+
+test('검사는 시크릿에 걸려 있지 않다', () => {
+  // 시크릿이 없어서 건너뛴 것과 검사가 통과한 것은 화면에서 똑같이 보인다.
+  const src = read(CI);
+  assert.ok(!/secrets\./.test(src),
+    '검사 워크플로가 시크릿을 참조합니다 — 시크릿이 없는 환경에서 조용히 건너뛰게 됩니다');
+  assert.ok(!/needs\.\w+\.outputs\.ready/.test(src),
+    '검사 워크플로에 준비 확인 게이트가 있습니다');
+});
+
+test('검사는 경로 필터 없이 모든 푸시에 돈다', () => {
+  const src = read(CI);
+  const onBlock = src.slice(src.indexOf('\non:'), src.indexOf('\nconcurrency:'));
+  assert.ok(!/paths:/.test(onBlock),
+    'on: 블록에 paths 필터가 있습니다 — 그 경로 밖의 변경은 검사를 받지 않습니다');
+  assert.match(onBlock, /push:/, 'push에 반응하지 않습니다');
+});
+
+test('검사가 실제로 테스트를 돌린다', () => {
+  const src = read(CI);
+  assert.match(src, /npm run check/, 'npm run check를 부르지 않습니다');
+  assert.match(src, /npm run test:rules/,
+    '보안 규칙 테스트를 돌리지 않습니다 — 규칙 잠금은 되돌리기가 가장 어려운 배포 단계입니다');
+});
