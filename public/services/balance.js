@@ -50,6 +50,44 @@ export function calcAccountBalance(account, transactions) {
 }
 
 /**
+ * 잔액에 영향을 주는 거래 필드 목록.
+ * calcAccountBalance가 실제로 읽는 필드와 정확히 일치해야 한다 —
+ * 여기에 빠진 필드가 잔액식에 쓰이면 갱신이 누락된다.
+ */
+export const BALANCE_FIELDS = ['accountId', 'date', 'type', 'amountIn', 'amountOut'];
+
+/**
+ * 거래 문서의 변경이 계좌 잔액을 바꿀 수 있는가.
+ *
+ * 왜 필요한가
+ *   거래 쓰기마다 계좌 전체 거래를 다시 읽어 합산하면(서버 트리거) 읽기가 폭증한다.
+ *   그런데 실제로 가장 흔한 쓰기는 **잔액과 무관하다** — 영수증 첨부(receiptUrl),
+ *   카테고리 인라인 수정, 드래그 순서 변경(sortOrder), 내용 수정. 이런 변경에까지
+ *   전체 스캔을 돌리면 엑셀 100행 업로드가 수만 건 읽기가 된다.
+ *
+ *   잔액식이 읽는 필드가 하나도 안 바뀌었다면 잔액은 바뀔 수 없다. 그때는
+ *   계좌 문서조차 읽지 않고 즉시 중단할 수 있다(읽기 0).
+ *
+ * @param {Object|null} before 변경 전 거래 (생성이면 null)
+ * @param {Object|null} after  변경 후 거래 (삭제면 null)
+ * @returns {boolean} true면 잔액 재계산이 필요할 수 있다
+ */
+export function affectsBalance(before, after) {
+  if (!before || !after) return true;          // 생성·삭제는 항상 영향
+  // 금액은 잔액식과 똑같이 Number로, 나머지는 문자열로 비교한다.
+  // 엑셀 파서가 '50000'(문자열)을, 수기 입력이 50000(숫자)을 넣으므로
+  // 문자열 비교만 하면 값이 같은데도 재계산이 돌고,
+  // 0과 undefined도 잔액식에서는 같은 값(0)이다.
+  return (
+    Number(before.amountIn  || 0) !== Number(after.amountIn  || 0) ||
+    Number(before.amountOut || 0) !== Number(after.amountOut || 0) ||
+    String(before.accountId || '') !== String(after.accountId || '') ||
+    String(before.date      || '') !== String(after.date      || '') ||
+    String(before.type      || '') !== String(after.type      || '')
+  );
+}
+
+/**
  * 특정 시점까지의 잔액 (보고서 계좌 현황용).
  * @param {string} endDate 'YYYY-MM-DD' — 이 날짜까지 포함
  */

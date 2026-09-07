@@ -462,12 +462,23 @@ exports.changePassword = callable('changePassword', async (request) => {
 //   "잔액 계산 → 거래 저장" 순서 뒤바뀜 문제도 함께 사라진다.
 // ─────────────────────────────────────────────────────────────
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
-const { calcAccountBalance } = require('./balance.cjs');
+const { calcAccountBalance, affectsBalance } = require('./balance.cjs');
 
 const TRANSACTIONS = 'transactions';
 const ACCOUNTS = 'accounts';
 
-/** 한 계좌의 currentBalance를 전체 거래 기준으로 다시 쓴다. */
+/**
+ * 한 계좌의 currentBalance를 전체 거래 기준으로 다시 쓴다.
+ *
+ * 멱등하다 — 트리거가 중복 발동해도 같은 값이 나온다. 그래서 증분 갱신
+ * (FieldValue.increment)을 쓰지 않는다. 중복 발동 한 번에 금액이 어긋나면
+ * 금전 장부로서 신뢰를 잃는다.
+ *
+ * 읽기 범위
+ *   기준일(initialBalanceDate)이 있으면 그 이후 거래만 읽는다. 잔액식이 어차피
+ *   `date <= base`를 버리므로 결과는 동일하고, 과거 연도가 쌓인 계좌에서
+ *   읽는 문서 수가 크게 줄어든다. (복합 인덱스 accountId+date 사용)
+ */
 async function recalcAccount(accountId) {
   if (!accountId) return;
   const accRef = db.collection(ACCOUNTS).doc(accountId);
@@ -475,10 +486,10 @@ async function recalcAccount(accountId) {
   if (!accSnap.exists) return;
 
   const account = { id: accountId, ...accSnap.data() };
-  const trxSnap = await db
-    .collection(TRANSACTIONS)
-    .where('accountId', '==', accountId)
-    .get();
+  let q = db.collection(TRANSACTIONS).where('accountId', '==', accountId);
+  const base = account.initialBalanceDate || '';
+  if (base) q = q.where('date', '>', base);
+  const trxSnap = await q.get();
   const transactions = trxSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   const balance = calcAccountBalance(account, transactions);
@@ -491,6 +502,11 @@ exports.syncAccountBalance = onDocumentWritten(
   async (event) => {
     const before = event.data && event.data.before && event.data.before.data();
     const after = event.data && event.data.after && event.data.after.data();
+
+    // 잔액식이 읽는 필드가 하나도 안 바뀌었으면 계좌 문서조차 읽지 않고 끝낸다.
+    // 영수증 첨부·카테고리 인라인 수정·드래그 순서 변경이 여기서 걸러진다 —
+    // 이들이 가장 흔한 쓰기이므로 이 한 줄이 읽기량을 크게 줄인다.
+    if (!affectsBalance(before, after)) return;
 
     // 계좌가 바뀐 수정이면 양쪽 모두 다시 계산해야 한다.
     const affected = new Set();
