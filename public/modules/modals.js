@@ -16,16 +16,25 @@ import { renderManagement } from './settings.js';
 import { can } from './permissions.js';
 import { refreshSetupAfterChange } from './setup.js';
 import * as ExcelParser from '../services/excel-parser.js';
+import { renderReceiptIntakeForm, cleanupReceiptIntake } from './receipt-intake.js';
 
 // ─────────────────────────────────────────────
 // 모달
 // ─────────────────────────────────────────────
+/**
+ * 넓은 모달이 필요한 종류. 검토 표가 들어가는 화면들은 기본 폭(500px)에
+ * 들어가지 않아 내용이 잘린다.
+ */
+const WIDE_MODALS = new Set(['receipt-intake', 'excel']);
+
 export function openModal(type,data){
   document.getElementById('modal-wrap').classList.add('show');
+  document.getElementById('modal-box')?.classList.toggle('wide', WIDE_MODALS.has(type));
   if(type==='trx')           renderTrxForm(data);
   if(type==='excel')         renderExcelForm();
   if(type==='bankbook')      openBankStatementModal();
   if(type==='receipt-upload')renderReceiptUploadForm(data?.id);
+  if(type==='receipt-intake')renderReceiptIntakeForm();
   if(type==='client')        renderClientForm(data);
   if(type==='account')       renderAccountForm(data);
   if(type==='staff')         renderStaffForm(data);
@@ -36,7 +45,11 @@ export function openModal(type,data){
 }
 export function closeModal(){
   document.getElementById('modal-wrap').classList.remove('show');
+  document.getElementById('modal-box')?.classList.remove('wide');
   document.getElementById('modal-body').innerHTML='';
+  // 영수증 자동입력이 만든 미리보기 URL을 해제한다 — 안 하면 사진마다
+  // blob이 남아 메모리를 계속 먹는다.
+  cleanupReceiptIntake();
 }
 
 // ─────────────────────────────────────────────

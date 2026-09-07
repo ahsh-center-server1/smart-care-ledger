@@ -103,11 +103,11 @@ export default [
 
   // ── 브라우저 안에서 실행되는 코드를 품은 Node 스크립트 ──
   // qa-smoke.mjs는 Node에서 돌지만 page.evaluate(() => window...) 콜백은
-  // 브라우저 컨텍스트에서 실행된다. 그 window는 진짜 전역이므로 선언해 준다.
+  // 브라우저 컨텍스트에서 실행된다. 그 전역들은 진짜 존재하므로 선언해 준다.
   {
     files: ['tools/qa-smoke.mjs'],
     languageOptions: {
-      globals: { ...globals.node, window: 'readonly' },
+      globals: { ...globals.node, window: 'readonly', document: 'readonly', Event: 'readonly' },
     },
   },
 ];

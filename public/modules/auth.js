@@ -12,6 +12,7 @@ import { toast, showLoading, setText } from '../utils/ui.js';
 import { fetchBaseData, changeView } from './core.js';
 import { initPermissions, can } from './permissions.js';
 import { clearAuditCache } from './settings-audit.js';
+import { refreshReceiptIntakeButtons } from './receipt-intake.js';
 import { fnErrorMessage } from '../services/fn-errors.js';
 
 // window.onFirebaseReady, 이벤트 바인딩 — app.js에서 일괄 처리
@@ -100,6 +101,10 @@ function applyPermissionVisibility() {
   show('btn-h-receipt-print', can('receipt.print'));
   show('btn-bulk-del',        can('trx.delete.bulk'));
   show('btn-h-fixed',         can('settings.fixed'));
+
+  // 영수증 사진 자동입력은 권한 + **서버에 API 키가 있는지**에 달려 있다.
+  // 서버에 물어봐야 알 수 있으므로 비동기로 갱신한다(기본은 숨김).
+  refreshReceiptIntakeButtons().catch(() => { /* 못 물어보면 숨긴 채로 둔다 */ });
   show('btn-csv-export',      can('trx.csv'));
   show('btn-trx-view-toggle', can('trx.view.all'));
 }

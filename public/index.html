@@ -210,6 +210,9 @@
     #modal-wrap{position:fixed;inset:0;background:rgba(15,23,42,.4);backdrop-filter:blur(4px);z-index:700;display:none;align-items:center;justify-content:center;padding:20px;}
     #modal-wrap.show{display:flex;}
     #modal-box{background:#fff;border:1px solid var(--border);padding:24px;border-radius:24px;width:100%;max-width:500px;box-shadow:0 10px 30px rgba(0,0,0,.1);position:relative;max-height:90vh;overflow-y:auto;animation:fadeUp .2s ease;}
+    /* 검토 표가 들어가는 모달(영수증 자동입력·엑셀 미리보기)은 500px에 들어가지
+       않는다. 자식에 min-width를 주면 상자를 넘쳐 잘리므로 상자를 넓힌다. */
+    #modal-box.wide{max-width:64rem;}
     #modal-close-btn{position:absolute;top:14px;right:14px;width:28px;height:28px;border-radius:50%;background:#f1f5f9;border:none;cursor:pointer;font-size:14px;color:var(--sub);display:flex;align-items:center;justify-content:center;}
     #modal-close-btn:hover{background:#fee2e2;color:#dc2626;}
     .loading-overlay{position:fixed;inset:0;background:rgba(255,255,255,.8);z-index:500;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;backdrop-filter:blur(3px);}
@@ -607,6 +610,13 @@
           <div id="dash-approval-banner" onclick="changeView('report')" role="button" tabindex="0" style="display:none;align-items:center;gap:10px;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:12px;padding:14px 18px;margin-bottom:16px;cursor:pointer;font-size:15px;font-weight:700;color:#92400e;"></div>
           <!-- 퀵 액션 버튼 -->
           <div id="dashboard-actions">
+            <!-- 영수증 사진 자동입력 — 서버에 AI가 설정되지 않았으면 숨는다
+                 (modules/receipt-intake.js의 refreshReceiptIntakeButtons) -->
+            <button onclick="openModal('receipt-intake')" class="dash-action-btn"
+                    data-receipt-intake style="display:none;color:#0d9488;"
+                    title="영수증 사진에서 날짜·금액·상호명을 읽어 채워 줍니다">
+              <span class="dash-icon">📷</span>영수증 사진
+            </button>
             <button onclick="openModal('excel')" class="dash-action-btn" style="color:var(--amber);">
               <span class="dash-icon">📤</span>파일 업로드
             </button>
@@ -681,6 +691,7 @@
               <div style="display:flex;gap:8px;align-items:center;">
                 <button class="btn-sub" id="btn-h-trx" style="color:var(--blue);border-color:#bfdbfe;">✍️ 수기 입력</button>
                 <button class="btn-sub" id="btn-h-excel" style="color:var(--amber);border-color:#fde68a;">📂 파일 업로드</button>
+                <button class="btn-sub" id="btn-h-receipt-intake" data-receipt-intake style="display:none;color:#0d9488;border-color:#99f6e4;" title="영수증 사진에서 날짜·금액·상호명을 읽어 채워 줍니다">📷 영수증 사진</button>
                 <button class="btn-sub" id="btn-h-fixed" style="color:#059669;border-color:#a7f3d0;" title="이번 달 고정항목 자동 입력">📌 고정항목 입력</button>
                 <button class="btn-sub" id="btn-h-receipt-print" style="color:#7c3aed;border-color:#ddd6fe;" title="증빙 A4 일괄 출력">🖨️ 증빙 출력</button>
                 <span id="h-count" style="font-size:12px;color:var(--muted);font-family:'JetBrains Mono',monospace;"></span>

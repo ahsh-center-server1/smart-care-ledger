@@ -269,6 +269,7 @@ function bindEvents(){
   document.getElementById('btn-excel')?.addEventListener('click',()=>Modals.openModal('excel'));
   document.getElementById('btn-h-trx')?.addEventListener('click',()=>Modals.openModal('trx'));
   document.getElementById('btn-h-excel')?.addEventListener('click',()=>Modals.openModal('excel'));
+  document.getElementById('btn-h-receipt-intake')?.addEventListener('click',()=>Modals.openModal('receipt-intake'));
 
   // 모달 닫기
   document.getElementById('modal-close-btn')?.addEventListener('click',Modals.closeModal);
