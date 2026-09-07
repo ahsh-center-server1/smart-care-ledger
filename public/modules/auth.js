@@ -11,6 +11,7 @@ import { fb, fdb } from '../services/firestore.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fetchBaseData, changeView } from './core.js';
 import { initPermissions, can } from './permissions.js';
+import { fnErrorMessage } from '../services/fn-errors.js';
 
 // window.onFirebaseReady, 이벤트 바인딩 — app.js에서 일괄 처리
 
@@ -51,16 +52,6 @@ export async function handleLogin() {
   }
 }
 
-/**
- * Cloud Functions(httpsCallable) 오류에서 사용자에게 보여줄 메시지를 뽑는다.
- * HttpsError의 message는 그대로 노출해도 되도록 서버에서 작성했다.
- */
-function fnErrorMessage(e, fallback) {
-  if (e && typeof e.message === 'string' && e.message && e.code !== 'internal') {
-    return e.message;
-  }
-  return fallback;
-}
 
 export async function _enterApp() {
   showLoading(true);

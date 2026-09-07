@@ -42,6 +42,35 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 >
 > 배포 1 직후 스테이징에서 확인하는 방법: `STAGING.md` 참고.
 
+### 0-1-c. 배포 직후 함수가 공개 호출 가능한지 확인
+
+2세대 함수는 Cloud Run 서비스로 돕니다. 공개 호출이 막혀 있으면 브라우저의 사전
+요청(OPTIONS)이 403으로 거부되고, 그 응답에는 CORS 헤더가 없어 **콘솔에는 "CORS
+오류"로만 보입니다.** 원인을 찾기 가장 어려운 형태이므로 배포 1 직후에 확인합니다.
+
+```bash
+curl -i -X OPTIONS \
+  -H "Origin: https://example.com" -H "Access-Control-Request-Method: POST" \
+  https://asia-northeast3-smart-care-ledger.cloudfunctions.net/login
+```
+
+`204` + `access-control-allow-origin` 이면 정상입니다. `403`이면:
+
+```bash
+for FN in login signup approveStaff upsertStaff setStaffActive changePassword; do
+  gcloud run services add-iam-policy-binding "$FN" \
+    --region=asia-northeast3 --project=smart-care-ledger \
+    --member=allUsers --role=roles/run.invoker
+done
+```
+
+`404`면 그 이름·리전에 함수가 없다는 뜻입니다 — 배포가 실제로 됐는지 보세요.
+
+> 조직 정책 **도메인 제한 공유**(`constraints/iam.allowedPolicyMemberDomains`)가
+> 켜져 있으면 `allUsers` 부여가 실패합니다. 그 경우 정책 예외가 필요합니다.
+>
+> 로그인 화면에는 이제 `E_UNREACHABLE`로 뜹니다.
+
 ### 0-2. 서비스 계정 키 발급
 마이그레이션 스크립트가 Admin SDK로 접속하는 데 필요합니다.
 

@@ -85,11 +85,65 @@ Vercel 프리뷰 URL처럼 **실제로 배포된 주소**에서 확인해야 할
    무료 한도 안에 머물지만, 예산 알림을 걸어두면 안전합니다.
 7. **함수 실행 서비스 계정에 "서비스 계정 토큰 생성자" 역할을 부여합니다.**
    ← 콘솔에서 잊기 가장 쉬운 단계입니다. 아래 설명 참고.
+8. 배포 후 **함수가 공개 호출 가능한지 확인합니다.** 보통 `firebase deploy`가
+   알아서 열어 주지만, 막혀 있으면 브라우저에 CORS 오류로 보입니다. 바로 아래 설명.
 
-> 3~4번까지만 하고 5~7번을 건너뛰면 화면은 뜨지만 로그인이 되지 않습니다.
+> 3~4번까지만 하고 5~8번을 건너뛰면 화면은 뜨지만 로그인이 되지 않습니다.
 > 그 경우 방법 A(에뮬레이터)를 쓰세요.
+>
+> **로그인이 안 될 때는 브라우저 콘솔부터 보세요.** CORS 오류가 있으면 8번,
+> 화면에 `E_...` 코드가 뜨면 그 코드가 곧 원인입니다.
 
-### 7번이 왜 필요한가 — 로그인이 `INTERNAL`로 실패하는 원인
+### 배포한 함수를 브라우저가 부를 수 있어야 한다 (CORS 오류로 보이는 것)
+
+콘솔에 이렇게 뜨면 **함수 코드까지 가지도 못한 것**입니다.
+
+```
+Access to fetch at 'https://asia-northeast3-<project>.cloudfunctions.net/login'
+has been blocked by CORS policy: Response to preflight request doesn't pass
+access control check: No 'Access-Control-Allow-Origin' header is present
+```
+
+`onCall`은 CORS를 스스로 처리합니다(`cors` 기본값 `true`). 그러니 이 오류는
+**우리 함수의 응답이 아닙니다.** 브라우저가 보낸 사전 요청(OPTIONS)을 구글 쪽에서
+먼저 거부한 것이고, 그 거부 응답에는 CORS 헤더가 없어 브라우저가 "CORS 오류"라고
+표시할 뿐입니다. 원인은 둘 중 하나입니다.
+
+| 실제 응답 | 뜻 | 고치는 법 |
+|---|---|---|
+| **403** | 함수가 공개 호출 불가 상태 | 아래 `allUsers` 부여 |
+| **404** | 그 이름·리전에 함수가 없다 | 배포 확인 (`--project staging`, 리전 `asia-northeast3`) |
+
+어느 쪽인지 5초 만에 확인합니다.
+
+```bash
+curl -i -X OPTIONS \
+  -H "Origin: https://example.com" \
+  -H "Access-Control-Request-Method: POST" \
+  https://asia-northeast3-smart-care-ledger-staging.cloudfunctions.net/login
+```
+
+`204`에 `access-control-allow-origin`이 있으면 정상입니다. `403`이면 다음을
+콜러블 **6개 전부**에 적용합니다.
+
+```bash
+PROJECT_ID=smart-care-ledger-staging
+for FN in login signup approveStaff upsertStaff setStaffActive changePassword; do
+  gcloud run services add-iam-policy-binding "$FN" \
+    --region=asia-northeast3 --project="$PROJECT_ID" \
+    --member=allUsers --role=roles/run.invoker
+done
+```
+
+> 2세대 함수는 Cloud Run 서비스로 돕니다. `firebase deploy`가 보통 공개 호출을
+> 열어 주지만, 조직 정책 **도메인 제한 공유**(`constraints/iam.allowedPolicyMemberDomains`)가
+> 켜져 있으면 `allUsers` 부여가 조용히 실패합니다. 회사·학교 계정으로 만든
+> 프로젝트에서 흔합니다. 그 경우 정책 예외를 두거나 개인 프로젝트를 쓰세요.
+
+로그인 화면에도 이제 `E_UNREACHABLE`로 뜹니다 — 예전에는 이 경우와 서버 내부
+오류가 똑같이 "로그인 실패. 다시 시도하세요."로 보여 구분할 수 없었습니다.
+
+### 7번이 왜 필요한가 — 토큰 서명 권한
 
 `login` 함수는 비밀번호를 확인한 뒤 **커스텀 토큰에 서명**해야 합니다. 서비스 계정
 키 없이 도는 함수(정상입니다)는 이 서명을 IAM API(`iamcredentials...:signBlob`)에
@@ -200,6 +254,7 @@ node tools/seed-staging.mjs --apply --wipe  # 기존 데이터를 지우고 새�
 
 | 화면에 뜨는 것 | 원인 | 고치는 법 |
 |---|---|---|
+| `E_UNREACHABLE` | 브라우저가 함수에 닿지 못했다 (403 비공개 / 404 미배포 / 네트워크) | 위 「배포한 함수를 브라우저가 부를 수 있어야 한다」 |
 | `E_SIGNBLOB` | 실행 서비스 계정에 토큰 서명 권한이 없다 (**2세대 신규 프로젝트의 기본 상태**) | 위 「7번이 왜 필요한가」 |
 | `E_NO_AUTH` | Authentication 미활성화 | 콘솔 → Authentication → 시작하기 |
 | `E_NO_FIRESTORE` | Firestore 데이터베이스가 없다 | 콘솔 → Firestore Database → 만들기 |
@@ -208,8 +263,10 @@ node tools/seed-staging.mjs --apply --wipe  # 기존 데이터를 지우고 새�
 
 | 그 밖의 증상 | 원인 |
 |---|---|
-| "로그인 실패. 다시 시도하세요."만 뜬다 | 진단되지 않은 오류다. `firebase functions:log`를 보세요 |
-| 로그인 요청이 아예 안 나간다 | Functions가 배포되지 않았거나(스테이징) 에뮬레이터가 안 떠 있다 |
+| "로그인 실패. 다시 시도하세요."만 뜬다 | 서버까지는 갔는데 진단되지 않은 오류다. `firebase functions:log`를 보세요 |
+| 콘솔에 CORS 오류 | 함수에 닿지 못한 것이다. 위 표의 `E_UNREACHABLE` 참고 |
+| `manifest.json`이 `vercel.com/sso-api`로 리다이렉트 | Vercel 배포 보호(SSO)가 켜져 있다. 로그인 자체와는 무관하지만 PWA 설치가 안 된다. Vercel → Settings → Deployment Protection |
+| 콘솔에 `cdn.tailwindcss.com should not be used in production` | 예전부터 있던 경고다. 동작에는 영향 없다 |
 | 대시보드가 전부 0원 | 복합 인덱스가 아직 빌드 중이다 |
 | 오른쪽 위 표시가 없다 | 프로덕션에 붙어 있다. **입력하지 마세요** |
 | 에뮬레이터인데 데이터가 안 보인다 | `?env=emulator` 없이 열어 스테이징 클라우드에 붙었다 |

@@ -130,7 +130,9 @@ test('진단된 설정 오류는 failed-precondition으로 나간다', () => {
   assert.match(src, /if \(setup\) throw new HttpsError\('failed-precondition'/,
     '진단 결과가 failed-precondition으로 나가지 않습니다');
 
-  const client = read('public/modules/auth.js');
-  assert.match(client, /e\.code !== 'internal'/,
-    'auth.js가 internal 메시지를 버리는 조건이 바뀌었습니다 — 서버 코드와 함께 확인하세요');
+  // 클라이언트는 internal 메시지를 버린다(fn-errors.js). 그래서 진단은
+  // 반드시 다른 코드로 나가야 화면까지 간다.
+  const client = read('public/services/fn-errors.js');
+  assert.match(client, /bareCode\(e\.code\) !== 'internal'/,
+    'fn-errors.js가 internal 메시지를 버리는 조건이 바뀌었습니다 — 서버 코드와 함께 확인하세요');
 });
