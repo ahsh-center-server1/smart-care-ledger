@@ -17,8 +17,11 @@
 
 name: 검사
 
+# PR 브랜치에서는 pull_request로만 돈다. push까지 열어 두면 같은 커밋에
+# 워크플로가 두 번 걸린다(실제로 첫 실행에서 그랬다).
 on:
   push:
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -40,6 +43,12 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
+      # functions/는 별도 package.json이다. 루트 npm ci는 그것을 설치하지 않는다.
+      # test/receipt-extract.test.mjs가 functions/ai/*를 require하므로
+      # 이 줄이 없으면 `Cannot find module '@anthropic-ai/sdk'`로 죽는다
+      # (로컬에서는 이미 설치돼 있어 드러나지 않았다 — 첫 CI 실행에서 잡혔다).
+      - run: npm ci
+        working-directory: functions
       # vendor:check가 포함된다 — public/vendor/의 번들이 package.json의
       # 버전과 어긋나면 실패한다(커밋된 번들이 낡은 채로 배포되는 것을 막는다).
       - run: npm run check
@@ -55,10 +64,12 @@ jobs:
           node-version: '20'
           cache: npm
       # Firestore 에뮬레이터는 JVM에서 돈다.
+      # firebase-tools는 **JDK 21 이상**을 요구한다(17로는
+      # "no longer supports Java version before 21"로 죽는다).
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - run: npm ci
       # 규칙을 **실제로 평가한다.** RUNBOOK의 「배포 3」(규칙 잠금)은 되돌리기가
       # 가장 어려운 단계이므로, 배포가 규칙의 첫 실행이 되면 안 된다.

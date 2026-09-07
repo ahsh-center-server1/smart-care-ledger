@@ -147,12 +147,35 @@ test('검사는 시크릿에 걸려 있지 않다', () => {
     '검사 워크플로에 준비 확인 게이트가 있습니다');
 });
 
-test('검사는 경로 필터 없이 모든 푸시에 돈다', () => {
+test('검사는 경로 필터 없이 PR의 모든 커밋에 돈다', () => {
   const src = read(CI);
   const onBlock = src.slice(src.indexOf('\non:'), src.indexOf('\nconcurrency:'));
   assert.ok(!/paths:/.test(onBlock),
     'on: 블록에 paths 필터가 있습니다 — 그 경로 밖의 변경은 검사를 받지 않습니다');
-  assert.match(onBlock, /push:/, 'push에 반응하지 않습니다');
+  // pull_request가 핵심이다. 이것이 있어야 PR에 올라오는 모든 커밋이 검사를 받는다.
+  assert.match(onBlock, /pull_request:/, 'pull_request에 반응하지 않습니다');
+  assert.match(onBlock, /push:/, '머지된 뒤 기본 브랜치를 검사하지 않습니다');
+});
+
+test('검사가 functions/ 의존성도 설치한다', () => {
+  // functions/는 별도 package.json이다. 루트 npm ci는 그것을 설치하지 않는다.
+  // test/receipt-extract.test.mjs가 functions/ai/*를 require하므로, 이 설치가
+  // 빠지면 `Cannot find module '@anthropic-ai/sdk'`로 죽는다.
+  //
+  // 로컬에서는 이미 설치돼 있어 드러나지 않는다 — 첫 CI 실행에서 잡힌 실패다.
+  const src = read(CI);
+  assert.match(src, /working-directory:\s*functions/,
+    '검사 워크플로가 functions/ 의존성을 설치하지 않습니다');
+});
+
+test('규칙 잡의 JDK가 firebase-tools 요구 버전 이상이다', () => {
+  // firebase-tools는 JDK 21 이상을 요구한다. 17이면 에뮬레이터가 뜨지 않고
+  // "no longer supports Java version before 21"로 죽는다(첫 CI 실행에서 잡혔다).
+  const src = read(CI);
+  const m = src.match(/java-version:\s*'(\d+)'/);
+  assert.ok(m, 'java-version이 지정돼 있지 않습니다');
+  assert.ok(Number(m[1]) >= 21,
+    `java-version이 ${m[1]}입니다 — firebase-tools는 21 이상을 요구합니다`);
 });
 
 test('검사가 실제로 테스트를 돌린다', () => {
