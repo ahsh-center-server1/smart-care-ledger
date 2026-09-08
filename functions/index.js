@@ -65,6 +65,15 @@ function callable(name, handler, options) {
   });
 }
 
+/**
+ * 권한 스냅샷 재계산. 아래 authz-fns 배선에서 채워진다.
+ *
+ * 여기에 선언해 두는 이유: signup 이 이 파일 위쪽에 있어 배선보다 먼저
+ * 정의된다. exports 에 걸면 Firebase 가 배포 대상 함수로 해석하므로
+ * 모듈 변수여야 한다.
+ */
+let syncAuthzForUser = async () => null;
+
 const USERS = 'users';
 const SECRETS = 'userSecrets';
 
@@ -220,6 +229,17 @@ exports.signup = callable('signup', async (request) => {
     console.log(`[bootstrap] 첫 계정 '${userId}'을(를) 관리자로 생성했습니다.`);
   }
 
+  // 새 계정에도 권한 스냅샷을 만든다. 빠뜨리면 첫 관리자가 caps 없이 생겨
+  // **백필조차 실행할 수 없다** — 부트스트랩이 통째로 막힌다.
+  // (승인 대기 계정은 enabled:false 로 만들어지므로 열리는 것은 없다)
+  try {
+    await syncAuthzForUser(userId);
+  } catch (err) {
+    logger.error('[signup] caps 생성 실패 — 백필로 복구하세요', {
+      userId, message: err && err.message,
+    });
+  }
+
   return {
     bootstrapped: isFirst,
     message: isFirst
@@ -229,181 +249,34 @@ exports.signup = callable('signup', async (request) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// approveStaff — 가입 승인 + 역할 부여
-//   호출자보다 높은 등급은 부여할 수 없다.
-//   (기존에는 팀장이 신규 가입자를 센터장으로 승인할 수 있었다)
-// ─────────────────────────────────────────────────────────────
-exports.approveStaff = callable('approveStaff', async (request) => {
-  const auth = request.auth;
-  if (!auth) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
-
-  const myRank = callerRank(auth);
-  if (myRank < 3) {
-    throw new HttpsError('permission-denied', '직원 승인 권한이 없습니다.');
-  }
-
-  const d = request.data || {};
-  const targetId = String(d.userId || '').trim();
-  const role = String(d.role || '').trim();
-  const isAdmin = d.isAdmin === true;
-
-  if (!validUserId(targetId)) throw new HttpsError('invalid-argument', '대상 아이디가 올바르지 않습니다.');
-  if (!VALID_ROLES.includes(role)) throw new HttpsError('invalid-argument', '역할이 올바르지 않습니다.');
-
-  // 자기 등급을 넘는 역할은 부여 불가. 관리자 플래그는 관리자만 줄 수 있다.
-  if (rankOf(role) > myRank) {
-    throw new HttpsError('permission-denied', '본인보다 높은 등급은 부여할 수 없습니다.');
-  }
-  if (isAdmin && !(auth.token && auth.token.isAdmin === true)) {
-    throw new HttpsError('permission-denied', '관리자 권한은 관리자만 부여할 수 있습니다.');
-  }
-
-  const ref = db.collection(USERS).doc(targetId);
-  const snap = await ref.get();
-  if (!snap.exists) throw new HttpsError('not-found', '해당 직원을 찾을 수 없습니다.');
-
-  await ref.update({ approved: true, role, isAdmin, active: true });
-  return { ok: true };
-});
-
-// ─────────────────────────────────────────────────────────────
-// upsertStaff — 직원 등록·수정 (관리자 화면에서 호출)
+// 권한 투영 · 직원 관리
 //
-// users 컬렉션은 보안 규칙이 클라이언트 쓰기를 전면 차단하므로
-// 등록·수정·비밀번호 변경이 모두 이 함수를 거친다.
-// 호출자보다 높은 등급은 부여할 수 없다.
-// ─────────────────────────────────────────────────────────────
-exports.upsertStaff = callable('upsertStaff', async (request) => {
-  const auth = request.auth;
-  if (!auth) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
-
-  const myRank = callerRank(auth);
-  if (myRank < 3) throw new HttpsError('permission-denied', '직원 관리 권한이 없습니다.');
-
-  const list = Array.isArray(request.data && request.data.staff)
-    ? request.data.staff
-    : [request.data || {}];
-  if (!list.length) throw new HttpsError('invalid-argument', '등록할 직원이 없습니다.');
-  if (list.length > 200) throw new HttpsError('invalid-argument', '한 번에 200명까지만 처리할 수 있습니다.');
-
-  const isAdminCaller = auth.token && auth.token.isAdmin === true;
-  const results = [];
-
-  for (const raw of list) {
-    const userId = String(raw.userId || '').trim();
-    const name = String(raw.name || '').trim();
-    const role = String(raw.role || '입력자').trim();
-    const team = String(raw.team || '').trim();
-    const password = raw.password ? String(raw.password) : '';
-    const wantAdmin = raw.isAdmin === true;
-
-    if (!validUserId(userId)) {
-      results.push({ userId, ok: false, error: '아이디는 영문·숫자·밑줄만 사용할 수 있습니다.' });
-      continue;
-    }
-    if (!name) {
-      results.push({ userId, ok: false, error: '이름이 비어 있습니다.' });
-      continue;
-    }
-    if (!VALID_ROLES.includes(role)) {
-      results.push({ userId, ok: false, error: `알 수 없는 역할: ${role}` });
-      continue;
-    }
-    if (rankOf(role) > myRank) {
-      results.push({ userId, ok: false, error: '본인보다 높은 등급은 부여할 수 없습니다.' });
-      continue;
-    }
-    if (wantAdmin && !isAdminCaller) {
-      results.push({ userId, ok: false, error: '관리자 권한은 관리자만 부여할 수 있습니다.' });
-      continue;
-    }
-    if (password && password.length < 8) {
-      results.push({ userId, ok: false, error: '비밀번호는 8자 이상이어야 합니다.' });
-      continue;
-    }
-
-    try {
-      const userRef = db.collection(USERS).doc(userId);
-      const existing = await userRef.get();
-
-      // 신규 등록은 비밀번호가 반드시 필요하다 (없으면 로그인할 수 없다)
-      if (!existing.exists && !password) {
-        results.push({ userId, ok: false, error: '신규 등록에는 비밀번호가 필요합니다.' });
-        continue;
-      }
-
-      // merge — approved·active 등 기존 필드를 보존한다
-      await userRef.set(
-        {
-          userId, name, role, team,
-          isAdmin: wantAdmin,
-          ...(existing.exists ? {} : { approved: true, active: true }),
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      if (password) {
-        const record = await hashPassword(password);
-        await db.collection(SECRETS).doc(userId).set(
-          { ...record, failedCount: 0, updatedAt: FieldValue.serverTimestamp() },
-          { merge: true }
-        );
-      }
-      results.push({ userId, ok: true, created: !existing.exists });
-    } catch (err) {
-      console.error(`[upsertStaff] ${userId} 처리 실패:`, err);
-      results.push({ userId, ok: false, error: '저장 중 오류가 발생했습니다.' });
-    }
-  }
-
-  const okCount = results.filter((r) => r.ok).length;
-  return { okCount, failCount: results.length - okCount, results };
-});
-
-// ─────────────────────────────────────────────────────────────
-// setStaffActive — 재직·퇴사 전환
+// 순서가 중요하다 — 직원 함수가 authz 의 syncAuthzForUser 를 받아 쓴다.
+// 역할·재직이 바뀌면 caps 도 함께 바뀌어야 하고, 그것을 빠뜨리면 규칙이
+// 낡은 값으로 판정한다(강등된 사람이 계속 통과한다).
 //
-// 마지막 관리자를 비활성화하면 권한 설정·전체 초기화가 영구히 불가능해지므로
-// 서버에서 막는다(로그인 자체가 차단되기 때문에 되돌릴 방법이 없다).
+// ⚠️ caps 백필 전에는 authz 콜러블이 모든 호출을 거부한다 — 의도된 것이다.
+//    직원 함수는 아직 토큰 클레임으로 판정한다(백필을 실행할 관리자가
+//    막히면 안 되므로). 판정 근거 전환은 백필 이후.
 // ─────────────────────────────────────────────────────────────
-exports.setStaffActive = callable('setStaffActive', async (request) => {
-  const auth = request.auth;
-  if (!auth) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
-  if (callerRank(auth) < 3) {
-    throw new HttpsError('permission-denied', '직원 관리 권한이 없습니다.');
-  }
-
-  const d = request.data || {};
-  const userId = String(d.userId || '').trim();
-  const active = d.active === true;
-
-  if (!validUserId(userId)) throw new HttpsError('invalid-argument', '대상 아이디가 올바르지 않습니다.');
-  if (userId === auth.uid && !active) {
-    throw new HttpsError('failed-precondition', '본인 계정은 비활성화할 수 없습니다.');
-  }
-
-  const ref = db.collection(USERS).doc(userId);
-  const snap = await ref.get();
-  if (!snap.exists) throw new HttpsError('not-found', '해당 직원을 찾을 수 없습니다.');
-
-  // 마지막 관리자 보호
-  if (!active && snap.data().isAdmin === true) {
-    const admins = await db.collection(USERS).where('isAdmin', '==', true).get();
-    const activeAdmins = admins.docs.filter(
-      (x) => x.id !== userId && x.data().active !== false
-    );
-    if (!activeAdmins.length) {
-      throw new HttpsError(
-        'failed-precondition',
-        '마지막 관리자는 비활성화할 수 없습니다. 다른 직원에게 먼저 관리자 권한을 부여하세요.'
-      );
-    }
-  }
-
-  await ref.update({ active });
-  return { ok: true };
+const authzFns = require('./authz-fns')({
+  db, callable, HttpsError, logger, FieldValue,
 });
+// 콜러블만 내보낸다. Firebase 는 **모든 export 를 배포 대상 함수로 해석**하므로,
+// syncAuthzForUser 같은 내부 헬퍼가 섞이면 정체불명의 함수가 배포된다.
+exports.updateClientAssignments = authzFns.updateClientAssignments;
+exports.backfillAuthz = authzFns.backfillAuthz;
+
+// signup 은 이 배선보다 위에 정의돼 있다. exports 에 걸면 Firebase 가 그것을
+// 배포 대상 함수로 취급하므로(모든 export 가 함수로 해석된다) 모듈 변수에 담는다.
+// 콜러블은 배포가 아니라 호출 시점에 실행되므로 순서는 문제되지 않는다.
+syncAuthzForUser = authzFns.syncAuthzForUser;
+
+Object.assign(exports, require('./staff-fns')({
+  db, callable, callerRank, rankOf, HttpsError, logger, FieldValue,
+  hashPassword, validUserId, VALID_ROLES, USERS, SECRETS,
+  syncAuthzForUser: authzFns.syncAuthzForUser,
+}));
 
 // ─────────────────────────────────────────────────────────────
 // changePassword — 본인 또는 관리자가 변경
@@ -665,11 +538,6 @@ Object.assign(exports, require('./ai-fns')({
   db, callable, callerRank, HttpsError, logger, FieldValue, Timestamp,
 }));
 
-// 권한 투영 — 담당 배정을 원자적으로 (근거는 functions/authz.cjs 머리말에).
-// ⚠️ caps 백필 전에는 콜러블이 모든 호출을 거부한다 — 의도된 것이다.
-Object.assign(exports, require('./authz-fns')({
-  db, callable, HttpsError, logger, FieldValue,
-}));
 
 // ─────────────────────────────────────────────────────────────
 // syncSummaryVersion — 월별 요약 캐시를 낡았다고 표시한다

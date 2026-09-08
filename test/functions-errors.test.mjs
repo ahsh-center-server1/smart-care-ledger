@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { diagnose } = require('../functions/errors.js');
 const read = (rel) => readFileSync(new URL('../' + rel, import.meta.url), 'utf8');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // ─────────────────────────────────────────────
 // 실제로 올라오는 예외 모양들
@@ -103,18 +106,68 @@ test('진단 메시지에 프로젝트 값이나 자격증명이 섞이지 않�
 // 배선 — 이게 빠지면 진단이 화면까지 못 간다
 // ─────────────────────────────────────────────
 
-test('모든 콜러블이 callable() 래퍼를 통과한다', () => {
-  // 하나라도 맨 onCall이면 그 함수만 조용히 INTERNAL로 돌아간다
-  const src = read('functions/index.js');
-  const bare = [...src.matchAll(/^exports\.(\w+)\s*=\s*onCall\(/gm)].map((m) => m[1]);
-  assert.deepEqual(bare, [],
-    `callable() 래퍼를 안 거치는 콜러블: ${bare.join(', ')} — 설정 오류가 INTERNAL로 묻힙니다`);
-
-  const wrapped = [...src.matchAll(/^exports\.(\w+)\s*=\s*callable\('(\w+)'/gm)];
-  assert.ok(wrapped.length >= 6, `콜러블이 너무 적습니다 (${wrapped.length})`);
-  for (const [, exp, label] of wrapped) {
-    assert.equal(exp, label, `callable('${label}')이 exports.${exp}에 붙어 있습니다 — 로그 이름이 어긋납니다`);
+/**
+ * functions/ 의 우리 소스 전부 (node_modules 제외).
+ *
+ * 예전에는 index.js 하나만 봤다. 그런데 콜러블이 *-fns.js 로 옮겨 가면서
+ * directory-fns · ai-fns · authz-fns · staff-fns 는 검사 밖에 있었다 —
+ * 그 파일들이 맨 onCall 을 써도 아무도 몰랐다.
+ */
+function functionSources(dir = join(ROOT, 'functions'), out = []) {
+  for (const name of readdirSync(dir)) {
+    if (name === 'node_modules' || name.startsWith('.')) continue;
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) functionSources(p, out);
+    else if (/\.(js|cjs)$/.test(name)) out.push(p);
   }
+  return out;
+}
+
+test('맨 onCall을 쓰는 콜러블이 없다', () => {
+  // 하나라도 맨 onCall이면 그 함수만 조용히 INTERNAL로 돌아간다.
+  // callable() 헬퍼 정의 자체(index.js의 `return onCall(...)`)는 예외다.
+  const bare = [];
+  for (const file of functionSources()) {
+    const rel = relative(ROOT, file);
+    readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+      if (!/(?:^|[=\s])onCall\s*\(/.test(line)) return;
+      if (/return\s+onCall\(/.test(line)) return;          // 헬퍼 정의
+      if (/require\(|^\s*(?:\/\/|\*)/.test(line)) return;   // import·주석
+      bare.push(`${rel}:${i + 1}  ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(bare, [],
+    `callable() 래퍼를 안 거치는 콜러블:\n  ${bare.join('\n  ')}\n`
+    + '설정 오류가 INTERNAL로 묻힙니다.');
+});
+
+test('콜러블 이름이 변수·export 이름과 같다', () => {
+  // 어긋나면 로그에서 어느 함수가 실패했는지 찾을 수 없다.
+  // 두 가지 형태를 본다:
+  //   index.js      exports.foo = callable('foo', …)
+  //   *-fns.js      const foo = callable('foo', …)   ← 팩토리에서 반환
+  const found = [];
+  const mismatched = [];
+  for (const file of functionSources()) {
+    const rel = relative(ROOT, file);
+    const src = readFileSync(file, 'utf8');
+    const patterns = [
+      /^exports\.(\w+)\s*=\s*callable\('(\w+)'/gm,        // index.js
+      /^\s*const\s+(\w+)\s*=\s*callable\('(\w+)'/gm,      // *-fns.js 지역 변수
+      /^\s*(\w+)\s*:\s*callable\('(\w+)'/gm,               // 반환 객체 리터럴 안에서 직접
+    ];
+    for (const re of patterns) {
+      for (const [, name, label] of src.matchAll(re)) {
+        found.push(label);
+        if (name !== label) mismatched.push(`${rel}: ${name} ← callable('${label}')`);
+      }
+    }
+  }
+  assert.deepEqual(mismatched, [],
+    `콜러블 이름이 어긋납니다:\n  ${mismatched.join('\n  ')}`);
+  assert.ok(found.length >= 10, `콜러블이 너무 적습니다 (${found.length}) — 검사가 파일을 놓쳤을 수 있습니다`);
+  assert.equal(new Set(found).size, found.length,
+    `콜러블 이름이 중복됩니다: ${found.filter((x, i) => found.indexOf(x) !== i).join(', ')}`);
 });
 
 test('의도한 거부(HttpsError)는 래퍼가 건드리지 않는다', () => {
@@ -135,4 +188,40 @@ test('진단된 설정 오류는 failed-precondition으로 나간다', () => {
   const client = read('public/services/fn-errors.js');
   assert.match(client, /bareCode\(e\.code\) !== 'internal'/,
     'fn-errors.js가 internal 메시지를 버리는 조건이 바뀌었습니다 — 서버 코드와 함께 확인하세요');
+});
+
+// ─────────────────────────────────────────────
+// 배포 표면 — 이 실수는 배포 시점에만 드러난다
+// ─────────────────────────────────────────────
+
+test('내부 헬퍼가 exports에 섞이지 않는다', () => {
+  // Firebase 는 **모든 export 를 배포 대상 함수로 해석한다.** 그래서
+  // `Object.assign(exports, someModule)` 로 팩토리 반환값을 통째로 내보내면
+  // 내부 헬퍼까지 함수로 배포된다 — 정체불명의 엔드포인트가 생기고,
+  // 그 사실은 `firebase deploy` 를 돌려야 알 수 있다.
+  //
+  // 실제로 syncAuthzForUser 가 이렇게 새어 나갔다.
+  process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT || 'test-project';
+  const mod = require('../functions/index.js');
+
+  const suspicious = Object.keys(mod).filter((name) => {
+    if (name.startsWith('__')) return true;               // 내부용 표기
+    const fn = mod[name];
+    if (!fn || typeof fn !== 'function') return true;      // 함수가 아닌 값
+    // 배포 가능한 것은 __endpoint 메타데이터를 갖는다(onCall·onDocumentWritten 등).
+    return !fn.__endpoint && !fn.__trigger;
+  });
+
+  assert.deepEqual(
+    suspicious, [],
+    'exports 에 배포 대상이 아닌 값이 있습니다:\n  ' + suspicious.join('\n  ')
+    + '\n팩토리 반환값을 통째로 Object.assign 하지 말고 콜러블만 골라 내보내세요.',
+  );
+});
+
+test('배포될 함수 이름이 중복되지 않는다', () => {
+  process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT || 'test-project';
+  const names = Object.keys(require('../functions/index.js'));
+  assert.equal(new Set(names).size, names.length);
+  assert.ok(names.length >= 15, `배포 함수가 너무 적습니다 (${names.length})`);
 });

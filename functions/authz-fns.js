@@ -29,7 +29,7 @@
 const {
   AUTHZ, CLIENT_ACCESS, MEMBERS,
   parseStaffIds, planAssignmentChange, assertWritable,
-  newAuthzDoc, withCaps, projectAssignments,
+  newAuthzDoc, withCaps, projectAssignments, isEnabled,
 } = require('./authz.cjs');
 const {
   CAP_SCHEMA_VERSION, computeCaps, rankOf, sanitizeOverride,
@@ -186,6 +186,52 @@ module.exports = function authzFns(ctx) {
   });
 
   // ───────────────────────────────────────────────────────────
+  // 한 사용자의 권한 스냅샷 재계산
+  //
+  // 역할·관리자 플래그·재직 상태가 바뀌면 caps 도 함께 바뀐다. 이것을
+  // 부르지 않으면 authz 문서가 낡은 채로 남고, 규칙은 그 낡은 값으로
+  // 판정한다 — 강등된 사람이 계속 통과하거나, 승진한 사람이 막힌다.
+  //
+  // 담당 목록은 건드리지 않는다. 그것은 updateClientAssignments 와
+  // backfillAuthz 만 바꾼다 — 역할 변경이 담당 배정을 건드리면 안 된다.
+  // ───────────────────────────────────────────────────────────
+
+  /**
+   * users/{uid} 를 근거로 authz/{uid} 의 등급·재직·caps 를 다시 쓴다.
+   *
+   * merge 로 쓰는 이유: accessibleClientIds 를 보존해야 한다. set 으로
+   * 덮으면 담당 목록이 사라지고, 그 사람은 자기 입주자를 못 보게 된다.
+   *
+   * @param {string} uid
+   * @param {Object} [user] 이미 읽어 둔 users 문서 데이터(있으면 재조회 생략)
+   */
+  async function syncAuthzForUser(uid, user) {
+    const id = String(uid || '').trim();
+    if (!id) return null;
+
+    let data = user;
+    if (!data) {
+      const snap = await db.collection(USERS).doc(id).get();
+      if (!snap.exists) return null;
+      data = snap.data() || {};
+    }
+
+    const override = await currentOverride();
+    const caps = computeCaps(rankOf({ role: data.role, isAdmin: data.isAdmin }), override);
+
+    await db.collection(AUTHZ).doc(id).set({
+      uid: id,
+      role: String(data.role || '입력자'),
+      isAdmin: data.isAdmin === true,
+      enabled: isEnabled(data),
+      caps,
+      capSchemaVersion: CAP_SCHEMA_VERSION,
+    }, { merge: true });
+
+    return { uid: id, enabled: isEnabled(data) };
+  }
+
+  // ───────────────────────────────────────────────────────────
   // 백필 — 기존 사용자에게 authz 문서를 만든다
   //
   // 이것이 끝나기 전에는 updateClientAssignments 를 포함한 새 경로가 전부
@@ -322,5 +368,5 @@ module.exports = function authzFns(ctx) {
     }
   }
 
-  return { updateClientAssignments, backfillAuthz };
+  return { updateClientAssignments, backfillAuthz, syncAuthzForUser };
 };
