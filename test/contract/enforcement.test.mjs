@@ -124,18 +124,82 @@ test('[게이트 B] Firestore 집행 키의 caps를 규칙이 실제로 읽는�
   );
 });
 
-test('[게이트 B] 담당 범위를 accessibleClientIds로 검사한다', () => {
-  const src = stripComments(firestoreRules);
-  assert.ok(src.includes('accessibleClientIds'),
-    '담당 입주자 범위 검사가 없습니다. 지금은 clients를 전원이 읽습니다.');
-  assert.ok(/authz/.test(src),
-    'authz 문서를 참조하지 않습니다.');
+/**
+ * match 블록을 경로 → 본문으로 쪼갠다.
+ *
+ * 왜 문자열 포함 검사로는 안 되나
+ *   처음에는 `src.includes('accessibleClientIds')` 로 봤다. 그런데 그 문자열이
+ *   **한 블록에만** 있어도 통과한다. 실제로 신규 3개 컬렉션에만 넣은 상태에서
+ *   게이트가 초록으로 바뀌었다 — transactions·clients 는 여전히 등급만 보는데도.
+ *   래칫이 가짜 진전을 기록하면 없는 것보다 나쁘다.
+ */
+function matchBlocks(src) {
+  const out = [];
+  const re = /match\s+(\/[^\s{]+)\s*\{/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const start = m.index + m[0].length;
+    let depth = 1;
+    let i = start;
+    while (i < src.length && depth > 0) {
+      if (src[i] === '{') depth += 1;
+      else if (src[i] === '}') depth -= 1;
+      i += 1;
+    }
+    out.push({ path: m[1], body: src.slice(start, i - 1) });
+  }
+  return out;
+}
+
+/** 전면 차단 블록 — 지킬 것이 없으므로 가드 검사에서 제외한다. */
+function isDenyAll(body) {
+  const allows = [...body.matchAll(/allow[^:]*:\s*if\s+([^;]+);/g)].map(a => a[1].trim());
+  return allows.length > 0 && allows.every(cond => cond === 'false');
+}
+
+/** 재직 검사를 위임할 수 있는 이름. 규칙이 헬퍼로 감싸도 통과해야 한다. */
+const ENABLED_GUARD = /\benabled\b|\bactiveUser\s*\(/;
+
+test('[게이트 B] 담당 범위가 필요한 컬렉션마다 accessibleClientIds를 본다', () => {
+  const blocks = matchBlocks(stripComments(firestoreRules));
+  // 카탈로그가 "담당 입주자 범위"라고 말한 컬렉션들.
+  const needScope = [...new Set(PERM_KEYS
+    .filter(k => PERM_CATALOG[k].enforcement.includes(ENFORCE.FIRESTORE))
+    .filter(k => {
+      const e = PERM_CATALOG[k];
+      const scopes = e.scope ? [e.scope] : Object.values(e.scopeByRank || {});
+      return scopes.includes('assignedClient');
+    })
+    .map(k => PERM_CATALOG[k].resource))];
+
+  const missing = needScope.filter((res) => {
+    const b = blocks.filter(x => x.path.startsWith(`/${res}/`));
+    if (b.length === 0) return true;
+    return !b.some(x => x.body.includes('accessibleClientIds'));
+  });
+
+  assert.deepEqual(
+    missing, [],
+    '담당 범위 검사가 없는 컬렉션 (등급만 보고 있습니다):\n  ' + missing.join('\n  '),
+  );
 });
 
-test('[게이트 B] 비활성 계정을 enabled로 즉시 차단한다', () => {
-  const src = stripComments(firestoreRules);
-  assert.ok(/\benabled\b/.test(src),
-    'authz.enabled 검사가 없습니다. 퇴사자의 기존 토큰이 계속 통과합니다.');
+test('[게이트 B] 모든 블록이 재직 여부를 검사한다', () => {
+  // 퇴사자의 기존 토큰은 refresh token 으로 계속 갱신된다. 자연 만료를
+  // 기다리는 것은 차단 정책이 아니다 — 블록마다 authz.enabled 를 봐야 한다.
+  const blocks = matchBlocks(stripComments(firestoreRules));
+  const missing = blocks
+    // authz 본인 문서 읽기는 예외다 — 비활성 사용자가 자기 상태를 확인해
+    // 로그아웃할 수 있어야 한다. 이 예외로 열리는 것은 없다.
+    .filter(b => !b.path.startsWith('/authz/'))
+    .filter(b => !isDenyAll(b.body))
+    .filter(b => !ENABLED_GUARD.test(b.body))
+    .map(b => b.path);
+
+  assert.deepEqual(
+    missing, [],
+    '재직 검사가 없는 블록:\n  ' + missing.join('\n  '),
+  );
 });
 
 test('[게이트 B] 마감된 월의 거래 수정을 규칙이 막는다', () => {

@@ -88,6 +88,7 @@ describe('비로그인 클라이언트', () => {
     'fixedItems', 'reports', 'budgets', 'excelUploads', 'config',
     'userSecrets', 'archive_2025',
     'auditLogs', 'systemOperations', 'summaryCaches', 'directories',
+    'authz', 'receiptJobs',
   ];
 
   for (const col of COLLECTIONS) {
@@ -802,5 +803,188 @@ describe('directories — 파생 명부', () => {
 
   it('관리자도 명부를 지울 수 없다 (서버가 소유한다)', async () => {
     await assertFails(deleteDoc(doc(as(ACTORS.관리자), 'directories/staff')));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// authz — 권한 투영 (담당 접근 판정의 유일한 근거)
+//
+// 이 문서를 쓸 수 있으면 자기 담당 목록에 아무 입주자나 넣어 그 사람의 금전
+// 기록을 볼 수 있다. 권한 우회의 지름길이므로 쓰기는 전면 차단이다.
+// ─────────────────────────────────────────────────────────────
+describe('authz — 권한 투영', () => {
+  before(async () => {
+    await seed('authz/staff-owner', {
+      uid: 'staff-owner', enabled: true, accessibleClientIds: ['c1'],
+      caps: { settingsClient: false },
+    });
+    await seed('authz/staff-leader', {
+      uid: 'staff-leader', enabled: true, accessibleClientIds: ['c1', 'c2'],
+      caps: { settingsClient: true },
+    });
+    await seed('authz/staff-off', {
+      uid: 'staff-off', enabled: false, accessibleClientIds: ['c1'],
+    });
+  });
+
+  it('본인 문서는 읽을 수 있다', async () => {
+    await assertSucceeds(getDoc(doc(as(ACTORS.담당자), 'authz/staff-owner')));
+  });
+
+  it('남의 문서는 읽을 수 없다', async () => {
+    // 읽히면 누가 어느 입주자를 담당하는지가 전 직원에게 열린다.
+    await assertFails(getDoc(doc(as(ACTORS.담당자), 'authz/staff-leader')));
+  });
+
+  it('관리자도 남의 문서를 읽을 수 없다', async () => {
+    await assertFails(getDoc(doc(as(ACTORS.관리자), 'authz/staff-owner')));
+  });
+
+  it('비활성 사용자도 본인 문서는 읽을 수 있다', async () => {
+    // enabled: false 를 스스로 확인해 로그아웃할 수 있어야 한다. 막으면
+    // 화면이 이유 없이 멈춘 것처럼 보인다.
+    const off = { uid: 'staff-off', role: '담당자', isAdmin: false };
+    await assertSucceeds(getDoc(doc(as(off), 'authz/staff-off')));
+  });
+
+  for (const [name, actor] of Object.entries(ACTORS)) {
+    it(`${name}은 본인 문서도 쓸 수 없다`, async () => {
+      await assertFails(setDoc(doc(as(actor), `authz/${actor.uid}`), {
+        uid: actor.uid, enabled: true, accessibleClientIds: ['c1'],
+      }));
+    });
+  }
+
+  it('자기 담당 목록에 입주자를 추가할 수 없다', async () => {
+    // ★ 이것이 이 규칙의 존재 이유다.
+    await assertFails(updateDoc(doc(as(ACTORS.담당자), 'authz/staff-owner'), {
+      accessibleClientIds: ['c1', 'c2', 'c3'],
+    }));
+  });
+
+  it('자기 caps를 켤 수 없다', async () => {
+    await assertFails(updateDoc(doc(as(ACTORS.입력자), 'authz/staff-input'), {
+      caps: { settingsReset: true },
+    }));
+  });
+
+  it('남의 계정을 비활성화할 수 없다', async () => {
+    await assertFails(updateDoc(doc(as(ACTORS.관리자), 'authz/staff-owner'), {
+      enabled: false,
+    }));
+  });
+
+  it('관리자도 지울 수 없다 (서버가 소유한다)', async () => {
+    await assertFails(deleteDoc(doc(as(ACTORS.관리자), 'authz/staff-owner')));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// clientAccess — 결재 관계
+//
+// isLeader 가 "이 보고서의 결재 책임자인가"의 유일한 근거다. 조회는 담당
+// 범위 안에서만 — 그 입주자에 접근할 수 있는 사람만 알아도 되는 정보다.
+// ─────────────────────────────────────────────────────────────
+describe('clientAccess — 결재 관계', () => {
+  before(async () => {
+    await seed('clientAccess/c1/members/staff-owner',
+      { uid: 'staff-owner', isStaff: true, isLeader: false });
+    await seed('clientAccess/c9/members/staff-owner',
+      { uid: 'staff-owner', isStaff: true, isLeader: false });
+  });
+
+  it('담당 입주자의 멤버는 읽을 수 있다', async () => {
+    // authz/staff-owner.accessibleClientIds = ['c1']
+    await assertSucceeds(
+      getDoc(doc(as(ACTORS.담당자), 'clientAccess/c1/members/staff-owner')));
+  });
+
+  it('담당이 아닌 입주자의 멤버는 읽을 수 없다', async () => {
+    await assertFails(
+      getDoc(doc(as(ACTORS.담당자), 'clientAccess/c9/members/staff-owner')));
+  });
+
+  it('authz 문서가 없으면 읽을 수 없다 — fail-closed', async () => {
+    // 백필 전에는 새 경로가 열리지 않는다. 그것이 의도다.
+    const noAuthz = { uid: 'staff-nodoc', role: '팀장', isAdmin: false };
+    await assertFails(
+      getDoc(doc(as(noAuthz), 'clientAccess/c1/members/staff-owner')));
+  });
+
+  it('비활성 사용자는 담당 입주자여도 읽을 수 없다', async () => {
+    const off = { uid: 'staff-off', role: '담당자', isAdmin: false };
+    await assertFails(
+      getDoc(doc(as(off), 'clientAccess/c1/members/staff-owner')));
+  });
+
+  it('아무도 쓸 수 없다 (서버가 소유한다)', async () => {
+    for (const actor of Object.values(ACTORS)) {
+      await assertFails(setDoc(
+        doc(as(actor), `clientAccess/c1/members/${actor.uid}`),
+        { uid: actor.uid, isStaff: true, isLeader: true }));
+    }
+  });
+
+  it('자기를 결재 책임자로 적을 수 없다', async () => {
+    await assertFails(updateDoc(
+      doc(as(ACTORS.담당자), 'clientAccess/c1/members/staff-owner'),
+      { isLeader: true }));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// receiptJobs — 영수증 최종화 작업
+//
+// 경로에 uid 가 들어 있어 소유권을 경로로 검증한다. 클라이언트가 state 를
+// 바꿀 수 있으면 lease 선점이 무의미해지고, finalGeneration 을 바꿀 수 있으면
+// 조건부 삭제가 남의 파일을 지운다.
+// ─────────────────────────────────────────────────────────────
+describe('receiptJobs — 영수증 최종화 작업', () => {
+  before(async () => {
+    await seed('receiptJobs/staff-input/items/up1', {
+      uid: 'staff-input', uploadId: 'up1', clientId: 'c1',
+      state: 'analyzed', leaseToken: '', leaseUntil: 0,
+    });
+  });
+
+  it('본인 작업은 읽을 수 있다', async () => {
+    await assertSucceeds(
+      getDoc(doc(as(ACTORS.입력자), 'receiptJobs/staff-input/items/up1')));
+  });
+
+  it('남의 작업은 읽을 수 없다', async () => {
+    await assertFails(
+      getDoc(doc(as(ACTORS.담당자), 'receiptJobs/staff-input/items/up1')));
+  });
+
+  it('관리자도 남의 작업을 읽을 수 없다', async () => {
+    await assertFails(
+      getDoc(doc(as(ACTORS.관리자), 'receiptJobs/staff-input/items/up1')));
+  });
+
+  it('본인 작업도 쓸 수 없다', async () => {
+    await assertFails(setDoc(
+      doc(as(ACTORS.입력자), 'receiptJobs/staff-input/items/up2'),
+      { uid: 'staff-input', uploadId: 'up2', clientId: 'c1', state: 'uploaded' }));
+  });
+
+  it('상태를 직접 바꿀 수 없다', async () => {
+    // ★ 바꿀 수 있으면 lease 선점이 무의미해진다.
+    await assertFails(updateDoc(
+      doc(as(ACTORS.입력자), 'receiptJobs/staff-input/items/up1'),
+      { state: 'attached' }));
+  });
+
+  it('generation을 바꿀 수 없다', async () => {
+    // ★ 바꿀 수 있으면 조건부 삭제가 남의(또는 새) 파일을 지운다.
+    await assertFails(updateDoc(
+      doc(as(ACTORS.입력자), 'receiptJobs/staff-input/items/up1'),
+      { finalGeneration: '999' }));
+  });
+
+  it('lease를 빼앗을 수 없다', async () => {
+    await assertFails(updateDoc(
+      doc(as(ACTORS.입력자), 'receiptJobs/staff-input/items/up1'),
+      { leaseToken: 'stolen', leaseUntil: 9999999999999 }));
   });
 });
