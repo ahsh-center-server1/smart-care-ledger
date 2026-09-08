@@ -15,7 +15,8 @@
     "deploy:staging": "firebase deploy --project staging",
     "deploy:staging:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage --project staging",
     "deploy:prod": "firebase deploy --project prod",
-    "deploy:prod:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage --project prod"
+    "deploy:prod:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage --project prod",
+    "test:contract": "node --test test/contract/*.test.mjs"
   },
   "type": "module",
   "devDependencies": {

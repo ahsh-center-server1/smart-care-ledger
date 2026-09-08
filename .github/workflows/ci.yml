@@ -74,3 +74,27 @@ jobs:
       # 규칙을 **실제로 평가한다.** RUNBOOK의 「배포 3」(규칙 잠금)은 되돌리기가
       # 가장 어려운 단계이므로, 배포가 규칙의 첫 실행이 되면 안 된다.
       - run: npm run test:rules
+
+  contract:
+    name: 집행 계약 (진행 중 — 차단하지 않음)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # 아직 초록이 아니다. 권한 마이그레이션의 각 단계가 이 검사 하나씩을
+    # 통과로 바꾸므로, 남은 개수가 곧 남은 작업량이다.
+    #
+    # 왜 차단하지 않는가
+    #   Rules와 Functions가 여전히 토큰 역할과 하드코딩 등급을 쓴다. 지금
+    #   차단으로 걸면 PR을 열 수 없고, 그렇다고 검사를 빼면 마이그레이션이
+    #   끝났는지 아무도 모른다. 그래서 보이되 막지 않는다.
+    #
+    # ⚠️ 전부 통과하는 순간 continue-on-error를 제거한다. 그 뒤로는 되돌아가면
+    #    빨개져야 한다 — 그것이 이 검사의 존재 이유다.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:contract
