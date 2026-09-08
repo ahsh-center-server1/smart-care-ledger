@@ -131,7 +131,7 @@ export async function fetchBaseData(opts) {
 
       // 필수 고정항목 미납 카운트
       try {
-        const fSnap = await getDocs(collection(db, 'fixedItems'));
+        const fSnap = await getDocs(collection(db, COLS.FIXED_ITEMS));
         S.allFixedItems = fSnap.docs.map(d => ({ id: d.id, ...d.data() }));
         const unpaid = {};
         S.clients.forEach(c => {

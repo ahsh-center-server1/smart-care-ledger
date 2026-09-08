@@ -46,6 +46,7 @@ const APP_SHELL = [
   '/domain/data-reset.js',
   '/domain/directory.js',
   '/domain/monthly-summary.js',
+  '/domain/perm-catalog.js',
   '/domain/receipt.js',
   '/domain/receipt-match.js',
   '/services/image.js',

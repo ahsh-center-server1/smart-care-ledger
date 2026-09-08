@@ -53,6 +53,9 @@ export const COLS = {
   // 낡음을 표시하고, 볼 수 있는 사람이 계산해서 채운다.
   SUMMARY_CACHES:'summaryCaches',
   BUDGETS:       'budgets',
+  // 매월 같은 날 반복되는 항목. 예전에는 6곳에서 'fixedItems' 리터럴을
+  // 직접 썼고, 그래서 권한 카탈로그가 이 컬렉션을 참조할 수 없었다.
+  FIXED_ITEMS:   'fixedItems',
 };
 
 // ─────────────────────────────────────────────

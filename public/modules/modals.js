@@ -940,7 +940,7 @@ export async function printReceiptSheet(){
 export async function loadFixedItems(clientId){
   if(!clientId)return;
   const{getDocs,collection,query,where}=fb();
-  const snap=await getDocs(query(collection(fdb(),'fixedItems'),where('clientId','==',clientId)));
+  const snap=await getDocs(query(collection(fdb(),COLS.FIXED_ITEMS),where('clientId','==',clientId)));
   S.fixedItems=snap.docs.map(d=>({id:d.id,...d.data()}));
 }
 export async function applyFixedItems(){
@@ -994,20 +994,20 @@ export async function applyFixedItems(){
 async function refreshAllFixedItems(){
   try{
     const{getDocs,collection}=fb();
-    const snap=await getDocs(collection(fdb(),'fixedItems'));
+    const snap=await getDocs(collection(fdb(),COLS.FIXED_ITEMS));
     S.allFixedItems=snap.docs.map(d=>({id:d.id,...d.data()}));
   }catch(e){/* no-op */}
 }
 export async function saveFixedItem(data){
   const{addDoc,setDoc,doc,collection}=fb();
-  if(data.id){const id=data.id;delete data.id;await setDoc(doc(fdb(),'fixedItems',id),data);}
-  else await addDoc(collection(fdb(),'fixedItems'),data);
+  if(data.id){const id=data.id;delete data.id;await setDoc(doc(fdb(),COLS.FIXED_ITEMS,id),data);}
+  else await addDoc(collection(fdb(),COLS.FIXED_ITEMS),data);
   await refreshAllFixedItems();
   toast('고정항목 저장됨','success');
 }
 export async function deleteFixedItem(id){
   const{doc,deleteDoc}=fb();
-  await deleteDoc(doc(fdb(),'fixedItems',id));
+  await deleteDoc(doc(fdb(),COLS.FIXED_ITEMS,id));
   await refreshAllFixedItems();
   toast('삭제됨','success');
 }
