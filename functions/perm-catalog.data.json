@@ -1,0 +1,794 @@
+{
+  "_generated": "tools/gen-perm-catalog.mjs — 직접 고치지 마세요. public/domain/perm-catalog.js 를 고치고 `npm run perm-catalog:gen` 을 돌리세요.",
+  "capSchemaVersion": 1,
+  "adminRank": 99,
+  "selectableRanks": [
+    1,
+    2,
+    3,
+    4,
+    99
+  ],
+  "scope": {
+    "NONE": "none",
+    "OWN": "ownRecord",
+    "ASSIGNED": "assignedClient",
+    "ALL": "allClients"
+  },
+  "enforce": {
+    "UI": "ui",
+    "FIRESTORE": "firestore",
+    "STORAGE": "storage",
+    "FUNCTION": "function",
+    "TRANSITION": "transition"
+  },
+  "serverEnforced": [
+    "firestore",
+    "storage",
+    "function"
+  ],
+  "serverEnforcedKeys": [
+    "audit.view",
+    "bankbook.upload",
+    "client.view.all",
+    "excel.upload",
+    "lock.bypass",
+    "receipt.attachAny",
+    "receipt.attachOwn",
+    "receipt.replace",
+    "receipt.upload",
+    "report.approve.center",
+    "report.approve.team",
+    "report.delete",
+    "report.draft",
+    "report.own",
+    "report.recall",
+    "report.reject",
+    "report.release",
+    "report.revert",
+    "report.submit",
+    "report.view.all",
+    "settings.account",
+    "settings.archive",
+    "settings.budget",
+    "settings.category",
+    "settings.category.common",
+    "settings.client",
+    "settings.fixed",
+    "settings.permissions",
+    "settings.reset",
+    "settings.staff",
+    "trx.category.edit",
+    "trx.create",
+    "trx.delete",
+    "trx.delete.bulk",
+    "trx.edit",
+    "trx.reorder",
+    "trx.transfer",
+    "trx.view.all"
+  ],
+  "catalog": {
+    "audit.view": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "auditLogs",
+      "actions": [
+        "read"
+      ],
+      "scope": "none"
+    },
+    "bankbook.upload": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "storage"
+      ],
+      "scope": "assignedClient"
+    },
+    "client.view.all": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "clients",
+      "actions": [
+        "read"
+      ],
+      "scope": "allClients"
+    },
+    "excel.upload": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "firestore",
+        "storage"
+      ],
+      "resource": "excelUploads",
+      "actions": [
+        "create"
+      ],
+      "scope": "assignedClient"
+    },
+    "lock.bypass": {
+      "defaultRank": 99,
+      "securityFloor": 99,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "firestore",
+        "function"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "update",
+        "delete"
+      ],
+      "scope": "none"
+    },
+    "nav.report": {
+      "defaultRank": 2,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui"
+      ],
+      "scope": "none"
+    },
+    "nav.settings": {
+      "defaultRank": 2,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui"
+      ],
+      "scope": "none"
+    },
+    "nav.staff": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui"
+      ],
+      "scope": "none"
+    },
+    "receipt.attachAny": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "function"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "update"
+      ],
+      "scope": "assignedClient",
+      "allowedFields": [
+        "receiptPath",
+        "receiptGeneration",
+        "receiptMissing"
+      ]
+    },
+    "receipt.attachOwn": {
+      "defaultRank": 1,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "function"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "update"
+      ],
+      "scope": "ownRecord",
+      "allowedFields": [
+        "receiptPath",
+        "receiptGeneration",
+        "receiptMissing"
+      ]
+    },
+    "receipt.print": {
+      "defaultRank": 2,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui"
+      ],
+      "scope": "none"
+    },
+    "receipt.replace": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "function"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "update"
+      ],
+      "scope": "assignedClient",
+      "allowedFields": [
+        "receiptPath",
+        "receiptGeneration",
+        "receiptMissing"
+      ],
+      "authorizeAgainst": "both"
+    },
+    "receipt.upload": {
+      "defaultRank": 1,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "storage",
+        "function"
+      ],
+      "scope": "assignedClient"
+    },
+    "report.approve.center": {
+      "defaultRank": 4,
+      "securityFloor": 4,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "function",
+        "transition"
+      ],
+      "resource": "reports",
+      "scope": "none",
+      "transition": {
+        "from": [
+          "team_approved"
+        ],
+        "to": "confirmed"
+      }
+    },
+    "report.approve.team": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "function",
+        "transition"
+      ],
+      "resource": "reports",
+      "scope": "assignedClient",
+      "transition": {
+        "from": [
+          "submitted"
+        ],
+        "to": "team_approved",
+        "requires": "assignedLeader"
+      }
+    },
+    "report.delete": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "function"
+      ],
+      "resource": "reports",
+      "actions": [
+        "delete"
+      ],
+      "scope": "assignedClient"
+    },
+    "report.draft": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "function",
+        "transition"
+      ],
+      "resource": "reports",
+      "scope": "assignedClient",
+      "transition": {
+        "from": [
+          "draft",
+          null
+        ],
+        "to": "draft"
+      }
+    },
+    "report.own": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "reports",
+      "actions": [
+        "read"
+      ],
+      "scope": "assignedClient"
+    },
+    "report.recall": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "function",
+        "transition"
+      ],
+      "resource": "reports",
+      "scope": "assignedClient",
+      "transition": {
+        "from": [
+          "submitted"
+        ],
+        "to": "draft",
+        "requires": "createdBy"
+      }
+    },
+    "report.reject": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "function",
+        "transition"
+      ],
+      "resource": "reports",
+      "scope": "assignedClient",
+      "transition": {
+        "from": [
+          "submitted",
+          "team_approved"
+        ],
+        "to": "rejected",
+        "requires": "currentApprover"
+      }
+    },
+    "report.release": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "function",
+        "transition"
+      ],
+      "resource": "reports",
+      "scope": "assignedClient",
+      "transition": {
+        "from": [
+          "rejected"
+        ],
+        "to": "draft"
+      }
+    },
+    "report.revert": {
+      "defaultRank": 4,
+      "securityFloor": 4,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "function",
+        "transition"
+      ],
+      "resource": "reports",
+      "scope": "none",
+      "transition": {
+        "from": [
+          "confirmed",
+          "team_approved",
+          "submitted"
+        ],
+        "to": "previous"
+      }
+    },
+    "report.submit": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "function",
+        "transition"
+      ],
+      "resource": "reports",
+      "scope": "assignedClient",
+      "transition": {
+        "from": [
+          "draft",
+          "rejected"
+        ],
+        "to": "submitted"
+      }
+    },
+    "report.view.all": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "reports",
+      "actions": [
+        "read"
+      ],
+      "scope": "allClients"
+    },
+    "settings.account": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "accounts",
+      "actions": [
+        "create",
+        "update",
+        "delete"
+      ],
+      "scope": "allClients"
+    },
+    "settings.archive": {
+      "defaultRank": 4,
+      "securityFloor": 4,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "firestore",
+        "function",
+        "storage"
+      ],
+      "resource": "config",
+      "scope": "none"
+    },
+    "settings.budget": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "budgets",
+      "actions": [
+        "create",
+        "update"
+      ],
+      "scope": "assignedClient"
+    },
+    "settings.category": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "categories",
+      "actions": [
+        "create",
+        "update",
+        "delete"
+      ],
+      "scope": "assignedClient"
+    },
+    "settings.category.common": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "categories",
+      "actions": [
+        "create",
+        "update",
+        "delete"
+      ],
+      "scope": "allClients"
+    },
+    "settings.client": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "function"
+      ],
+      "resource": "clients",
+      "actions": [
+        "create",
+        "update",
+        "delete"
+      ],
+      "scope": "allClients"
+    },
+    "settings.fixed": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "fixedItems",
+      "actions": [
+        "create",
+        "update",
+        "delete"
+      ],
+      "scope": "assignedClient"
+    },
+    "settings.permissions": {
+      "defaultRank": 99,
+      "securityFloor": 99,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "firestore",
+        "function"
+      ],
+      "resource": "config",
+      "scope": "none"
+    },
+    "settings.reset": {
+      "defaultRank": 99,
+      "securityFloor": 99,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "firestore",
+        "storage"
+      ],
+      "resource": "systemOperations",
+      "scope": "none"
+    },
+    "settings.staff": {
+      "defaultRank": 3,
+      "securityFloor": 3,
+      "configurable": false,
+      "enforcement": [
+        "ui",
+        "function"
+      ],
+      "resource": "users",
+      "actions": [
+        "create",
+        "update",
+        "delete"
+      ],
+      "scope": "none"
+    },
+    "trx.category.edit": {
+      "defaultRank": 2,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "update"
+      ],
+      "scope": "assignedClient",
+      "allowedFields": [
+        "category",
+        "subcategory"
+      ],
+      "authorizeAgainst": "both"
+    },
+    "trx.create": {
+      "defaultRank": 1,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "create"
+      ],
+      "scopeByRank": {
+        "1": "assignedClient",
+        "2": "assignedClient",
+        "3": "allClients"
+      },
+      "allowedFields": [
+        "clientId",
+        "accountId",
+        "date",
+        "time",
+        "type",
+        "category",
+        "subcategory",
+        "description",
+        "descRaw",
+        "amountIn",
+        "amountOut",
+        "sortOrder",
+        "createdBy"
+      ],
+      "relatedResourceChecks": [
+        {
+          "field": "accountId",
+          "mustBelongTo": "clientId"
+        }
+      ]
+    },
+    "trx.csv": {
+      "defaultRank": 2,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui"
+      ],
+      "scope": "none"
+    },
+    "trx.delete": {
+      "defaultRank": 1,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "delete"
+      ],
+      "scopeByRank": {
+        "1": "ownRecord",
+        "2": "assignedClient",
+        "3": "allClients"
+      }
+    },
+    "trx.delete.bulk": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "delete"
+      ],
+      "scope": "assignedClient"
+    },
+    "trx.edit": {
+      "defaultRank": 1,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "update"
+      ],
+      "scopeByRank": {
+        "1": "ownRecord",
+        "2": "assignedClient",
+        "3": "allClients"
+      },
+      "allowedFields": [
+        "date",
+        "time",
+        "type",
+        "category",
+        "subcategory",
+        "description",
+        "amountIn",
+        "amountOut",
+        "accountId"
+      ],
+      "immutableFields": [
+        "clientId",
+        "createdBy",
+        "createdAt",
+        "isFixed",
+        "fixedItemId",
+        "descRaw"
+      ],
+      "authorizeAgainst": "both",
+      "relatedResourceChecks": [
+        {
+          "field": "accountId",
+          "mustBelongTo": "clientId"
+        }
+      ]
+    },
+    "trx.reorder": {
+      "defaultRank": 2,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "update"
+      ],
+      "scope": "assignedClient",
+      "allowedFields": [
+        "sortOrder"
+      ],
+      "authorizeAgainst": "both"
+    },
+    "trx.transfer": {
+      "defaultRank": 2,
+      "securityFloor": 2,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "function"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "create",
+        "update"
+      ],
+      "scope": "assignedClient",
+      "allowedFields": [
+        "linkedAccountId",
+        "linkedTrxId",
+        "amountIn",
+        "amountOut"
+      ],
+      "relatedResourceChecks": [
+        {
+          "field": "accountId",
+          "mustBelongTo": "clientId"
+        },
+        {
+          "field": "linkedAccountId",
+          "mustBelongTo": "clientId"
+        }
+      ]
+    },
+    "trx.view.all": {
+      "defaultRank": 2,
+      "securityFloor": 1,
+      "configurable": true,
+      "enforcement": [
+        "ui",
+        "firestore"
+      ],
+      "resource": "transactions",
+      "actions": [
+        "read"
+      ],
+      "scope": "assignedClient"
+    }
+  }
+}

@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 const {
   MAX_ASSIGNMENT_WRITES, parseStaffIds, isEnabled,
   planAssignmentChange, assertWritable, memberPath, newAuthzDoc,
+  withCaps, projectAssignments,
 } = require('../functions/authz.cjs');
 
 /** 계획을 읽기 쉬운 형태로 — 실패 메시지가 바로 이해되게. */
@@ -241,4 +242,119 @@ test('새 authz 문서의 담당 목록에서 중복을 없앤다', () => {
 test('역할이 없으면 가장 낮은 등급으로 둔다', () => {
   assert.equal(newAuthzDoc({ uid: 'u1' }).role, '입력자');
   assert.equal(newAuthzDoc({ uid: 'u1' }).isAdmin, false);
+});
+
+// ─────────────────────────────────────────────
+// 백필 투영 — clients 원본에서 투영본을 다시 만든다
+//
+// 증분으로 고치면 "어긋났다는 것"을 모르는 상태에서 시작해야 한다.
+// 원본에서 통째로 다시 만들면 드리프트가 구조적으로 불가능해진다.
+// ─────────────────────────────────────────────
+
+/** 계획 비교를 읽기 쉽게 — Map을 평범한 객체로. */
+const proj = (clients) => {
+  const { accessByUid, membersByClient } = projectAssignments(clients);
+  return {
+    access: Object.fromEntries(accessByUid),
+    members: Object.fromEntries(
+      [...membersByClient].map(([k, v]) => [
+        k, v.map(m => `${m.uid}(staff=${m.isStaff},leader=${m.isLeader})`).sort(),
+      ]),
+    ),
+  };
+};
+
+test('담당 직원과 담당 팀장을 모두 접근 목록에 넣는다', () => {
+  const out = proj([{ id: 'c1', userIds: 'u1,u2', teamLeader: 'u3' }]);
+  assert.deepEqual(out.access, { u1: ['c1'], u2: ['c1'], u3: ['c1'] });
+});
+
+test('팀장으로만 배정된 사람도 접근을 갖는다', () => {
+  // ★ staff만 보고 만들면 팀장이 자기 결재 대상을 못 본다.
+  const out = proj([{ id: 'c1', userIds: 'u1', teamLeader: 'u9' }]);
+  assert.deepEqual(out.access.u9, ['c1']);
+  assert.deepEqual(out.members.c1, [
+    'u1(staff=true,leader=false)',
+    'u9(staff=false,leader=true)',
+  ]);
+});
+
+test('겸임은 멤버 문서 하나로 표현된다', () => {
+  const out = proj([{ id: 'c1', userIds: 'u1', teamLeader: 'u1' }]);
+  assert.deepEqual(out.members.c1, ['u1(staff=true,leader=true)']);
+  assert.deepEqual(out.access.u1, ['c1']);
+});
+
+test('여러 입주자의 담당이 한 사람에게 모인다', () => {
+  const out = proj([
+    { id: 'c1', userIds: 'u1' },
+    { id: 'c2', userIds: 'u1,u2' },
+    { id: 'c3', teamLeader: 'u1' },
+  ]);
+  assert.deepEqual(out.access.u1, ['c1', 'c2', 'c3']);
+  assert.deepEqual(out.access.u2, ['c2']);
+});
+
+test('담당 목록의 중복을 없애고 정렬한다', () => {
+  const out = proj([
+    { id: 'c1', userIds: 'u1,u1' },
+    { id: 'c1', userIds: 'u1' },   // 같은 입주자가 두 번 들어와도
+  ]);
+  assert.deepEqual(out.access.u1, ['c1']);
+});
+
+test('담당이 없는 입주자는 멤버가 비어 있다', () => {
+  const out = proj([{ id: 'c1', userIds: '', teamLeader: '' }]);
+  assert.deepEqual(out.members.c1, []);
+  assert.deepEqual(out.access, {});
+});
+
+test('id가 없는 입주자는 건너뛴다', () => {
+  // 손상된 문서 하나 때문에 백필 전체가 실패하면 안 된다.
+  const out = proj([{ userIds: 'u1' }, { id: '  ', userIds: 'u2' }, { id: 'c1', userIds: 'u3' }]);
+  assert.deepEqual(Object.keys(out.members), ['c1']);
+  assert.deepEqual(out.access, { u3: ['c1'] });
+});
+
+test('빈 입력에도 안전하다', () => {
+  assert.deepEqual(proj([]), { access: {}, members: {} });
+  assert.deepEqual(proj(null), { access: {}, members: {} });
+  assert.deepEqual(proj(undefined), { access: {}, members: {} });
+});
+
+test('투영은 같은 입력에 같은 결과를 낸다 (멱등)', () => {
+  // 백필은 중단되면 다시 돌린다. 몇 번을 돌려도 결과가 같아야 한다.
+  const clients = [
+    { id: 'c2', userIds: 'u2,u1', teamLeader: 'u3' },
+    { id: 'c1', userIds: 'u1' },
+  ];
+  assert.deepEqual(proj(clients), proj(clients));
+});
+
+// ─────────────────────────────────────────────
+// caps 얹기
+// ─────────────────────────────────────────────
+
+test('withCaps가 caps와 스키마 버전을 담는다', () => {
+  const doc = newAuthzDoc({ uid: 'u1', role: '담당자', approved: true, active: true });
+  const out = withCaps(doc, { trxCreate: true, settingsReset: false }, 7);
+  assert.equal(out.capSchemaVersion, 7);
+  assert.deepEqual(out.caps, { trxCreate: true, settingsReset: false });
+  // 원래 필드는 유지된다.
+  assert.equal(out.uid, 'u1');
+  assert.equal(out.enabled, true);
+});
+
+test('withCaps가 원본 문서를 바꾸지 않는다', () => {
+  const doc = newAuthzDoc({ uid: 'u1' });
+  withCaps(doc, { a: true }, 1);
+  assert.equal('caps' in doc, false);
+});
+
+test('withCaps가 caps 객체를 복사한다', () => {
+  // 같은 caps 객체를 여러 사용자에게 얹을 때 한 사람의 수정이 번지면 안 된다.
+  const caps = { trxCreate: true };
+  const out = withCaps(newAuthzDoc({ uid: 'u1' }), caps, 1);
+  caps.trxCreate = false;
+  assert.equal(out.caps.trxCreate, true);
 });

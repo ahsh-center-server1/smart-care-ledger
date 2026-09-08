@@ -185,8 +185,66 @@ function newAuthzDoc({ uid, role, isAdmin, approved, active, accessibleClientIds
     isAdmin: isAdmin === true,
     enabled: isEnabled({ approved, active }),
     accessibleClientIds: dedupe(accessibleClientIds || []),
-    // caps 와 capSchemaVersion 은 백필 단계가 채운다. 없으면 거부다.
+    // caps 와 capSchemaVersion 은 백필이 채운다(withCaps). 없으면 전부 거부다.
   };
+}
+
+/**
+ * authz 문서에 권한 스냅샷을 얹는다.
+ *
+ * caps 는 규칙이 등급 계산 없이 읽는 불리언 묶음이고, capSchemaVersion 은
+ * 카탈로그 형태가 바뀌었는지 판정하는 값이다. 둘 다 없으면 규칙이 거부한다.
+ *
+ * 계산 자체는 perm-catalog.cjs 가 한다 — 이 파일은 Firestore 도 카탈로그도
+ * 모르는 순수 모듈로 두고, 호출부가 계산 결과를 넘긴다.
+ */
+function withCaps(doc, caps, capSchemaVersion) {
+  return { ...doc, caps: { ...caps }, capSchemaVersion };
+}
+
+/**
+ * 입주자 목록에서 사용자별 담당 입주자를 뽑는다. **순수 함수.**
+ *
+ * 백필은 clients 원본(userIds · teamLeader)에서 투영본을 다시 만든다.
+ * 이벤트의 옛 값을 쓰지 않고 항상 현재 원본을 읽는 이유는 정합성 복구가
+ * 낡은 상태를 되살리지 않게 하기 위해서다.
+ *
+ * ★ staff 와 leader 의 **합집합**이다. 담당 직원에서 빠졌지만 결재 책임자로
+ *   남은 사람을 빼면 그 사람이 자기 결재 대상을 못 보게 된다.
+ *
+ * @param {Array<{id: string, userIds?: string, teamLeader?: string}>} clients
+ * @returns {{ accessByUid: Map<string, string[]>, membersByClient: Map<string, Array> }}
+ */
+function projectAssignments(clients) {
+  const accessByUid = new Map();
+  const membersByClient = new Map();
+
+  for (const c of clients || []) {
+    const clientId = String(c && c.id ? c.id : '').trim();
+    if (!clientId) continue;
+
+    const staff = new Set(parseStaffIds(c.userIds));
+    const leader = String(c.teamLeader || '').trim();
+    const members = [];
+
+    const touched = new Set(staff);
+    if (leader) touched.add(leader);
+
+    for (const uid of touched) {
+      const isStaff = staff.has(uid);
+      const isLeader = uid === leader;
+      members.push({ uid, isStaff, isLeader });
+      if (!accessByUid.has(uid)) accessByUid.set(uid, []);
+      accessByUid.get(uid).push(clientId);
+    }
+    membersByClient.set(clientId, members);
+  }
+
+  // 담당 목록의 중복·순서를 정리한다 — 같은 입주자가 두 번 들어오면
+  // 배열이 부풀고 diff 가 시끄러워진다.
+  for (const [uid, ids] of accessByUid) accessByUid.set(uid, dedupe(ids).sort());
+
+  return { accessByUid, membersByClient };
 }
 
 module.exports = {
@@ -200,4 +258,6 @@ module.exports = {
   assertWritable,
   memberPath,
   newAuthzDoc,
+  withCaps,
+  projectAssignments,
 };

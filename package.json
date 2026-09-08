@@ -17,7 +17,9 @@
     "deploy:prod": "firebase deploy --project prod",
     "deploy:prod:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage --project prod",
     "test:contract": "node --test test/contract/*.test.mjs",
-    "test:contract:ratchet": "node tools/contract-ratchet.mjs"
+    "test:contract:ratchet": "node tools/contract-ratchet.mjs",
+    "perm-catalog:gen": "node tools/gen-perm-catalog.mjs",
+    "perm-catalog:check": "node tools/gen-perm-catalog.mjs --check"
   },
   "type": "module",
   "devDependencies": {
