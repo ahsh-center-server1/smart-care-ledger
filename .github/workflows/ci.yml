@@ -76,20 +76,20 @@ jobs:
       - run: npm run test:rules
 
   contract:
-    name: 집행 계약 (진행 중 — 차단하지 않음)
+    name: 집행 계약 게이트
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # 아직 초록이 아니다. 권한 마이그레이션의 각 단계가 이 검사 하나씩을
-    # 통과로 바꾸므로, 남은 개수가 곧 남은 작업량이다.
+    # 권한 마이그레이션의 각 단계가 게이트 하나씩을 통과로 바꾼다.
     #
-    # 왜 차단하지 않는가
-    #   Rules와 Functions가 여전히 토큰 역할과 하드코딩 등급을 쓴다. 지금
-    #   차단으로 걸면 PR을 열 수 없고, 그렇다고 검사를 빼면 마이그레이션이
-    #   끝났는지 아무도 모른다. 그래서 보이되 막지 않는다.
+    # 왜 래칫인가
+    #   처음에는 `continue-on-error: true`로 붙였다. 워크플로는 통과하지만
+    #   **체크 자체는 빨간 X로 남는다** — GitHub은 job conclusion을 그대로
+    #   보고한다. 영구적으로 빨간 체크는 리뷰어가 빨강을 무시하도록 학습시키고,
+    #   진짜 실패가 그 안에 묻힌다.
     #
-    # ⚠️ 전부 통과하는 순간 continue-on-error를 제거한다. 그 뒤로는 되돌아가면
-    #    빨개져야 한다 — 그것이 이 검사의 존재 이유다.
-    continue-on-error: true
+    #   그래서 통과 개수를 test/contract/ratchet.json에 기준선으로 커밋한다.
+    #   늘어나면 기준선을 올리고, 줄어들면 실패한다. 첫날부터 진짜 게이트이면서
+    #   초록이다. 남은 게이트 목록은 잡 로그에 나온다.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -97,4 +97,4 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
-      - run: npm run test:contract
+      - run: npm run test:contract:ratchet
