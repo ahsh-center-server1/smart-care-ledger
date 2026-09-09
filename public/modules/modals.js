@@ -1080,12 +1080,16 @@ export async function renderBankStatementsList(accountId, targetEl){
 }
 export async function uploadBankStatements(files,accRef,existing,renderGallery){
   const status=document.getElementById('bs-status');
+  const bsClientId=String((S.allAccounts||[]).find(a=>a.id===accRef.id)?.clientId||'');
+  if(!bsClientId){toast('계좌의 입주자를 찾을 수 없습니다.','error');return;}
   const total=files.length;
   const monthVal=document.getElementById('bs-month')?.value||'';
   for(let i=0;i<total;i++){
     if(status)status.textContent=`업로드 중... ${i+1}/${total}`;
     try{
-      const{url,thumbUrl}=await uploadImageWithThumb(files[i],`bankbooks/${accRef.id}/${monthVal}_${Date.now()}_${files[i].name}`);
+      // 경로에 clientId 를 넣는다 — Storage 규칙이 계좌→입주자를 되짚으려면
+      // Firestore 조회가 한 번 더 필요하고, 그러면 2회 한도에 걸린다.
+      const{url,thumbUrl}=await uploadImageWithThumb(files[i],`bankbooks/${bsClientId}/${accRef.id}/${monthVal}_${Date.now()}_${files[i].name}`);
       existing.push({url,thumbUrl,month:monthVal});
       const{updateDoc}=fb();
       await updateDoc(accRef,{bankStatements:[...existing]});

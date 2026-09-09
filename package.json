@@ -8,7 +8,7 @@
     "lint:syntax": "node lint.cjs",
     "vendor": "node tools/vendor.mjs",
     "vendor:check": "node tools/vendor.mjs --check",
-    "test:rules": "firebase emulators:exec --only firestore --project smart-care-ledger-rules-test \"node --test test/rules/*.test.mjs\"",
+    "test:rules": "firebase emulators:exec --only firestore,storage --project smart-care-ledger-rules-test \"node --test test/rules/*.test.mjs\"",
     "qa:smoke": "node tools/qa-smoke.mjs",
     "emu": "firebase emulators:start --project staging",
     "emu:seed": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 node tools/seed-staging.mjs",
