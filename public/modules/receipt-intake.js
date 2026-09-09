@@ -24,11 +24,11 @@
 'use strict';
 
 import { S } from '../state.js';
-import { COLS } from '../constants.js';
+import { uploadReceipts } from '../services/receipt-upload.js';
 import { toast, showLoading } from '../utils/ui.js';
 import { batchMixedOps } from '../services/firestore.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
-import { uploadToStorage, validateUploadSize } from '../services/storage.js';
+import { validateUploadSize } from '../services/storage.js';
 import { auditOp } from '../services/audit.js';
 import { can } from './permissions.js';
 import { isConfirmedLocked, loadTransactions } from './core.js';
@@ -543,54 +543,43 @@ async function saveAll() {
   showLoading(true);
 
   try {
-    // 1) 사진을 Storage에 올린다 (여기서 실패하면 아무것도 쓰지 않는다)
-    const uploaded = [];
-    for (const row of usable) {
-      const path = `receipts/${clientId}/${Date.now()}_${safeName(row.filename)}`;
-      const url = await uploadToStorage(row.file, path);
-      uploaded.push({ row, url });
-    }
-
-    // 2) Firestore 쓰기를 한 배치로 모은다 — 첨부·신규 거래·변경 이력이
-    //    함께 커밋되므로 "사진은 올라갔는데 거래가 없는" 중간 상태가 없다.
-    const adds = [];
-    const updates = [];
-    let attached = 0, created = 0;
-
-    for (const { row, url } of uploaded) {
+    // 사진은 스테이징에만 올린다. 최종 경로로 옮기고 거래에 붙이는 것은
+    // 서버가 한다 — 브라우저가 최종 경로를 쓸 수 있으면 이미 붙어 있는
+    // 증빙을 조용히 덮어쓸 수 있다.
+    const entries = usable.map((row) => {
       const d = row.draft;
       if (row.target === 'new') {
-        adds.push({ col: COLS.TRANSACTIONS, data: {
-          clientId,
+        return { file: row.file, draft: {
           accountId: d.accountId || accountId,
           date: d.date,
-          type: d.isCancellation ? '수입' : '지출',
+          isCancellation: !!d.isCancellation,
+          amount: Math.abs(d.amount),
           category: row.category || '확인필요',
-          subcategory: '',
           description: d.merchant || '(영수증)',
-          amountIn: d.isCancellation ? Math.abs(d.amount) : 0,
-          amountOut: d.isCancellation ? 0 : Math.abs(d.amount),
-          receiptUrl: url,
-          receiptMissing: false,
-          createdBy: String(S.user?.userId || ''),
           createdByName: S.user?.name || '',
-          source: 'receipt-photo',
-        }});
-        created++;
-      } else {
-        updates.push({ col: COLS.TRANSACTIONS, docId: row.target,
-          data: { receiptUrl: url, receiptMissing: false } });
-        attached++;
+        } };
       }
+      return { file: row.file, trxId: row.target };
+    });
+
+    const out = await uploadReceipts(clientId, entries, (done, total) => {
+      // showLoading 은 켜고 끄기만 한다. 진행 상황은 버튼에 적는다 —
+      // 사진 여러 장이면 한참 걸리고, 멈춘 것처럼 보이면 사용자가 새로고침한다.
+      if (save) save.textContent = `저장 중... ${done}/${total}`;
+    });
+
+    const created = out.results.filter(r => r.ok && r.created).length;
+    const attached = out.results.filter(r => r.ok && !r.created).length;
+    if (out.failCount) {
+      const first = out.results.find(r => !r.ok);
+      toast(`${out.failCount}건 실패: ${first?.error || '알 수 없는 오류'}`, 'error', 8000);
     }
 
     const clientName = S.clients.find(c => c.id === clientId)?.name || clientId;
     const logOp = auditOp('receipt.upload', {
-      summary: { clientName, count: uploaded.length, target: `첨부 ${attached} · 신규 ${created}` },
+      summary: { clientName, count: out.okCount, target: `첨부 ${attached} · 신규 ${created}` },
     });
-    if (logOp) adds.push({ col: logOp.col, data: logOp.data });
-
-    await batchMixedOps({ adds, updates });
+    if (logOp) await batchMixedOps({ adds: [{ col: logOp.col, data: logOp.data }] });
 
     toast(`저장 완료 — 기존 거래에 ${attached}건 첨부, 새 거래 ${created}건 생성.`, 'success', 6000);
     cleanup();
@@ -602,11 +591,6 @@ async function saveAll() {
   } finally {
     showLoading(false);
   }
-}
-
-/** Storage 경로에 쓸 수 있게 파일명을 정리한다. */
-function safeName(name) {
-  return String(name || 'photo.jpg').replace(/[^\w.\-가-힣]/g, '_').slice(-60);
 }
 
 function cleanup() {

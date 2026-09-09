@@ -57,18 +57,18 @@ service firebase.storage {
     //
     // 경로에 clientId 가 있어 그것만으로 범위를 판정한다.
     //
-    // ⚠️ 아직 브라우저가 최종 경로에 직접 쓴다. 서버 최종화(영수증 job)가
-    //    들어오면 create/update 를 닫고 스테이징만 열어야 한다 —
-    //    집행 계약의 게이트 C「최종 영수증 경로를 브라우저가 쓰지 못한다」가
-    //    그때까지 빨갛다.
+    // 쓰기는 **서버만** 한다(functions/receipt-fns.js finalizeReceipts).
+    // 브라우저가 여기에 쓸 수 있으면 이미 붙어 있는 증빙을 조용히 덮어쓸 수
+    // 있고, 그러면 감사 근거가 사라진다. 올리는 자리는 아래 스테이징이다.
+    //
+    // 삭제도 서버만. 증빙은 거래에 붙은 기록이고, 지우는 것은 거래 쪽 흐름을
+    // 함께 봐야 하는 일이다.
     match /receipts/{clientId}/{fileName} {
       allow get:  if seesClient(clientId);
       // 목록 조회 차단. 열어 두면 경로를 몰라도 파일 이름을 훑을 수 있고,
       // 파일 이름에는 영수증 상호·날짜가 들어간다.
-      allow list: if false;
-
-      allow create, update: if cap('receiptUpload') && seesClient(clientId) && sizeOk();
-      allow delete:         if cap('receiptUpload') && seesClient(clientId);
+      allow list:  if false;
+      allow write: if false;
     }
 
     // ── 영수증 스테이징 ──

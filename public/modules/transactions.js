@@ -468,13 +468,13 @@ export async function saveTrx(data){
   } else {
     // 입력자: createdBy 필드 추가
     if(!data.createdBy&&S.user?.userId)data.createdBy=S.user.userId;
-    await addDoc(collection(fdb(),COLS.TRANSACTIONS),data);
+    data.id=(await addDoc(collection(fdb(),COLS.TRANSACTIONS),data)).id;
     // loadTransactions를 먼저 — 방금 넣은 거래가 캐시에 들어온 뒤에 잔액을 다시 계산한다.
     // (이전에는 순서가 반대여서 신규 거래가 잔액에서 빠졌고, 수정 경로와 값이 달랐다)
     if(S.activeClient===data.clientId)await loadTransactions(data.clientId);
     updateAccBalance(data.accountId);
   }
-  toast('저장되었습니다.','success');
+  toast('저장되었습니다.','success'); return data.id;   // 증빙은 거래 생성 뒤에 서버가 붙인다
 }
 
 // 영수증 분실 표시 토글

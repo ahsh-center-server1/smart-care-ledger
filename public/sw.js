@@ -40,6 +40,7 @@ const APP_SHELL = [
   '/services/audit.js',
   '/services/directory.js',
   '/services/in-query.js',
+  '/services/receipt-upload.js',
   '/services/scoped-fetch.js',
   '/services/summary.js',
   '/domain/action-items.js',

@@ -106,6 +106,11 @@ class FakeDb {
   }
 
   collection(path) { return new CollectionRef(this, path); }
+  /** `db.doc('a/b/c/d')` — 문서 경로를 통째로 받는 형태. */
+  doc(path) {
+    if (isDoc(path)) return new DocRef(this, path);
+    throw new Error(`문서 경로가 아닙니다: ${path}`);
+  }
   collectionGroup(name) { return new Query(this, { group: name }); }
   batch() { return new Batch(this); }
 
@@ -194,3 +199,62 @@ export class FakeHttpsError extends Error {
 export const silentLogger = {
   info() {}, warn() {}, error() {}, debug() {},
 };
+
+// ─────────────────────────────────────────────
+// Storage 대역
+//
+// 영수증 최종화가 확인해야 하는 것은 두 가지다:
+//   · create-only 복사 — 이미 있으면 412 를 던지고 **실패가 아니라 이어 간다**
+//   · generation — 재압축이 같은 경로를 덮어쓰면 값이 바뀐다
+// 그래서 generation 을 실제로 증가시키는 대역이 필요하다.
+// ─────────────────────────────────────────────
+
+class FakeFile {
+  constructor(bucket, name) { this.bucket = bucket; this.name = name; }
+
+  async copy(dest, opts) {
+    const src = this.bucket.objects.get(this.name);
+    if (!src) { const e = new Error('원본이 없습니다'); e.code = 404; throw e; }
+    const want = opts && opts.preconditionOpts && opts.preconditionOpts.ifGenerationMatch;
+    const existing = this.bucket.objects.get(dest.name);
+    if (want === 0 && existing) {
+      const e = new Error('이미 있습니다'); e.code = 412; throw e;
+    }
+    this.bucket.objects.set(dest.name, {
+      data: src.data,
+      generation: this.bucket.nextGeneration(),
+      metadata: (opts && opts.metadata && opts.metadata.metadata) || {},
+    });
+    return [dest];
+  }
+
+  async getMetadata() {
+    const o = this.bucket.objects.get(this.name);
+    if (!o) { const e = new Error('없습니다'); e.code = 404; throw e; }
+    return [{ generation: o.generation, metadata: { ...o.metadata } }];
+  }
+
+  async delete(opts) {
+    if (!this.bucket.objects.has(this.name)) {
+      if (opts && opts.ignoreNotFound) return;
+      const e = new Error('없습니다'); e.code = 404; throw e;
+    }
+    this.bucket.objects.delete(this.name);
+  }
+}
+
+class FakeBucket {
+  constructor(name = 'test-bucket') {
+    this.name = name;
+    this.objects = new Map();
+    this._gen = 1000;
+  }
+  nextGeneration() { this._gen += 1; return String(this._gen); }
+  file(path) { return new FakeFile(this, path); }
+  /** 규칙을 우회해 객체를 심는다. */
+  put(path, data = 'bytes') {
+    this.objects.set(path, { data, generation: this.nextGeneration(), metadata: {} });
+  }
+}
+
+export function makeBucket(name) { return new FakeBucket(name); }

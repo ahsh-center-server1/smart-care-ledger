@@ -9,12 +9,13 @@ import { S } from '../state.js';
 import { COLS, cs } from '../constants.js';
 import { toast, escAttr, makeDraggable } from '../utils/ui.js';
 import { fb, fdb, batchAddDocs } from '../services/firestore.js';
-import { uploadToStorage, uploadImageWithThumb, uploadExcelOriginal, deleteFromStorage, deleteManyFromStorage, getImageUrl, validateUploadSize } from '../services/storage.js';
+import { uploadImageWithThumb, uploadExcelOriginal, deleteFromStorage, deleteManyFromStorage, getImageUrl, validateUploadSize } from '../services/storage.js';
 import { loadTransactions, refetchUsers, refetchClients, refetchAccounts, isConfirmedLocked, myScope } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
 import { can } from './permissions.js';
 import { refreshSetupAfterChange } from './setup.js';
+import { uploadReceipt } from '../services/receipt-upload.js';
 // 고정항목은 fixed-items.js 로 나갔다. openModal 이 그 렌더러를 부르므로
 // 이 방향(modals → fixed-items)만 import 하고, 반대 방향은 주입으로 끊는다.
 import { renderFixedItemForm, registerModalShell } from './fixed-items.js';
@@ -173,19 +174,11 @@ export function renderTrxForm(t){
           +'이 거래를 삭제하면 상대편도 함께 지워집니다. 그 뒤에 다시 입력해 주세요.','error',7000);
         return;
       }
-      // 영수증 업로드 처리
+      // 영수증은 거래가 저장된 **뒤에** 서버가 붙인다. 브라우저는 최종 경로를
+      // 쓸 수 없고, 새 거래는 아직 문서 ID 가 없기 때문이다.
       const oldReceiptUrl=isEdit?(t.receiptUrl||''):'';
-      let receiptUrl=oldReceiptUrl;
-      if(window._trxReceiptClear)receiptUrl='';
+      const receiptUrl=window._trxReceiptClear?'':oldReceiptUrl;
       const receiptFile=document.getElementById('trx-receipt-file')?.files[0];
-      if(receiptFile){
-        try{
-          const url=await uploadToStorage(receiptFile,`receipts/${acc.clientId}/${Date.now()}_${receiptFile.name}`);
-          if(url)receiptUrl=url;
-        }catch(e){toast('영수증 업로드 실패: '+e.message,'error');}
-      }
-      // 증빙이 교체/해제되면 기존 파일은 Storage에서 삭제(고아 파일 방지)
-      if(oldReceiptUrl&&oldReceiptUrl!==receiptUrl)deleteFromStorage(oldReceiptUrl);
       // 취소-수입/취소-지출은 저장 시 '취소'로 정규화
       const isCancelIn=type==='취소-수입';
       const isCancelOut=type==='취소-지출';
@@ -197,7 +190,17 @@ export function renderTrxForm(t){
         // 자산이동이 아닌 거래에 연결 정보가 남아 있으면 안 된다(짝 없는 링크 방지)
         linkedAccountId:'',linkedTrxId:''};
       if(existId)trxData.id=existId;
-      closeModal(); await saveTrx(trxData);
+      closeModal();
+      const savedId=await saveTrx(trxData);
+      if(receiptFile&&savedId){
+        try{
+          const r=await uploadReceipt({clientId:acc.clientId,file:receiptFile,trxId:savedId});
+          [S.transactions,S.filteredTrx].forEach(arr=>{const x=arr.find(y=>y.id===savedId);
+            if(x){x.receiptUrl=r.url;x.receiptPath=r.path;x.receiptMissing=false;}});
+        }catch(e){toast('영수증 첨부 실패: '+(e.message||e),'error',6000);}
+      }
+      // 증빙이 교체/해제되면 기존 파일은 Storage에서 삭제(고아 파일 방지)
+      if(oldReceiptUrl&&(receiptFile||window._trxReceiptClear))deleteFromStorage(oldReceiptUrl);
     }
   });
   document.getElementById('f-copy-btn').addEventListener('click',async()=>{
@@ -855,12 +858,13 @@ export async function doReceiptUpload(trxId){
   try{
     btn.textContent='업로드 중...';
     if(status)status.textContent='Firebase Storage에 업로드 중입니다...';
-    const oldUrl=S.transactions.find(x=>x.id===trxId)?.receiptUrl||'';
-    const url=await uploadToStorage(_receiptSelectedFile,`receipts/${S.activeClient||'all'}/${Date.now()}_${_receiptSelectedFile.name}`);
-    const{doc,updateDoc}=fb();
-    await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{receiptUrl:url,receiptMissing:false});
-    if(oldUrl&&oldUrl!==url)deleteFromStorage(oldUrl);
-    [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t){t.receiptUrl=url;t.receiptMissing=false;}});
+    const target=S.transactions.find(x=>x.id===trxId);
+    const oldUrl=target?.receiptUrl||'';
+    // 최종 경로 복사와 거래 갱신은 서버가 한다 — 브라우저는 스테이징까지만.
+    const r=await uploadReceipt({clientId:target?.clientId||S.activeClient,file:_receiptSelectedFile,trxId});
+    if(oldUrl&&oldUrl!==r.url)deleteFromStorage(oldUrl);
+    [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);
+      if(t){t.receiptUrl=r.url;t.receiptPath=r.path;t.receiptMissing=false;}});
     toast('업로드 완료!','success'); _receiptSelectedFile=null; closeModal(); renderHistoryTable();
   }catch(e){btn.disabled=false;btn.textContent='📤 업로드';if(status)status.style.display='none';toast('업로드 실패: '+e.message,'error');}
 }

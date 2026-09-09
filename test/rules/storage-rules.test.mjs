@@ -136,13 +136,15 @@ describe('영수증 — 담당 범위', () => {
     await assertSucceeds(getBytes(ref(as(ACTORS.팀장), `receipts/${OTHER_CLIENT}/other.jpg`)));
   });
 
-  it('담당 입주자에게는 올릴 수 있다', async () => {
-    await assertSucceeds(
-      uploadBytes(ref(as(ACTORS.입력자), `receipts/${MY_CLIENT}/new.jpg`), bytes()),
+  it('최종 경로는 팀장도 쓸 수 없다 — 서버 최종화만', async () => {
+    // 브라우저가 여기에 쓸 수 있으면 이미 붙어 있는 증빙을 조용히 덮어쓸 수
+    // 있고, 그러면 감사 근거가 사라진다. 올리는 자리는 스테이징이다.
+    await assertFails(
+      uploadBytes(ref(as(ACTORS.팀장), `receipts/${MY_CLIENT}/new.jpg`), bytes()),
     );
   });
 
-  it('담당 밖에는 올릴 수 없다', async () => {
+  it('담당 밖에는 더더욱 쓸 수 없다', async () => {
     await assertFails(
       uploadBytes(ref(as(ACTORS.담당자), `receipts/${OTHER_CLIENT}/new.jpg`), bytes()),
     );
@@ -259,13 +261,21 @@ describe('fail-closed — 근거가 없거나 퇴사했으면', () => {
 });
 
 describe('삭제', () => {
-  it('담당자는 담당 입주자의 영수증을 지울 수 있다', async () => {
+  it('최종 영수증은 브라우저가 지울 수 없다', async () => {
+    // 증빙 삭제는 거래 쪽 흐름을 함께 봐야 하는 일이라 서버가 한다.
     await seedFile(`receipts/${MY_CLIENT}/del.jpg`);
-    await assertSucceeds(deleteObject(ref(as(ACTORS.담당자), `receipts/${MY_CLIENT}/del.jpg`)));
+    await assertFails(deleteObject(ref(as(ACTORS.팀장), `receipts/${MY_CLIENT}/del.jpg`)));
   });
 
-  it('담당 밖 영수증은 지울 수 없다', async () => {
-    await seedFile(`receipts/${OTHER_CLIENT}/del.jpg`);
-    await assertFails(deleteObject(ref(as(ACTORS.담당자), `receipts/${OTHER_CLIENT}/del.jpg`)));
+  it('본인 스테이징은 지울 수 있다 — 검토를 중단하고 떠날 수 있어야 한다', async () => {
+    const path = stagingPath(ACTORS.담당자.uid, 'todelete');
+    await seedFile(path);
+    await assertSucceeds(deleteObject(ref(as(ACTORS.담당자), path)));
+  });
+
+  it('남의 스테이징은 지울 수 없다', async () => {
+    const path = stagingPath(ACTORS.담당자.uid, 'notyours');
+    await seedFile(path);
+    await assertFails(deleteObject(ref(as(ACTORS.입력자), path)));
   });
 });
