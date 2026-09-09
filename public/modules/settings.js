@@ -162,7 +162,7 @@ export const renderAccountManagement = renderManagement;
 // 유형별 분기가 늘었고, 이 파일은 이미 쪼갤 대상이었다.
 // app.js의 전역 등록이 Settings 경유이므로 여기서 다시 내보낸다.
 export {
-  toggleClientActive, toggleAccountActive, confirmDelete,
+  toggleClientActive, toggleAccountActive, toggleStaffActive, confirmDelete,
 } from './settings-crud.js';
 
 // ─────────────────────────────────────────────

@@ -164,3 +164,68 @@ test('순서 변경은 날짜순으로 볼 때만 허용된다', () => {
   assert.equal(canReorderNow(), true);
   S.sortKey = 'date';
 });
+
+// ─────────────────────────────────────────────
+// 값이 실제로 있는가
+//
+// 위 검사들은 **이름**만 대조한다. app.js가 `foo: Settings.foo`로 등록하는데
+// settings.js가 foo를 내보내지 않으면, 이름은 양쪽에 다 있으므로 통과한다.
+// 그리고 window.foo === undefined 가 되어 버튼이 조용히 죽는다.
+//
+// 실제로 그런 일이 있었다: 변경 함수들을 settings-crud.js로 옮기면서
+// toggleStaffActive를 재export 목록에 빠뜨렸고, 이름 검사는 전부 통과했다.
+// ─────────────────────────────────────────────
+
+/**
+ * `이름: 모듈.export` 쌍을 뽑는다.
+ *
+ * app.js를 직접 import하지 않는 이유: 최상위에서 window를 건드리므로 Node에서
+ * 죽는다. 그래서 등록 블록을 파싱하고 각 모듈만 따로 import해 확인한다.
+ */
+function registeredFromModules() {
+  const app = read('public/app.js');
+
+  // import * as Alias from './path.js'
+  const alias = new Map();
+  for (const m of app.matchAll(/import\s*\*\s*as\s+(\w+)\s*from\s*'([^']+)'/g)) {
+    alias.set(m[1], m[2]);
+  }
+
+  const start = app.indexOf('Object.assign(window, {');
+  let depth = 0, end = -1;
+  for (let i = app.indexOf('{', start); i < app.length; i++) {
+    if (app[i] === '{') depth++;
+    else if (app[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+  }
+  const block = app.slice(start, end);
+
+  const pairs = [];
+  for (const m of block.matchAll(/(\w+)\s*:\s*(\w+)\.(\w+)\s*[,}]/g)) {
+    const [, globalName, mod, exportName] = m;
+    if (alias.has(mod)) pairs.push({ globalName, path: alias.get(mod), exportName });
+  }
+  return pairs;
+}
+
+test('전역으로 등록한 값이 실제로 존재한다', async () => {
+  const pairs = registeredFromModules();
+  assert.ok(pairs.length >= 30, `등록 쌍이 너무 적습니다 (${pairs.length}) — 파싱이 깨졌을 수 있습니다`);
+
+  const cache = new Map();
+  const missing = [];
+  for (const { globalName, path, exportName } of pairs) {
+    if (!cache.has(path)) {
+      cache.set(path, await import(new URL('../public/' + path.replace(/^\.\//, ''), import.meta.url)));
+    }
+    const mod = cache.get(path);
+    if (typeof mod[exportName] !== 'function') {
+      missing.push(`window.${globalName} ← ${path} 의 ${exportName} (${typeof mod[exportName]})`);
+    }
+  }
+
+  assert.deepEqual(
+    missing, [],
+    'app.js가 등록하는 값이 모듈에 없습니다 — 버튼이 조용히 죽습니다:\n  '
+    + missing.join('\n  '),
+  );
+});
