@@ -38,13 +38,38 @@ export function escHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * 오류를 사람이 읽는 문장으로. Cloud Functions의 HttpsError는 message에
+ * 서버가 쓴 안내가 들어 있으므로 그것을 그대로 보여준다.
+ */
+function errText(err) {
+  const msg = (err && (err.message || err.code)) || '';
+  return msg ? `실패: ${msg}` : '실패했습니다. 잠시 후 다시 시도하세요.';
+}
+
 export function showConfirm(title, msg, onOk, okLabel='확인', okStyle='btn') {
   setText('c-title', title);
   setText('c-msg', msg);
   const btn = document.getElementById('c-ok');
   btn.textContent = okLabel;
   btn.className = okStyle || 'btn';
-  btn.onclick = () => { closeConfirm(); onOk(); };
+  // onOk()를 그냥 부르면 **거부가 삼켜진다.** 실제로 직원 삭제가 이 때문에
+  // 조용히 실패했다 — 보안 규칙이 users 쓰기를 막는데 대화상자만 닫히고
+  // 아무 일도 일어나지 않았으며 감사 기록도 남지 않았다.
+  //
+  // 여기서 잡아 토스트로 알린다. 각 호출부가 try/catch를 두는 것보다
+  // 한 곳에서 막는 편이 빠뜨릴 여지가 없다.
+  btn.onclick = () => {
+    closeConfirm();
+    try {
+      const r = onOk();
+      if (r && typeof r.then === 'function') {
+        r.catch((err) => toast(errText(err), 'error', 7000));
+      }
+    } catch (err) {
+      toast(errText(err), 'error', 7000);
+    }
+  };
   document.getElementById('confirm-dialog').classList.add('show');
 }
 

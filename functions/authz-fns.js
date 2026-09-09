@@ -28,7 +28,6 @@
 
 const {
   AUTHZ, CLIENT_ACCESS, MEMBERS,
-  parseStaffIds, planAssignmentChange, assertWritable,
   newAuthzDoc, withCaps, projectAssignments, isEnabled,
 } = require('./authz.cjs');
 const {
@@ -76,114 +75,6 @@ module.exports = function authzFns(ctx) {
     }
     return d;
   }
-
-  /** 입력 정리 — 문자열 하나만 와도, 배열이 와도 같은 형태로 만든다. */
-  function readInput(data) {
-    const clientId = String((data && data.clientId) || '').trim();
-    if (!clientId) throw new HttpsError('invalid-argument', '입주자를 지정하세요.');
-    return {
-      clientId,
-      staff: parseStaffIds(data && data.staffUids),
-      leader: String((data && data.leaderUid) || '').trim(),
-      // 담당과 함께 저장되는 표시용 필드. 없으면 건드리지 않는다.
-      patch: (data && data.patch) || null,
-    };
-  }
-
-  /**
-   * updateClientAssignments — 담당 직원과 담당 팀장을 한 번에 바꾼다.
-   *
-   * 둘을 함께 받는 이유: 입주자 폼이 둘을 같은 저장 버튼으로 다룬다. 따로
-   * 처리하면 담당자만 반영되고 팀장은 누락되는 중간 상태가 생긴다.
-   */
-  const updateClientAssignments = callable('updateClientAssignments', async (request) => {
-    await requireClientAdmin(request.auth);
-    const input = readInput(request.data);
-
-    // 존재하는 활성 계정만 담당으로 지정할 수 있다. 없는 uid를 넣으면
-    // 투영본에 유령 문서가 생기고, 그것은 화면에서만 드러난다.
-    const wanted = [...new Set([...input.staff, ...(input.leader ? [input.leader] : [])])];
-    if (wanted.length) {
-      const refs = wanted.map((uid) => db.collection(USERS).doc(uid));
-      const snaps = await db.getAll(...refs);
-      const bad = snaps
-        .map((s, i) => ({ uid: wanted[i], ok: s.exists && s.data().active !== false }))
-        .filter((x) => !x.ok)
-        .map((x) => x.uid);
-      if (bad.length) {
-        throw new HttpsError(
-          'invalid-argument',
-          `없거나 비활성인 계정입니다: ${bad.join(', ')}`,
-        );
-      }
-    }
-
-    const clientRef = db.collection(CLIENTS).doc(input.clientId);
-
-    const result = await db.runTransaction(async (tx) => {
-      // 규약상 **읽기를 먼저 전부** 끝내고 그 다음에 쓴다.
-      const clientSnap = await tx.get(clientRef);
-      if (!clientSnap.exists) {
-        throw new HttpsError('not-found', '입주자를 찾을 수 없습니다.');
-      }
-      const cur = clientSnap.data() || {};
-
-      const plan = assertWritableOrThrow(planAssignmentChange({
-        clientId: input.clientId,
-        prev: { staff: cur.userIds, leader: cur.teamLeader },
-        next: { staff: input.staff, leader: input.leader },
-      }));
-
-      // ── 여기서부터 쓰기 ──
-      tx.update(clientRef, {
-        userIds: input.staff.join(','),
-        teamLeader: input.leader,
-        // revision은 정합성 복구 작업의 낙관적 락이다. 이벤트의 옛 값을
-        // 적용하지 않고 현재 원본을 다시 읽어 비교하는 근거가 된다.
-        revision: FieldValue.increment(1),
-        ...(input.patch || {}),
-      });
-
-      for (const op of plan.memberOps) {
-        const ref = db.collection(CLIENT_ACCESS).doc(input.clientId)
-          .collection(MEMBERS).doc(op.uid);
-        if (op.op === 'delete') tx.delete(ref);
-        else {
-          tx.set(ref, {
-            uid: op.uid,
-            isStaff: op.isStaff,
-            isLeader: op.isLeader,
-            updatedAt: FieldValue.serverTimestamp(),
-          });
-        }
-      }
-
-      for (const op of plan.accessOps) {
-        const ref = db.collection(AUTHZ).doc(op.uid);
-        // update가 아니라 set(merge)인 이유: 백필 전 사용자는 authz 문서가
-        // 없을 수 있고, update는 없는 문서에 실패한다. 여기서 만들어지는
-        // 문서에는 caps가 없으므로 권한은 여전히 전부 거부된다.
-        tx.set(ref, {
-          uid: op.uid,
-          accessibleClientIds: op.op === 'add'
-            ? FieldValue.arrayUnion(input.clientId)
-            : FieldValue.arrayRemove(input.clientId),
-        }, { merge: true });
-      }
-
-      return {
-        writeCount: plan.writeCount,
-        affected: plan.affectedUids.length,
-        members: plan.memberOps.length,
-        access: plan.accessOps.length,
-      };
-    });
-
-    logger.info('[updateClientAssignments] 완료', {
-      clientId: input.clientId, ...result,
-    });
-    return result;
-  });
 
   // ───────────────────────────────────────────────────────────
   // 한 사용자의 권한 스냅샷 재계산
@@ -359,14 +250,5 @@ module.exports = function authzFns(ctx) {
     return result;
   });
 
-  /** assertWritable의 오류를 사용자에게 보이는 형태로 바꾼다. */
-  function assertWritableOrThrow(plan) {
-    try {
-      return assertWritable(plan);
-    } catch (err) {
-      throw new HttpsError('invalid-argument', err.message);
-    }
-  }
-
-  return { updateClientAssignments, backfillAuthz, syncAuthzForUser };
+  return { backfillAuthz, syncAuthzForUser };
 };

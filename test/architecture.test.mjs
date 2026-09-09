@@ -41,9 +41,9 @@ const MAX_LINES = 600;
  *   receipt-intake.js 판독 호출 / 검토 표 / 저장
  */
 const PENDING_SPLIT = {
-  'public/modules/modals.js':         1669,
+  'public/modules/modals.js':         1666,
   'public/modules/report.js':         1451,
-  'public/modules/settings.js':       980,
+  'public/modules/settings.js':       924,
   'public/modules/transactions.js':   728,
   'public/modules/receipt-intake.js': 619,
 };

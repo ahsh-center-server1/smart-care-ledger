@@ -264,8 +264,12 @@ const authzFns = require('./authz-fns')({
 });
 // 콜러블만 내보낸다. Firebase 는 **모든 export 를 배포 대상 함수로 해석**하므로,
 // syncAuthzForUser 같은 내부 헬퍼가 섞이면 정체불명의 함수가 배포된다.
-exports.updateClientAssignments = authzFns.updateClientAssignments;
 exports.backfillAuthz = authzFns.backfillAuthz;
+
+// 입주자 관리 — clients 원본과 두 투영본을 한 트랜잭션에서 쓴다.
+Object.assign(exports, require('./client-fns')({
+  db, callable, HttpsError, logger, FieldValue,
+}));
 
 // signup 은 이 배선보다 위에 정의돼 있다. exports 에 걸면 Firebase 가 그것을
 // 배포 대상 함수로 취급하므로(모든 export 가 함수로 해석된다) 모듈 변수에 담는다.

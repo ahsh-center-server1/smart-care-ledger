@@ -21,6 +21,7 @@ const SYSTEM_OPS = COLS.SYSTEM_OPS;
 import { fetchBaseData, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
 import { initSettingsShell, switchSettingsTab, registerPanel } from './settings-shell.js';
+import { registerCrudDeps } from './settings-crud.js';
 import { renderSettingsOverview, refreshOverviewBadges } from './settings-overview.js';
 import { renderSettingsAudit } from './settings-audit.js';
 import { auditLog } from '../services/audit.js';
@@ -157,70 +158,12 @@ export const renderUserManagement    = renderManagement;
 export const renderClientManagement  = renderManagement;
 export const renderAccountManagement = renderManagement;
 
-export async function toggleClientActive(id,makeActive){
-  try{
-    const{doc,updateDoc}=fb();
-    await updateDoc(doc(fdb(),COLS.CLIENTS,id),{active:makeActive});
-    await auditLog('client.activeChange',{resourceId:id,summary:{
-      clientName:(S.allClients||S.clients).find(c=>c.id===id)?.name||id,
-      to:makeActive?'활성':'비활성'}});
-    toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
-    await refetchClients(); renderManagement();
-  }catch(e){ toast('저장 오류: '+e.message,'error'); }
-}
-export async function toggleAccountActive(id,makeActive){
-  try{
-    const{doc,updateDoc}=fb();
-    await updateDoc(doc(fdb(),COLS.ACCOUNTS,id),{active:makeActive});
-    await auditLog('account.activeChange',{resourceId:id,summary:{
-      accountLabel:(S.allAccounts||S.accounts).find(a=>a.id===id)?.label||id,
-      to:makeActive?'활성':'비활성'}});
-    toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
-    await refetchAccounts(); renderManagement();
-  }catch(e){ toast('저장 오류: '+e.message,'error'); }
-}
-// 직원 재직/퇴사(비활성) 토글 — 비활성 시 로그인 차단, 데이터·결재 이력은 보존
-export async function toggleStaffActive(id,makeActive){
-  // 본인 계정 비활성화 방지 (셀프 잠금 방지)
-  const self=S.users.find(u=>String(u.userId)===String(S.user?.userId));
-  if(!makeActive&&self&&String(self.id)===String(id)){toast('본인 계정은 비활성화할 수 없습니다.','error');return;}
-  try{
-    // users 쓰기는 보안 규칙이 막는다. 서버가 등급을 확인하고,
-    // 마지막 관리자를 비활성화해 영구 잠금되는 것도 막아 준다.
-    await window._fbFn.call('setStaffActive')({ userId:id, active:makeActive });
-    await auditLog('staff.activeChange',{resourceId:id,summary:{
-      target:S.users.find(u=>u.id===id)?.name||id, to:makeActive?'재직':'퇴사'}});
-    // 비활성화 대상이 어느 입주자의 팀장이면 안내 (결재 공백 방지)
-    if(!makeActive){
-      const asLeader=(S.allClients||S.clients).filter(c=>String(c.teamLeader)===String(id));
-      if(asLeader.length)toast(`이 직원은 입주자 ${asLeader.length}명의 팀장입니다. 팀장을 재지정하거나, 공석 시 센터장이 팀장 결재를 대행할 수 있어요.`,'info',5000);
-    }
-    toast(makeActive?'재직 상태로 전환했습니다.':'퇴사(비활성) 처리했습니다. 해당 계정은 로그인할 수 없습니다.','success');
-    await refetchUsers(); renderManagement();
-  }catch(e){ toast('저장 오류: '+e.message,'error'); }
-}
-
-export function confirmDelete(type,id){
-  const labels={client:'입주자',account:'계좌',staff:'직원'};
-  const refetchByType={client:refetchClients,account:refetchAccounts,staff:refetchUsers};
-  showConfirm(labels[type]+' 삭제',labels[type]+'를 삭제하시겠습니까?',async()=>{
-    const{doc,deleteDoc}=fb();
-    const cols={client:COLS.CLIENTS,account:COLS.ACCOUNTS,staff:COLS.USERS};
-    // 무엇을 지웠는지 이름을 먼저 읽어 둔다 — 지운 뒤에는 알 수 없다.
-    const nameOf={
-      client:()=>(S.allClients||S.clients).find(c=>c.id===id)?.name,
-      account:()=>(S.allAccounts||S.accounts).find(a=>a.id===id)?.label,
-      staff:()=>S.users.find(u=>u.id===id)?.name,
-    }[type];
-    const target=(nameOf&&nameOf())||id;
-    await deleteDoc(doc(fdb(),cols[type],id));
-    await auditLog(type==='client'?'client.delete':type==='account'?'account.delete':'staff.update',
-      {resourceId:id,summary:{target}});
-    await (refetchByType[type]||fetchBaseData)();
-    renderManagement();
-    toast('삭제됨','success');
-  },'삭제','btn btn-danger');
-}
+// 변경(활성 전환·삭제)은 settings-crud.js에 있다 — 서버 콜러블로 옮기면서
+// 유형별 분기가 늘었고, 이 파일은 이미 쪼갤 대상이었다.
+// app.js의 전역 등록이 Settings 경유이므로 여기서 다시 내보낸다.
+export {
+  toggleClientActive, toggleAccountActive, confirmDelete,
+} from './settings-crud.js';
 
 // ─────────────────────────────────────────────
 // 설정 화면
@@ -936,6 +879,7 @@ export function initSettingsTabs(){
     });
   });
 
+  registerCrudDeps({ refresh: renderManagement, refetchUsers, refetchClients, refetchAccounts });
   initSettingsShell();
   // 열려 있지 않은 탭에도 알림 개수가 붙어야 한다 — 「개요」를 보지 않아도
   // 승인 대기나 미납이 있다는 것이 레일에서 보이게.

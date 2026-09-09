@@ -361,6 +361,10 @@ function browserWrites() {
     const refs = refMap(src);
 
     lines.forEach((line, i) => {
+      // 주석 줄은 건너뛴다. 코드를 설명하려고 예전 호출을 인용한 주석까지
+      // 위반으로 잡으면, 무엇을 왜 바꿨는지 적을 수 없게 된다.
+      const t = line.trim();
+      if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return;
       if (!WRITE_CALL.test(line)) return;
       // 여러 줄로 쓰인 호출이 있으므로 다음 두 줄까지 함께 본다.
       const window = lines.slice(i, i + 3).join('\n');

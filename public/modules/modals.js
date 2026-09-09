@@ -1245,10 +1245,10 @@ export function renderClientForm(c){
     </div>`;
   document.getElementById('fc-save').addEventListener('click',async()=>{
     const isAdm=can('nav.staff');
-    // 담당 직원 목록은 관리 권한자만 편집할 수 있다(체크박스가 그들에게만 보인다).
-    // 권한이 없는 사용자가 저장할 때 본인 한 명으로 덮어쓰면 동료의 접근권이
-    // 통째로 사라지므로, 신규 등록일 때만 본인을 담당으로 넣고 수정 시에는
-    // 필드를 건드리지 않는다.
+    // 담당 직원·팀장은 관리 권한자만 편집한다(체크박스가 그들에게만 보인다).
+    // 권한이 없는 사용자가 빈 값으로 덮어쓰면 동료의 접근권이 사라지고 팀장이
+    // 공석 처리되므로, 그 필드를 **아예 보내지 않는다** — 서버는 주지 않은
+    // 담당 필드를 바꾸지 않는다(근거는 functions/client-fns.js 머리말에).
     const leaderId=isAdm?document.getElementById('fc-leader')?.value||'':'';
     const id=document.getElementById('fc-id').value;
     const data={id,name:document.getElementById('fc-name').value,contact:isEdit?c.contact||'':'',memo:document.getElementById('fc-memo').value};
@@ -1257,15 +1257,12 @@ export function renderClientForm(c){
     } else if(!isEdit){
       data.userIds=String(S.user.userId);   // 본인이 만든 입주자는 본인 담당으로
     }
-    // 담당 팀장은 관리 권한자만 지정할 수 있다. 권한이 없는 사용자가 저장할 때
-    // 빈 값으로 덮어쓰면 팀장이 공석 처리되어 결재가 센터장 대행으로 넘어가므로,
-    // 아예 필드를 넣지 않아 기존 값이 유지되게 한다(merge).
     if(isAdm)data.teamLeader=leaderId;
-    if(!isEdit)data.active=true;
-    // merge:true — 예전에는 merge 없이 덮어써서 저장 한 번에 active가 사라지고
-    // 비활성 입주자가 되살아났다.
-    const{doc,setDoc}=fb();
-    await setDoc(doc(fdb(),COLS.CLIENTS,id),data,{merge:true});
+
+    const p={clientId:id,fields:{name:data.name,contact:data.contact,memo:data.memo}};
+    if(data.userIds!==undefined)p.staffUids=String(data.userIds).split(',');
+    if(data.teamLeader!==undefined)p.leaderUid=data.teamLeader;
+    await window._fbFn.call('saveClient')(p);
     toast('저장됨','success'); closeModal(); await refetchClients(); renderManagement();
     await refreshSetupAfterChange();
   });
