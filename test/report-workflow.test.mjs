@@ -3,11 +3,16 @@ import assert from 'node:assert/strict';
 import { S } from '../public/state.js';
 import {
   TRANSITIONS, STAGE_STAMPS, STAGE_LEVEL,
-  planTransition, availableActions, normalizeStatus, stampsFor, actorContext,
-} from '../public/modules/report-workflow.js';
+  planTransition, availableActions, normalizeStatus, stampsFor,
+} from '../public/domain/report-workflow.js';
+// actorContext 는 S.user 를 보므로 화면 계층에 남았다(도메인은 S 를 모른다).
+import { actorContext } from '../public/modules/report.js';
+// 전이표는 이제 권한 판정을 주입받는다(서버가 같은 파일을 쓰기 때문이다).
+// 화면 쪽 판정은 permissions.js 의 can 이고, 아래 as() 가 S.user 로 그것을 움직인다.
+import { can } from '../public/modules/permissions.js';
 
 const as = (role, isAdmin = false) => { S.user = { userId: 'u1', name: '홍길동', role, isAdmin }; };
-const CTX = { userId: 'u1', userName: '홍길동', now: '2026-09-04T00:00:00.000Z' };
+const CTX = { can, userId: 'u1', userName: '홍길동', now: '2026-09-04T00:00:00.000Z' };
 
 test.afterEach(() => { S.user = null; S.permOverride = null; });
 
@@ -322,20 +327,32 @@ test('createdBy가 있어야 작성자로 인정된다', () => {
 // ─────────────────────────────────────────────
 // 소스 수준 방어 — 전이표를 우회하는 경로가 생기지 않도록
 // ─────────────────────────────────────────────
-test('report.js에서 status를 직접 쓰는 곳은 전이 실행 한 곳뿐이다', async () => {
+test('브라우저는 보고서 status를 쓰지 않는다', async () => {
   // 결재 함수가 하나씩 늘어나면서 각자 status를 쓰던 것이 이 앱의 결재 버그
-  // 대부분의 원인이었다. 새 경로가 생기면 여기서 걸린다.
+  // 대부분의 원인이었다. 이제 reports 는 서버만 쓴다 — 화면에는 status 를
+  // **적는** 코드가 하나도 없어야 한다(캐시에 담는 out.to 는 서버가 준 값이다).
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../public/modules/report.js', import.meta.url), 'utf8');
-  // 객체 리터럴의 status 키만 본다 (report.status 같은 읽기는 제외)
-  const writes = [...src.matchAll(/(?<![.\w])status\s*:\s*(?!plan\.next)[^,}\s]+/g)].map(m => m[0]);
-  // 허용: 보고서를 처음 만들 때의 초안 생성(의견 저장 경로)
-  const unexpected = writes.filter(w => !/status\s*:\s*'draft'/.test(w));
+  const writes = [...src.matchAll(/(?<![.\w])status\s*:\s*(?!out\.to|'draft')[^,}\s]+/g)]
+    .map(m => m[0]);
+  assert.deepEqual(writes, [],
+    `화면이 보고서 status 를 직접 씁니다: ${writes.join(', ')}`);
+});
+
+test('서버의 전이 실행만 status를 쓴다', async () => {
+  // 집행이 서버로 옮겨 갔으니 이 불변식도 서버에서 지켜야 한다.
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../functions/report-fns.js', import.meta.url), 'utf8')
+    // 주석 속 예시(공격 재현 코드)가 위반으로 잡히지 않게 걷어낸다.
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const writes = [...src.matchAll(/(?<![.\w])status\s*:\s*([^,}\s]+)/g)].map(m => m[1]);
+  // 허용: 전이표가 계산한 다음 상태, 의견 저장으로 처음 만들어지는 초안,
+  // 그리고 이미 있는 값을 그대로 옮겨 적는 것(로그 등) — 상태를 **고르는** 것이 아니다.
+  const unexpected = writes.filter(
+    (w) => w !== 'plan.next' && w !== "'draft'" && !/^\w+\.status$/.test(w));
   assert.deepEqual(unexpected, [],
     `전이표를 거치지 않고 status를 쓰는 코드가 있습니다: ${unexpected.join(', ')}`);
-  // 허용된 초안 생성은 딱 하나(의견 저장으로 보고서가 처음 만들어지는 경우)여야 한다
-  assert.equal(writes.length, 1,
-    `초안 직접 생성이 ${writes.length}곳입니다 — 전이표 우회 경로가 늘어났습니다`);
+  assert.ok(writes.includes('plan.next'), '전이 결과를 쓰는 곳이 없습니다');
 });
 
 test('결재 함수는 모두 applyReportTransition을 통한다', async () => {
@@ -353,14 +370,15 @@ test('결재 함수는 모두 applyReportTransition을 통한다', async () => {
 
 test('보고서를 새로 만드는 모든 경로가 createdBy를 기록한다', async () => {
   // createdBy를 쓰는 코드가 없어서 담당자 회수 기능이 죽어 있었다.
+  // 이제 서버가 만든다 — 그리고 **서버가 값을 정한다.** 클라이언트가 적을 수
+  // 있으면 남의 이름으로 보고서를 만들어 그것을 회수할 수 있다.
   const { readFileSync } = await import('node:fs');
-  const src = readFileSync(new URL('../public/modules/report.js', import.meta.url), 'utf8');
-  const creates = [...src.matchAll(/addDoc\(collection\(fdb\(\),\s*COLS\.REPORTS\)/g)];
+  const src = readFileSync(new URL('../functions/report-fns.js', import.meta.url), 'utf8');
+  const creates = [...src.matchAll(/tx\.set\(ref,|ref\.set\(\{/g)];
   assert.ok(creates.length >= 2, `보고서 생성 경로를 찾지 못했습니다 (${creates.length}건)`);
   for (const m of creates) {
-    // addDoc 직전 400자 안에 만들어진 data 객체를 본다
-    const around = src.slice(Math.max(0, m.index - 400), m.index);
-    assert.ok(/createdBy\s*:/.test(around),
-      `createdBy 없이 보고서를 만드는 경로가 있습니다 (offset ${m.index})`);
+    const around = src.slice(m.index, m.index + 500);
+    assert.ok(/createdBy:\s*auth\.uid/.test(around),
+      `createdBy 를 서버가 정하지 않는 생성 경로가 있습니다 (offset ${m.index})`);
   }
 });

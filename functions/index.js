@@ -283,6 +283,12 @@ exports.savePermissions = require('./permissions-fns')({
   db, callable, HttpsError, logger, FieldValue,
 }).savePermissions;
 
+// 보고서 결재 — 전이표를 서버가 집행한다. 브라우저가 reports 를 직접 쓰면
+// 콘솔 한 줄로 팀장·센터장 결재를 건너뛸 수 있었다.
+Object.assign(exports, require('./report-fns')({
+  db, callable, HttpsError, logger, FieldValue,
+}));
+
 // 영수증 최종화 — 브라우저는 스테이징에만 올리고 옮기는 것은 서버가 한다.
 // randomId 를 주입하는 이유: 난수 생성은 순수 모듈이 할 일이 아니고,
 // 테스트가 결정적인 값을 넣을 수 있어야 한다.

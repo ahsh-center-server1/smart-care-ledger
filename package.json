@@ -19,7 +19,9 @@
     "test:contract": "node --test test/contract/*.test.mjs",
     "test:contract:ratchet": "node tools/contract-ratchet.mjs",
     "perm-catalog:gen": "node tools/gen-perm-catalog.mjs",
-    "perm-catalog:check": "node tools/gen-perm-catalog.mjs --check"
+    "perm-catalog:check": "node tools/gen-perm-catalog.mjs --check",
+    "report-workflow:gen": "node tools/gen-report-workflow.mjs",
+    "report-workflow:check": "node tools/gen-report-workflow.mjs --check"
   },
   "type": "module",
   "devDependencies": {

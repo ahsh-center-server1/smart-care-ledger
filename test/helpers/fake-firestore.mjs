@@ -17,9 +17,14 @@
  */
 
 export const SERVER_TIMESTAMP = Symbol('serverTimestamp');
+/** 필드 삭제 센티넬. _apply 가 이 값을 보면 키를 지운다. */
+export const DELETE_FIELD = Symbol('deleteField');
 
-/** admin SDK 의 FieldValue 자리. 값은 센티넬이고 그대로 저장된다. */
-export const FieldValue = { serverTimestamp: () => SERVER_TIMESTAMP };
+/** admin SDK 의 FieldValue 자리. 값은 센티넬이고 _apply 가 해석한다. */
+export const FieldValue = {
+  serverTimestamp: () => SERVER_TIMESTAMP,
+  delete: () => DELETE_FIELD,
+};
 
 const isDoc = (path) => path.split('/').length % 2 === 0;
 
@@ -169,15 +174,22 @@ class FakeDb {
       const prev = next.get(o.path);
       if (o.op === 'update') {
         if (prev === undefined) throw new Error(`없는 문서를 update 했습니다: ${o.path}`);
-        next.set(o.path, { ...prev, ...o.data });
+        next.set(o.path, dropDeleted({ ...prev, ...o.data }));
       } else {
-        next.set(o.path, o.merge ? { ...(prev || {}), ...o.data } : { ...o.data });
+        next.set(o.path, dropDeleted(o.merge ? { ...(prev || {}), ...o.data } : { ...o.data }));
       }
     }
     this.docs = next;
     this.commits += 1;
     return ops.length;
   }
+}
+
+/** FieldValue.delete() 로 표시된 키를 실제로 없앤다. */
+function dropDeleted(doc) {
+  const out = {};
+  for (const [k, v] of Object.entries(doc)) if (v !== DELETE_FIELD) out[k] = v;
+  return out;
 }
 
 function match(data, { field, op, value }) {

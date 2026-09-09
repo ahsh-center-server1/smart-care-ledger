@@ -22,12 +22,22 @@
  *   계속 찍혔다.** 공문서 산출물이라 그냥 넘길 수 없다.
  *
  * 이 파일은 DOM·Firestore를 모르므로 Node에서 그대로 테스트된다.
+ *
+ * 왜 domain/ 으로 내려왔나 — 그리고 왜 can 을 인자로 받나
+ *   같은 전이표를 **서버도 집행해야 한다.** 예전에는 브라우저만 이 표를 보고,
+ *   서버(규칙)는 reports 쓰기를 등급으로만 막았다. 그래서 콘솔에서
+ *   updateDoc(reports/…, {status:'confirmed'}) 한 줄이면 결재를 건너뛸 수 있었다.
+ *
+ *   functions/ 는 별도 배포 단위라 public/ 을 import 할 수 없다. 그래서
+ *   tools/gen-report-workflow.mjs 가 이 파일을 기계적으로 CJS 로 옮긴다
+ *   (export 만 떼어 낸다). 손으로 옮겨 적으면 전이표가 두 벌이 된다 —
+ *   지금 고치고 있는 바로 그 문제다.
+ *
+ *   그러려면 import 가 없어야 한다. 권한 판정은 ctx.can 으로 주입받는다:
+ *   화면은 permissions.js 의 can 을, 서버는 caps 로 만든 can 을 넘긴다.
  */
 
 'use strict';
-
-import { S } from '../state.js';
-import { can } from './permissions.js';
 
 /** 결재 진행도. rejected는 이 사다리 밖(=진행도 0으로 취급). */
 export const STAGE_LEVEL = { draft: 0, submitted: 1, team_approved: 2, confirmed: 3 };
@@ -84,6 +94,9 @@ const ACTION_STAMPS = {
  */
 function permissionError(action, from, ctx) {
   const { isAuthor = false, isAssignedLeader = false, leaderVacant = false } = ctx;
+  // 권한 판정은 주입받는다 — 화면과 서버가 서로 다른 근거를 쓰기 때문이다.
+  // 넘기지 않으면 아무것도 허용하지 않는다(fail-closed).
+  const can = typeof ctx.can === 'function' ? ctx.can : () => false;
 
   switch (action) {
     case 'save':
@@ -215,16 +228,4 @@ export function availableActions(current, ctx = {}) {
   const from = normalizeStatus(current);
   return Object.keys(TRANSITIONS[from] || {})
     .filter(a => permissionError(a, from, ctx) === null);
-}
-
-/** 화면에서 신원 정보를 만들 때 쓰는 헬퍼 — S.user 기준 */
-export function actorContext({ report, isAssignedLeader = false, leaderVacant = false } = {}) {
-  const userId = String(S.user?.userId || '');
-  return {
-    userId,
-    userName: S.user?.name || '',
-    isAuthor: !!report?.createdBy && String(report.createdBy) === userId,
-    isAssignedLeader,
-    leaderVacant,
-  };
 }

@@ -388,9 +388,21 @@ describe('reports', () => {
     await assertFails(updateDoc(doc(as(ACTORS.입력자), 'reports/r1'), { status: 'confirmed' }));
   });
 
-  it('담당자는 읽고 쓸 수 있다', async () => {
+  it('담당자는 읽을 수 있다', async () => {
     await assertSucceeds(getDoc(doc(as(ACTORS.담당자), 'reports/r1')));
-    await assertSucceeds(updateDoc(doc(as(ACTORS.담당자), 'reports/r1'), { status: 'submitted' }));
+  });
+
+  it('센터장조차 status 를 직접 쓸 수 없다 — 결재는 서버가 집행한다', async () => {
+    // 이 한 줄이 통과하면 결재 순서가 아무 의미도 없다.
+    // updateDoc(…, {status:'confirmed'}) 로 팀장·센터장 결재를 건너뛸 수 있었다.
+    await assertFails(
+      updateDoc(doc(as(ACTORS.센터장), 'reports/r1'), { status: 'confirmed' }),
+    );
+  });
+
+  it('보고서를 브라우저가 만들 수도 지울 수도 없다', async () => {
+    await assertFails(setDoc(doc(as(ACTORS.팀장), 'reports/r-new'), { clientId: MY_CLIENT }));
+    await assertFails(deleteDoc(doc(as(ACTORS.팀장), 'reports/r1')));
   });
 });
 

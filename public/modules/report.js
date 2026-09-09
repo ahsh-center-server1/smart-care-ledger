@@ -10,9 +10,15 @@ import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.j
 import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml, escAttr } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { chunkForInQuery } from '../services/in-query.js';
-import { can, requiredRank, ROLE_RANK, ADMIN_RANK } from './permissions.js';
+import { can } from './permissions.js';
 import { calcAccountBalanceAsOf, sumIncomeExpense } from '../services/balance.js';
-import { planTransition, availableActions, actorContext, normalizeStatus } from './report-workflow.js';
+import { planTransition, availableActions, normalizeStatus } from '../domain/report-workflow.js';
+// 신원 컨텍스트와 결재 문구 표는 report-actor.js 로 나갔다. 화살표는 한 방향이다.
+import {
+  actorContext, reportActorContext, TRANSITION_TOAST, TRANSITION_AUDIT,
+  REVERT_LABEL, REVERT_MSG,
+} from './report-actor.js';
+export { actorContext, reportActorContext, TRANSITION_AUDIT };
 import { auditLog } from '../services/audit.js';
 import { getImageUrl } from '../services/storage.js';
 import { getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
@@ -663,22 +669,18 @@ export function renderComments(report,curStatus){
 export async function saveComment(key){
   if(!S.reportData){toast('먼저 조회하세요.','error');return;}
   const val=document.getElementById('comment-'+key)?.value||'';
-  const{doc,updateDoc,addDoc,collection}=fb();
-  const{clientId,year,month,report}=S.reportData;
-  const now=new Date().toISOString();
-  if(report?.id){
-    await updateDoc(doc(fdb(),COLS.REPORTS,report.id),{[key]:val});
-    if(!S.reportData.report)S.reportData.report={};
+  const{clientId,year,month}=S.reportData;
+  try{
+    // reports 는 서버만 쓴다 — 결재 상태가 브라우저에서 바뀌면 안 되기 때문이다.
+    const res=await window._fbFn.call('saveReportComment')({
+      clientId,year,month,key,value:val,userName:S.user?.name||''});
+    if(!S.reportData.report)S.reportData.report={clientId,year,month,status:'draft'};
+    S.reportData.report.id=res.data.reportId;
     S.reportData.report[key]=val;
-  } else {
-    const data={clientId,year,month,status:'draft',createdAt:now,
-      createdBy:String(S.user?.userId||''),createdByName:S.user?.name||'',[key]:val};
-    const ref=await addDoc(collection(fdb(),COLS.REPORTS),data);
-    S.reportData.report={id:ref.id,...data};
     patchReportCache(S.reportData.report);
     renderReportList();
-  }
-  toast('의견이 저장되었습니다.','success',2000);
+    toast('의견이 저장되었습니다.','success',2000);
+  }catch(e){toast('의견 저장 실패: '+(e.message||e),'error',5000);}
 }
 
 // ─────────────────────────────────────────────
@@ -829,78 +831,9 @@ export function renderApproval(report,curStatus){
   }
 }
 
-// 결재 취소 버튼은 되돌아가는 단계에 따라 문구가 달라야 한다
-const REVERT_LABEL={confirmed:'↩️ 최종 결재 취소',team_approved:'↩️ 팀장 결재 취소',submitted:'✏️ 수정(초안)'};
-const REVERT_MSG={
-  confirmed:'최종 결재를 취소하고 팀장결재 상태로 되돌립니다.',
-  team_approved:'팀장 결재를 취소하고 제출 상태로 되돌립니다.',
-  submitted:'제출을 취소하고 초안 상태로 되돌립니다.',
-};
-
 // ─────────────────────────────────────────────
 // 결재 실행 — 모든 경로가 전이표를 통과한다
 // ─────────────────────────────────────────────
-
-/**
- * 현재 보고서에 대한 신원 컨텍스트.
- * teamLeader는 저장 경로에 따라 문서 ID 또는 로그인 아이디로 들어올 수 있어
- * 양쪽 모두로 매칭한다(마이그레이션 전 데이터 방어).
- */
-export function reportActorContext(){
-  const report=S.reportData?.report;
-  const userId=String(S.user?.userId||'');
-  const client=(S.allClients||S.clients||[]).find(c=>c.id===S.reportData?.clientId);
-  const teamLeaderId=String(client?.teamLeader||'');
-  const users=S.users||[];
-  const me=users.find(u=>String(u.id)===userId||String(u.userId)===userId);
-  // **배정된 팀장인가**(신원)와 **팀장 결재를 할 수 있는가**(권한)를 나눠 본다.
-  // 예전에는 role==='팀장' 하나로 묶여 있어 배정 팀장이 센터장이거나 관리자면
-  // 결재 버튼이 아예 나오지 않았다.
-  const isAssignedLeader=!!teamLeaderId&&(teamLeaderId===userId||(!!me&&teamLeaderId===String(me.id)));
-  // 배정 팀장이 공석/삭제/결재불가/퇴사(비활성)면 vacant → 상위 등급이 대행
-  const leaderUser=users.find(u=>String(u.id)===teamLeaderId||String(u.userId)===teamLeaderId);
-  const leaderRank=leaderUser?(leaderUser.isAdmin?ADMIN_RANK:(ROLE_RANK[leaderUser.role]||0)):0;
-  const leaderVacant=!teamLeaderId||!leaderUser
-    ||leaderRank<requiredRank('report.approve.team')
-    ||leaderUser.active===false;
-  const staffIds=String(client?.userIds||'').split(',').map(x=>x.trim());
-  return {
-    ...actorContext({report,isAssignedLeader,leaderVacant}),
-    isDirectStaff:staffIds.includes(userId),
-  };
-}
-
-const TRANSITION_TOAST={
-  save:'임시저장되었습니다.',
-  submit:'제출되었습니다.',
-  submitAsLeader:'팀장 직접 제출 완료! 센터장 결재 대기 중.',
-  approveTeam:'팀장 결재 완료.',
-  approveTeamProxy:'팀장 결재를 대행 처리했습니다. 센터장 최종 결재 대기 중.',
-  approveCenter:'최종 결재 완료.',
-  reject:'보고서가 반려되었습니다.',
-  recall:'보고서가 초안으로 회수되었습니다.',
-  revert:'결재가 취소되었습니다.',
-  release:'반려를 해제하고 초안으로 되돌렸습니다.',
-};
-
-/**
- * 전이 → 변경 이력 액션 코드.
- * 전이표(report-workflow.js)에 동작을 추가하면 여기도 채워야 한다 —
- * test/audit.test.mjs가 라벨 없는 코드를 잡고, 빠진 동작은 report.save로
- * 기록되어 이력이 부정확해진다.
- */
-export const TRANSITION_AUDIT={
-  save:'report.save',
-  submit:'report.submit',
-  submitAsLeader:'report.submit',
-  approveTeam:'report.approveTeam',
-  approveTeamProxy:'report.approveTeam',
-  approveCenter:'report.approveCenter',
-  reject:'report.reject',
-  recall:'report.recall',
-  revert:'report.revert',
-  release:'report.release',
-};
 
 /**
  * 결재 전이를 실행한다. **모든 결재 동작이 이 함수 하나를 통과한다.**
@@ -909,37 +842,27 @@ export const TRANSITION_AUDIT={
 export async function applyReportTransition(action,extraSet){
   if(!S.reportData){toast('먼저 조회하세요.','error');return false;}
   const{clientId,year,month,report,summary}=S.reportData;
+
+  // 화면도 전이표를 본다 — 서버에 갈 필요 없는 거부를 여기서 걸러 안내 문구를
+  // 그대로 보여 주기 위해서다. **집행은 서버가 한다.** 이 검사를 지워도
+  // 보안은 그대로이고, 서버가 같은 표로 다시 판정한다.
   const plan=planTransition(action,report?.status,reportActorContext());
   if(!plan.ok){toast(plan.reason,'error',4000);return false;}
 
-  const{doc,updateDoc,addDoc,collection,deleteField}=fb();
-  const summaryStr=JSON.stringify({totalIn:summary.totalIn,totalOut:summary.totalOut,balance:summary.balance});
-  const update={status:plan.next,summary:summaryStr,...plan.set,...(extraSet||{})};
-
   showLoading(true);
   try{
-    if(report?.id){
-      const patch={...update};
-      // 도착 상태보다 뒤 단계의 도장을 지운다 — 취소된 서명이 인쇄물에 남지 않도록
-      for(const f of plan.clear)patch[f]=deleteField();
-      await updateDoc(doc(fdb(),COLS.REPORTS,report.id),patch);
-    }else{
-      // 신규 생성 — createdBy를 반드시 남긴다.
-      // 이 필드를 쓰는 코드가 없어서 담당자 회수 기능이 죽어 있었다.
-      const data={clientId,year,month,
-        createdAt:new Date().toISOString(),
-        createdBy:String(S.user?.userId||''),
-        createdByName:S.user?.name||'',
-        ...update};
-      const ref=await addDoc(collection(fdb(),COLS.REPORTS),data);
-      S.reportData.report={id:ref.id,...data};
-    }
-    // 결재 이력을 남긴다. 모든 결재 동작이 이 함수를 통과하므로 여기 한 곳이면
-    // 제출·결재·반려·회수·취소가 빠짐없이 기록된다.
+    const res=await window._fbFn.call('applyReportTransition')({
+      clientId,year,month,action,
+      summary:JSON.stringify({totalIn:summary.totalIn,totalOut:summary.totalOut,balance:summary.balance}),
+      extraSet:extraSet||{},
+      userName:S.user?.name||'',
+    });
+    const out=res.data||{};
+
     const clientName=S.clients.find(c=>c.id===clientId)?.name||clientId;
     await auditLog(TRANSITION_AUDIT[action]||'report.save',{
-      resourceId:report?.id||S.reportData.report?.id,
-      summary:{clientName,year,month,from:report?.status||'미저장',to:plan.next},
+      resourceId:out.reportId,
+      summary:{clientName,year,month,from:out.from||'미저장',to:out.to},
     });
 
     const isReject=action==='reject';
@@ -947,14 +870,13 @@ export async function applyReportTransition(action,extraSet){
     // 바뀐 것은 이 보고서 한 건이다. 목록 전체를 다시 읽지 않는다.
     // 지운 도장은 캐시에서도 비운다 — 그러지 않으면 회수한 뒤에도 목록의
     // '제출자' 칸에 이전 이름이 남는다.
-    const cachePatch={...update};
-    for(const f of plan.clear)cachePatch[f]='';
-    patchReportCache({...(S.reportData.report||{}),clientId,year,month,...cachePatch,
-      id:report?.id||S.reportData.report?.id});
+    const cachePatch={status:out.to,...(extraSet||{})};
+    for(const f of (out.cleared||[]))cachePatch[f]='';
+    patchReportCache({...(S.reportData.report||{}),clientId,year,month,...cachePatch,id:out.reportId});
     await loadReport(); renderReportList();
     return true;
   }catch(e){
-    toast('처리 실패: '+e.message,'error',4000);
+    toast('처리 실패: '+(e.message||e),'error',5000);
     return false;
   }finally{showLoading(false);}
 }
@@ -1010,9 +932,11 @@ export async function doRevertToDraft(){
 export async function doDeleteReport(){
   if(!can('report.delete')){toast('보고서 삭제 권한이 없습니다.','error');return false;}
   if(!S.reportData?.report?.id){toast('저장된 보고서가 없습니다.','error');return false;}
-  const{doc,deleteDoc}=fb();
   const deletedId=S.reportData.report.id;
-  await deleteDoc(doc(fdb(),COLS.REPORTS,deletedId));
+  const{clientId,year,month}=S.reportData;
+  try{
+    await window._fbFn.call('deleteReport')({clientId,year,month});
+  }catch(e){toast('삭제 실패: '+(e.message||e),'error',5000);return false;}
   S.reportData.report=null;
   toast('보고서가 삭제되었습니다.','success');
   document.getElementById('report-area').style.display='none';

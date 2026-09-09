@@ -168,7 +168,7 @@ test('요약 문장 — 키를 한글로 바꿔 보여준다', () => {
 // 그것은 이력이 없는 것보다 나쁘다.
 // ─────────────────────────────────────────────────────────────
 test('전이표의 모든 동작에 이력 액션 코드가 매핑돼 있다', async () => {
-  const { TRANSITIONS } = await import('../public/modules/report-workflow.js');
+  const { TRANSITIONS } = await import('../public/domain/report-workflow.js');
   const { TRANSITION_AUDIT } = await import('../public/modules/report.js');
 
   const actions = new Set();

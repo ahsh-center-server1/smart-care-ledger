@@ -209,17 +209,16 @@ service cloud.firestore {
 
     // ── 보고서 ──
     //
-    // ⚠️ 쓰기가 아직 열려 있다. 결재 상태 전이는 서버가 강제해야 하고
-    //    (report-workflow 의 TRANSITIONS), 그 콜러블은 아직 없다.
-    //    집행 계약의 게이트 B「reports 직접 쓰기가 막혀 있다」가 그때까지 빨갛다.
+    // 쓰기는 **서버만** 한다(functions/report-fns.js applyReportTransition).
+    // 결재는 순서가 있는 상태 전이이고, 그 표는 report-workflow 하나뿐이다.
+    // 브라우저가 이 문서를 쓸 수 있으면 콘솔 한 줄로
+    //   updateDoc(…, { status:'confirmed', centerApprovedByName:'센터장' })
+    // 팀장·센터장 결재를 건너뛸 수 있다 — 그 달의 거래가 잠기고, 인쇄물에는
+    // 결재란이 채워진 채로 나온다.
     match /reports/{id} {
       allow read: if cap('reportViewAll')
                   || (cap('reportOwn') && seesClient(resource.data.get('clientId', '')));
-
-      allow create: if cap('reportOwn')
-                    && seesClient(request.resource.data.get('clientId', ''));
-      allow update, delete: if (cap('reportViewAll') || cap('reportOwn'))
-                            && seesClient(resource.data.get('clientId', ''));
+      allow write: if false;
     }
 
     // ── 예산 ── 입주자별 연간 예산

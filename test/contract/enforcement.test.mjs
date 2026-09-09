@@ -295,9 +295,13 @@ test('[게이트 B] reports 직접 쓰기가 막혀 있다', () => {
   // `allow write` 만 찾으면 `allow create` · `allow update, delete` 를 놓친다.
   // 실제로 그랬다 — 규칙을 create/update/delete 로 쪼개자 게이트가 초록으로
   // 바뀌었다. 쓰기는 쓰기다.
-  const writes = [...m[1].matchAll(/allow\s+([^:]+):/g)]
-    .map(a => a[1])
-    .filter(a => /\b(write|create|update|delete)\b/.test(a));
+  //
+  // 다만 `allow write: if false` 는 **차단 그 자체**다. 조건까지 봐야
+  // 목표를 달성한 규칙을 위반으로 잡지 않는다.
+  const writes = [...m[1].matchAll(/allow\s+([^:]+):\s*if\s+([^;]+);/g)]
+    .filter(a => /\b(write|create|update|delete)\b/.test(a[1]))
+    .filter(a => a[2].trim() !== 'false')
+    .map(a => a[1].trim());
   assert.deepEqual(
     writes, [],
     '보고서를 브라우저가 직접 씁니다. 상태 전이가 강제되지 않습니다:\n' + m[1].trim(),

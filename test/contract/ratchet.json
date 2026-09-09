@@ -1,5 +1,5 @@
 {
-  "minPassing": 15,
+  "minPassing": 17,
   "total": 21,
   "note": "집행 계약 게이트의 통과 개수 기준선. 마이그레이션 단계가 끝나면 `node tools/contract-ratchet.mjs --update`로 올린다. 줄어들면 CI가 실패한다."
 }
