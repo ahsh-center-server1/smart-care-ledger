@@ -40,6 +40,16 @@ export const CAP_SCHEMA_VERSION = 1;
 /** 관리자 플래그가 갖는 등급. 역할과 직교한다(users.isAdmin). */
 export const ADMIN_RANK = 99;
 
+/**
+ * 역할 서열. 관리자(isAdmin)는 역할이 아니라 직교하는 플래그라 여기 없다.
+ *
+ * 이 표가 카탈로그에 있는 이유: 브라우저와 서버가 같은 표를 봐야 한다.
+ * 두 벌이면 "담당자가 2인가 3인가"가 조용히 갈라지고, 그때 UI 는 허용하는데
+ * 규칙은 거부한다.
+ */
+export const ROLE_RANK = { 입력자: 1, 담당자: 2, 팀장: 3, 센터장: 4 };
+export const ROLES = Object.keys(ROLE_RANK);
+
 /** 설정 화면에서 고를 수 있는 등급. */
 export const SELECTABLE_RANKS = [1, 2, 3, 4, ADMIN_RANK];
 

@@ -11,14 +11,19 @@
  *   정상 스위치처럼 표시되고 저장까지 됐다. 관리자가 껐다고 생각한 권한이
  *   그대로 살아 있었다는 뜻이다.
  *
- * 구조
- *   역할은 서열 4단계. 관리자는 역할이 아니라 users.isAdmin 플래그(역할과 직교).
- *   각 키는 "최소 등급" 하나를 갖고, 관리자는 설정에서 그 등급만 조정한다.
- *   fail-closed — 모르는 키·역할은 거부한다(이전에는 더 느슨한 기본값으로 떨어졌다).
+ * 등급표는 여기에 없다
+ *   domain/perm-catalog.js 하나뿐이고, 같은 데이터를 서버가
+ *   functions/perm-catalog.data.json 으로 받아 쓴다(생성물, 동작 동등성 테스트).
+ *   이 파일이 자기 표를 갖고 있던 동안 서버는 firestore.rules 에 등급을
+ *   하드코딩하고 있었다 — 그래서 등급을 바꿔도 아무 일도 일어나지 않았다.
  *
- * 서버와의 관계
- *   firestore.rules / storage.rules가 같은 등급 체계를 토큰 클레임으로 재검증한다.
- *   여기서 숨기는 것은 UI 편의이고, 실제 차단은 서버가 한다.
+ * can() 이 무엇을 보는가
+ *   서버가 집행하는 키는 **authz/{uid}.caps** 를 본다. 규칙이 읽는 바로 그
+ *   문서다. 화면과 집행의 판단 근거가 하나이므로 "버튼은 보이는데 서버가
+ *   거부한다"가 구조적으로 생기지 않는다.
+ *
+ *   caps 가 아직 없으면(백필 전) 등급 계산으로 물러선다. 그때는 예전과 같은
+ *   상태이고, 백필을 돌리면 caps 쪽으로 넘어간다.
  */
 
 'use strict';
@@ -26,13 +31,12 @@
 import { S } from '../state.js';
 import { fb, fdb } from '../services/firestore.js';
 import { COLS } from '../constants.js';
+import {
+  PERM_CATALOG, PERM_KEYS, SERVER_ENFORCED_KEYS, SELECTABLE_RANKS,
+  ROLE_RANK, ROLES, ADMIN_RANK, capName, effectiveRank,
+} from '../domain/perm-catalog.js';
 
-// ─────────────────────────────────────────────
-// 역할 서열
-// ─────────────────────────────────────────────
-export const ROLE_RANK = { 입력자: 1, 담당자: 2, 팀장: 3, 센터장: 4 };
-export const ROLES = Object.keys(ROLE_RANK);
-export const ADMIN_RANK = 99;   // isAdmin 플래그가 갖는 등급
+export { ROLE_RANK, ROLES, ADMIN_RANK, SELECTABLE_RANKS };
 
 /** 등급 → 사람이 읽는 이름 (설정 화면 드롭다운용) */
 export const RANK_LABEL = {
@@ -43,72 +47,29 @@ export const RANK_LABEL = {
   [ADMIN_RANK]: '관리자만',
 };
 
-// ─────────────────────────────────────────────
-// 키별 최소 등급 (기본값)
-//
-// 여기 없는 키는 can()이 false를 반환한다. 새 기능을 만들면 반드시 등록할 것.
-// ─────────────────────────────────────────────
-export const DEFAULT_MIN_RANK = {
-  // ── 입력자 이상 — 담당 입주자의 본인 작성 거래만 ──
-  'trx.create':            1,
-  'trx.edit':              1,   // 입력자는 본인 작성분만 (호출부에서 createdBy 확인)
-  'trx.delete':            1,
+/**
+ * 키별 기본 최소 등급. 카탈로그에서 파생한다 — 여기서 정하지 않는다.
+ * 설정 화면이 "기본값과 다름"을 표시하는 데 쓴다.
+ */
+export const DEFAULT_MIN_RANK = Object.fromEntries(
+  PERM_KEYS.map((k) => [k, PERM_CATALOG[k].defaultRank]),
+);
 
-  // ── 담당자 이상 ──
-  'nav.report':            2,
-  'nav.settings':          2,
-  'trx.view.all':          2,   // 끄면 본인 작성 거래만 보인다
-  'trx.delete.bulk':       2,
-  'trx.reorder':           2,
-  'trx.transfer':          2,
-  'trx.category.edit':     2,
-  'trx.csv':               2,
-  'excel.upload':          2,
-  'receipt.upload':        2,
-  'receipt.print':         2,
-  'bankbook.upload':       2,
-  'report.own':            2,
-  'report.submit':         2,
-  'report.recall':         2,
-  'report.draft':          2,
-  'settings.fixed':        2,
-  'settings.budget':       2,
-  'settings.category':     2,   // 입주자 전용 카테고리·규칙
+/** 이 권한의 등급을 관리자가 조정할 수 있는가. 보안 하한이 걸린 키는 못 바꾼다. */
+export function isConfigurable(key) {
+  return PERM_CATALOG[key] ? PERM_CATALOG[key].configurable === true : false;
+}
 
-  // ── 팀장 이상 ──
-  'nav.staff':             3,
-  'client.view.all':       3,   // 담당 배정과 무관하게 전 입주자 조회
-  'report.view.all':       3,
-  'report.approve.team':   3,
-  'report.reject':         3,
-  'report.delete':         3,
-  // 반려된 보고서를 초안으로 되돌린다. 담당자가 퇴사·부재여도 보고서가
-  // 영구 정지되지 않도록 하는 탈출 경로.
-  'report.release':        3,
-  'settings.client':       3,
-  'settings.account':      3,
-  'settings.staff':        3,
-  // 변경 이력 조회. 누가 무엇을 바꿨는지는 관리 책임이 있는 사람이 봐야 하고,
-  // 동시에 다른 직원의 활동 기록이므로 담당자 등급에는 열지 않는다.
-  'audit.view':            3,
-  // 공통 카테고리·규칙은 전 입주자에게 영향을 주므로 한 단계 높다.
-  // 기본값 초기화도 이 권한으로 막는다 — 예전에는 검사가 아예 없어서
-  // 담당자가 버튼 하나로 전 입주자의 분류와 자동분류 규칙을 지울 수 있었다.
-  'settings.category.common': 3,
+/** 조정할 수 없는 이유(화면 안내용). 조정 가능하면 빈 문자열. */
+export function fixedReason(key) {
+  const e = PERM_CATALOG[key];
+  if (!e || e.configurable) return '';
+  return e.defaultRank >= ADMIN_RANK
+    ? '관리자 전용 — 등급을 낮출 수 없습니다'
+    : `보안 하한 ${e.securityFloor}등급 — 낮출 수 없습니다`;
+}
 
-  // ── 센터장 이상 ──
-  'report.approve.center': 4,
-  'report.revert':         4,   // 결재 취소
-  'settings.archive':      4,   // 연도 마감
-
-  // ── 관리자만 ──
-  'settings.permissions':  ADMIN_RANK,
-  'settings.reset':        ADMIN_RANK,   // 전체 초기화
-  'lock.bypass':           ADMIN_RANK,   // 최종 결재 완료 월 편집
-};
-
-/** 설정 화면에서 조정할 수 있는 등급 선택지 */
-export const SELECTABLE_RANKS = [1, 2, 3, 4, ADMIN_RANK];
+const SERVER_ENFORCED = new Set(SERVER_ENFORCED_KEYS);
 
 /** 권한 화면 표시용 그룹 (키 → 한글 이름) */
 export const PERM_SECTIONS = [
@@ -123,7 +84,10 @@ export const PERM_SECTIONS = [
     'trx.csv': 'CSV 내보내기',
   }},
   { title: '엑셀·증빙', keys: {
-    'excel.upload': '엑셀 업로드', 'receipt.upload': '증빙 첨부',
+    'excel.upload': '엑셀 업로드', 'receipt.upload': '증빙 업로드',
+    'receipt.attachOwn': '본인 작성 거래에 증빙 연결',
+    'receipt.attachAny': '남이 작성한 거래에 증빙 연결',
+    'receipt.replace': '이미 붙은 증빙 교체',
     'receipt.print': '증빙 일괄 출력', 'bankbook.upload': '통장 사진 업로드',
   }},
   { title: '보고서·결재', keys: {
@@ -159,26 +123,26 @@ export function myRank() {
 /**
  * 이 사용자가 해당 기능을 쓸 수 있는가.
  * 모르는 키는 거부한다(fail-closed) — 오타나 미등록 기능이 조용히 열리지 않도록.
+ *
+ * 서버가 집행하는 키는 caps 를 본다. 규칙이 보는 것과 같은 값이라야
+ * 화면과 집행이 어긋나지 않는다. caps 가 없으면(백필 전) 등급으로 물러선다.
  */
 export function can(key) {
-  const rank = myRank();
-  if (!rank) return false;
+  if (!(key in PERM_CATALOG)) return false;
+  if (!myRank()) return false;
+
+  if (S.caps && SERVER_ENFORCED.has(key)) {
+    return S.caps[capName(key)] === true;
+  }
   const required = requiredRank(key);
-  if (required === null) return false;
-  return rank >= required;
+  return required !== null && myRank() >= required;
 }
 
-/** 키에 필요한 최소 등급 (오버라이드 반영). 모르는 키는 null. */
+/** 키에 필요한 최소 등급 (오버라이드·보안 하한 반영). 모르는 키는 null. */
 export function requiredRank(key) {
   // 등급표에 없는 키는 오버라이드가 있어도 열지 않는다.
   // 오버라이드를 먼저 보면 config 문서에 아무 키나 넣어 권한을 만들어낼 수 있다.
-  if (!(key in DEFAULT_MIN_RANK)) return null;
-
-  if (S.permOverride && key in S.permOverride) {
-    const v = Number(S.permOverride[key]);
-    if (SELECTABLE_RANKS.includes(v)) return v;
-  }
-  return DEFAULT_MIN_RANK[key];
+  return effectiveRank(key, S.permOverride || {});
 }
 
 /** 특정 역할이 그 키를 쓸 수 있는지 (권한 화면 미리보기용) */
@@ -193,56 +157,84 @@ export function roleCan(role, key) {
 // ─────────────────────────────────────────────
 
 /**
- * 앱 시작 시 한 번. config/permissions 에서 등급 오버라이드를 읽는다.
- * 문서가 없거나 오류면 기본 등급표만 쓴다.
+ * 로그인 직후 한 번. 등급 오버라이드와 **권한 스냅샷**을 함께 읽는다.
+ *
+ * 두 문서를 읽는 이유가 다르다
+ *   config/permissions — 설정 화면이 "지금 등급이 몇인가"를 보여주는 데 쓴다.
+ *   authz/{uid}.caps   — can() 이 판정하는 근거. 규칙이 읽는 바로 그 값이다.
+ *
+ * caps 가 없어도 앱은 뜬다(백필 전 상태). 그때 can() 은 등급 계산으로
+ * 물러서므로 예전과 같이 동작한다.
  */
 export async function initPermissions() {
   S.permOverride = {};
-  try {
-    const { getDoc, doc } = fb();
-    const snap = await getDoc(doc(fdb(), COLS.CONFIG, 'permissions'));
-    if (!snap.exists()) return;
+  S.caps = null;
+  const { getDoc, doc } = fb();
 
-    const stored = snap.data() || {};
-    // 구 형식(역할별 boolean 매트릭스)은 무시한다. 형식이 다르고, 어차피
-    // 15개 키가 무반응이었으므로 이어받을 의미가 없다.
-    if (stored.schema !== 'minRank') {
-      console.info('이전 형식의 권한 설정을 건너뜁니다. 설정 화면에서 다시 지정하세요.');
-      return;
+  try {
+    const snap = await getDoc(doc(fdb(), COLS.CONFIG, 'permissions'));
+    if (snap.exists()) {
+      const stored = snap.data() || {};
+      // 구 형식(역할별 boolean 매트릭스)은 무시한다. 형식이 다르고, 어차피
+      // 15개 키가 무반응이었으므로 이어받을 의미가 없다.
+      if (stored.schema !== 'minRank') {
+        console.info('이전 형식의 권한 설정을 건너뜁니다. 설정 화면에서 다시 지정하세요.');
+      } else {
+        const out = {};
+        for (const [key, rank] of Object.entries(stored.minRank || {})) {
+          const v = Number(rank);
+          if (key in PERM_CATALOG && SELECTABLE_RANKS.includes(v)) out[key] = v;
+        }
+        S.permOverride = out;
+      }
     }
-    const out = {};
-    for (const [key, rank] of Object.entries(stored.minRank || {})) {
-      const v = Number(rank);
-      if (key in DEFAULT_MIN_RANK && SELECTABLE_RANKS.includes(v)) out[key] = v;
-    }
-    S.permOverride = out;
   } catch (err) {
-    console.warn('권한 로드 실패, 기본 등급표 사용:', err);
+    console.warn('권한 등급표 로드 실패, 기본값 사용:', err);
+  }
+
+  try {
+    const uid = String(S.user?.userId || '');
+    if (!uid) return;
+    const snap = await getDoc(doc(fdb(), COLS.AUTHZ, uid));
+    // enabled 가 false 면 caps 를 믿지 않는다 — 규칙도 그렇게 판정한다.
+    if (snap.exists() && snap.data()?.enabled === true) {
+      S.caps = snap.data().caps || null;
+    }
+  } catch (err) {
+    // 규칙이 authz 읽기를 막는 경우도 여기로 온다. 등급 계산으로 물러선다.
+    console.warn('권한 스냅샷 로드 실패, 등급 계산으로 판정합니다:', err);
   }
 }
 
 /**
- * 등급 오버라이드를 저장한다. 관리자만.
+ * 등급 오버라이드를 저장한다. **서버가 저장하고 서버가 집행값까지 고친다.**
+ *
+ * 브라우저가 config/permissions 를 직접 쓰던 시절에는 등급표만 바뀌고
+ * 규칙이 읽는 authz.caps 는 그대로였다 — 저장은 됐는데 아무것도 달라지지
+ * 않았다. 그래서 규칙이 이 문서의 클라이언트 쓰기를 막고, 콜러블이
+ * 두 곳을 함께 고친다.
+ *
  * @param {Object} minRank - { 'trx.edit': 2, ... }
+ * @returns {Promise<{changed:number, users:number, revoked:number, missingAuthz:number}>}
  */
 export async function savePermissions(minRank) {
   if (!can('settings.permissions')) throw new Error('권한이 없습니다');
 
-  // 기본값과 같은 항목은 저장하지 않는다 — 나중에 기본값을 바꾸면 따라오도록
-  const diff = {};
+  // 조정할 수 없는 키는 보내지 않는다 — 서버가 이름을 대고 거절하므로,
+  // 화면이 전체 목록을 그대로 보내면 저장이 통째로 실패한다.
+  const payload = {};
   for (const [key, rank] of Object.entries(minRank || {})) {
+    if (!(key in PERM_CATALOG)) continue;
+    if (!isConfigurable(key)) continue;
     const v = Number(rank);
-    if (!(key in DEFAULT_MIN_RANK)) continue;
-    if (!SELECTABLE_RANKS.includes(v)) continue;
-    if (v !== DEFAULT_MIN_RANK[key]) diff[key] = v;
+    if (SELECTABLE_RANKS.includes(v)) payload[key] = v;
   }
 
-  const { setDoc, doc } = fb();
-  await setDoc(doc(fdb(), COLS.CONFIG, 'permissions'), {
-    schema: 'minRank',
-    minRank: diff,
-    updatedAt: new Date().toISOString(),
-    updatedBy: String(S.user?.userId || ''),
-  });
-  S.permOverride = diff;
+  const res = await window._fbFn.call('savePermissions')({ minRank: payload });
+
+  // 저장이 끝난 뒤 다시 읽는다. 서버가 caps 까지 고쳤으므로 화면의 판정
+  // 근거도 새것이어야 한다 — 여기서 갱신하지 않으면 새로고침 전까지
+  // 화면만 옛 권한으로 남는다.
+  await initPermissions();
+  return res?.data || {};
 }

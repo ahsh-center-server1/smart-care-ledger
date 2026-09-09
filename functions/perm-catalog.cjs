@@ -37,7 +37,8 @@ const PERM_CATALOG = DATA.catalog;
 const PERM_KEYS = Object.keys(PERM_CATALOG);
 
 /** 역할 서열. 규칙·화면과 같은 표를 쓴다. */
-const ROLE_RANK = { 입력자: 1, 담당자: 2, 팀장: 3, 센터장: 4 };
+// 역할 서열도 생성물에서 온다 — 손으로 적으면 브라우저와 갈라진다.
+const ROLE_RANK = DATA.roleRank;
 
 /**
  * 키 → caps 불리언 이름. `'trx.view.all'` → `'trxViewAll'`.

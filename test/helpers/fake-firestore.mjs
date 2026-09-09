@@ -31,6 +31,13 @@ class DocRef {
   }
   collection(name) { return new CollectionRef(this.db, `${this.path}/${name}`); }
   async get() { return this.db._snapshot(this.path); }
+
+  // 단건 쓰기. 실제 SDK 와 마찬가지로 쓰기 하나짜리 원자 커밋이다.
+  async set(data, opts) {
+    return this.db._apply([{ op: 'set', path: this.path, data, merge: !!(opts && opts.merge) }]);
+  }
+  async update(data) { return this.db._apply([{ op: 'update', path: this.path, data }]); }
+  async delete() { return this.db._apply([{ op: 'delete', path: this.path }]); }
 }
 
 class Snapshot {

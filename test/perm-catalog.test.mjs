@@ -14,6 +14,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   PERM_CATALOG, PERM_KEYS, SERVER_ENFORCED_KEYS, CONFIGURABLE_KEYS,
@@ -299,41 +300,40 @@ test('영수증 권한이 4단계로 나뉘어 있다', () => {
 // ─────────────────────────────────────────────
 
 /**
- * 카탈로그가 기존 등급표와 **의도적으로** 다른 항목.
+ * 마이그레이션이 끝났다 — 등급표는 이제 한 벌이다.
  *
- * 여기 없는 차이는 실수다. 이 목록이 마이그레이션의 유일한 예외 기록이므로,
- * 항목을 추가할 때는 왜 다른지 함께 적는다.
+ * 이 자리에는 "카탈로그가 permissions.js 의 옛 표와 일치하는가"를 묻는
+ * 검사 세 개가 있었다. 그 표를 없애고 permissions.js 가 카탈로그에서
+ * 파생하게 했으므로, 그 비교는 자기 자신과의 비교가 되어 절대 실패하지
+ * 않는다. 절대 실패하지 않는 검사는 안전하다는 착각만 만든다.
+ *
+ * 대신 지금 실제로 깨질 수 있는 것을 확인한다 —
+ * permissions.js 가 다시 자기 등급표를 갖는 것.
+ *
+ * 마이그레이션 당시의 의도적 차이(기록으로 남긴다):
+ *   receipt.upload  2 → 1   스테이징 업로드와 최종 첨부를 분리했으므로
+ *                           업로드 자체는 입력자에게 열 수 있다.
+ *   신규: receipt.attachOwn · receipt.attachAny · receipt.replace
  */
-const INTENTIONAL_DIFFS = {
-  // 스테이징 업로드와 최종 첨부를 분리했으므로 업로드 자체는 입력자에게 열 수 있다.
-  // 최종 첨부는 receipt.attachOwn / attachAny / replace 가 따로 판정한다.
-  'receipt.upload': { was: 2, now: 1 },
-};
 
-/** 카탈로그에만 있는 신규 키 — 영수증 권한 분할의 결과. */
-const NEW_KEYS = ['receipt.attachOwn', 'receipt.attachAny', 'receipt.replace'];
-
-test('기존 등급표의 키가 카탈로그에 전부 있다', () => {
-  const missing = Object.keys(DEFAULT_MIN_RANK).filter(k => !(k in PERM_CATALOG));
-  assert.deepEqual(missing, [], `카탈로그에 빠진 키: ${missing.join(', ')}`);
+test('permissions.js 의 기본 등급표가 카탈로그에서 파생된다', () => {
+  const derived = Object.fromEntries(PERM_KEYS.map(k => [k, PERM_CATALOG[k].defaultRank]));
+  assert.deepEqual(
+    DEFAULT_MIN_RANK, derived,
+    'permissions.js 가 카탈로그와 다른 등급표를 갖고 있습니다 — 두 벌이 되면 갈라집니다',
+  );
 });
 
-test('카탈로그의 신규 키는 기록된 것뿐이다', () => {
-  const added = PERM_KEYS.filter(k => !(k in DEFAULT_MIN_RANK));
-  assert.deepEqual(added.sort(), [...NEW_KEYS].sort());
-});
-
-test('기본 등급이 기존 등급표와 일치한다 (기록된 예외 제외)', () => {
-  const drift = [];
-  for (const [key, was] of Object.entries(DEFAULT_MIN_RANK)) {
-    const now = PERM_CATALOG[key].defaultRank;
-    const allowed = INTENTIONAL_DIFFS[key];
-    if (allowed) {
-      assert.equal(allowed.was, was, `${key}: 예외 기록의 was가 낡았다`);
-      assert.equal(allowed.now, now, `${key}: 예외 기록의 now가 낡았다`);
-      continue;
-    }
-    if (now !== was) drift.push(`${key}: ${was} → ${now}`);
-  }
-  assert.deepEqual(drift, [], `기록되지 않은 등급 변경:\n  ${drift.join('\n  ')}`);
+test('permissions.js 에 손으로 적은 등급 리터럴이 없다', () => {
+  // 위 검사는 값만 본다. 값을 똑같이 적어 둔 표도 통과하므로, 표 자체가
+  // 다시 생기지 않았는지는 원문을 봐야 안다.
+  const src = readFileSync(new URL('../public/modules/permissions.js', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  const literals = [...src.matchAll(/'([a-z][\w]*(?:\.[\w]+)+)'\s*:\s*(\d+|ADMIN_RANK)/g)]
+    .map(m => m[0]);
+  assert.deepEqual(
+    literals, [],
+    `permissions.js 에 등급 리터럴이 생겼습니다: ${literals.join(', ')}`,
+  );
 });

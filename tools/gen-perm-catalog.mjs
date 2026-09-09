@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  PERM_CATALOG, CAP_SCHEMA_VERSION, ADMIN_RANK, SELECTABLE_RANKS,
+  PERM_CATALOG, CAP_SCHEMA_VERSION, ADMIN_RANK, SELECTABLE_RANKS, ROLE_RANK,
   SCOPE, ENFORCE, SERVER_ENFORCED, SERVER_ENFORCED_KEYS,
 } from '../public/domain/perm-catalog.js';
 
@@ -68,6 +68,7 @@ function build() {
       + 'public/domain/perm-catalog.js 를 고치고 `npm run perm-catalog:gen` 을 돌리세요.',
     capSchemaVersion: CAP_SCHEMA_VERSION,
     adminRank: ADMIN_RANK,
+    roleRank: { ...ROLE_RANK },
     selectableRanks: [...SELECTABLE_RANKS],
     scope: { ...SCOPE },
     enforce: { ...ENFORCE },

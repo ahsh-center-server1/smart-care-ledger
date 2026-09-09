@@ -42,6 +42,8 @@ export const COLS = {
   CATEGORIES:    'categories',
   REPORTS:       'reports',
   CONFIG:        'config',
+  // 권한 스냅샷. 보안 규칙이 읽는 문서이고 브라우저는 자기 것만 읽는다.
+  AUTHZ:         'authz',
   EXCEL_UPLOADS: 'excelUploads',
   // 변경 이력. 추가만 가능하고 수정·삭제는 규칙이 막는다(domain/audit.js 참고).
   AUDIT_LOGS:    'auditLogs',

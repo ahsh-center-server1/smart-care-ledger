@@ -37,6 +37,9 @@ export const S = {
   allFixedItems: [],       // 고정항목 전체 (대시보드/배너 미납 알림용)
   confirmedMonths: new Set(), // 최종 결재 완료된 월 캐시
   permOverride: null,      // 기능별 최소 등급 오버라이드 (initPermissions() 로드)
+  // 권한 스냅샷(authz/{uid}.caps). 보안 규칙이 읽는 값과 같은 것이라,
+  // can() 이 이것을 보면 화면과 집행이 어긋나지 않는다. 백필 전이면 null.
+  caps: null,
   monthlyStats: {},        // 당월 입주자별 수입/지출 집계 { clientId: {inc, exp} }
   mandatoryUnpaid: {},     // 당월 필수 고정항목 미납 카운트 { clientId: number }
 };

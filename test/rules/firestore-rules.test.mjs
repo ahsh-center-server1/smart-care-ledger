@@ -394,9 +394,19 @@ describe('config', () => {
     );
   });
 
-  it('관리자는 권한 등급표를 바꿀 수 있다', async () => {
-    await assertSucceeds(
+  it('관리자도 권한 등급표를 직접 쓸 수 없다 — savePermissions 콜러블만', async () => {
+    // 브라우저가 이 문서를 쓰면 등급표만 바뀌고 규칙이 읽는 authz.caps 는
+    // 그대로다. 저장은 됐는데 아무것도 달라지지 않는다 — 신고된 버그가 그것이다.
+    // 서버 콜러블이 두 곳을 함께 고치므로 여기는 전면 차단이다.
+    await assertFails(
       setDoc(doc(as(ACTORS.관리자), 'config/permissions'), { schema: 'minRank' }),
+    );
+  });
+
+  it('관리자는 그 밖의 config 문서는 쓸 수 있다', async () => {
+    // permissions 만 예외다. 다른 설정까지 막으면 관리 기능이 통째로 멈춘다.
+    await assertSucceeds(
+      setDoc(doc(as(ACTORS.관리자), 'config/somethingElse'), { x: 1 }),
     );
   });
 
@@ -500,16 +510,17 @@ describe('fail-closed — 알 수 없는 역할', () => {
   it('isAdmin 클레임이 문자열 "true"면 관리자로 인정되지 않는다', async () => {
     const spoofed = { uid: 'spoof', role: '입력자', isAdmin: 'true' };
     await assertFails(
-      setDoc(doc(as(spoofed), 'config/permissions'), { schema: 'minRank', hacked: true }),
+      setDoc(doc(as(spoofed), 'config/adminOnly'), { hacked: true }),
     );
   });
 
   it('isAdmin만 있고 role이 없어도 관리자 권한은 유효하다', async () => {
     // 관리자는 rank와 직교한다(ADMIN_RANK 99). 마이그레이션이 role을 못 채운
     // 관리자 계정이 잠기지 않아야 한다.
+    // (config/permissions 는 관리자에게도 닫혀 있으므로 다른 문서로 확인한다)
     const adminNoRole = { uid: 'admin-noRole', isAdmin: true };
     await assertSucceeds(
-      setDoc(doc(as(adminNoRole), 'config/permissions'), { schema: 'minRank' }),
+      setDoc(doc(as(adminNoRole), 'config/adminOnly'), { ok: true }),
     );
   });
 });

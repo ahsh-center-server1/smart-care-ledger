@@ -5,6 +5,7 @@ import {
   can, myRank, roleCan, requiredRank,
   ROLE_RANK, ROLES, ADMIN_RANK, DEFAULT_MIN_RANK, SELECTABLE_RANKS, PERM_SECTIONS,
 } from '../public/modules/permissions.js';
+import { PERM_CATALOG, PERM_KEYS, SERVER_ENFORCED_KEYS, capName } from '../public/domain/perm-catalog.js';
 
 const as = (role, isAdmin = false) => { S.user = { userId: 'u', role, isAdmin }; };
 
@@ -134,11 +135,29 @@ test('관리자 전용 키는 센터장도 못 쓴다', () => {
 // ─────────────────────────────────────────────
 test('오버라이드로 기능을 잠글 수 있다', () => {
   as('담당자');
-  assert.equal(can('excel.upload'), true);
-  S.permOverride = { 'excel.upload': ROLE_RANK.팀장 };
-  assert.equal(can('excel.upload'), false, '오버라이드가 반영되지 않습니다');
+  assert.equal(can('trx.csv'), true);
+  S.permOverride = { 'trx.csv': ROLE_RANK.팀장 };
+  assert.equal(can('trx.csv'), false, '오버라이드가 반영되지 않습니다');
   as('팀장');
-  assert.equal(can('excel.upload'), true);
+  assert.equal(can('trx.csv'), true);
+});
+
+test('보안 하한이 걸린 권한은 오버라이드가 통하지 않는다', () => {
+  // 카탈로그가 configurable:false 로 표시한 키다. 예전에는 설정 화면에
+  // 똑같이 드롭다운이 보이고 저장까지 됐지만, 이제 서버가 거절하고
+  // 판정도 기본 등급을 쓴다 — 조용히 무시하지 않는다.
+  const locked = PERM_KEYS.filter(k => !PERM_CATALOG[k].configurable);
+  assert.ok(locked.length >= 10, `보안 하한 키가 너무 적습니다 (${locked.length})`);
+
+  as('입력자');
+  for (const key of locked) {
+    S.permOverride = { [key]: 1 };   // 입력자까지 낮춰 본다
+    assert.equal(
+      can(key), PERM_CATALOG[key].defaultRank <= 1,
+      `${key}: 오버라이드로 보안 하한을 뚫었습니다`,
+    );
+  }
+  S.permOverride = {};
 });
 
 test('오버라이드로 기능을 열 수도 있다', () => {
@@ -151,8 +170,8 @@ test('오버라이드로 기능을 열 수도 있다', () => {
 test('잘못된 오버라이드 값은 무시하고 기본값을 쓴다', () => {
   as('담당자');
   for (const bad of [0, -1, 7, 'abc', null, undefined, {}]) {
-    S.permOverride = { 'excel.upload': bad };
-    assert.equal(can('excel.upload'), true,
+    S.permOverride = { 'trx.csv': bad };
+    assert.equal(can('trx.csv'), true,
       `잘못된 값 ${JSON.stringify(bad)}에서 기본값으로 복귀하지 않습니다`);
   }
 });
@@ -214,4 +233,57 @@ test('코드에서 호출하는 모든 can() 키가 등급표에 등록되어 �
   for (const key of used) {
     assert.ok(key in DEFAULT_MIN_RANK, `코드가 쓰는 '${key}'가 등급표에 없습니다`);
   }
+});
+
+// ─────────────────────────────────────────────
+// caps — 화면과 집행의 근거를 하나로
+//
+// 신고된 버그의 반대쪽 얼굴: 등급을 올리면 버튼은 숨는데 서버는 여전히
+// 허용했다. 이제 can() 은 서버가 집행하는 키에 대해 규칙이 읽는 것과
+// **같은 문서**(authz/{uid}.caps)를 본다. 두 판단이 갈라질 자리가 없다.
+// ─────────────────────────────────────────────
+
+test('caps 가 있으면 서버 집행 키는 caps 로 판정한다', () => {
+  as('센터장');
+  const key = 'trx.reorder';
+  assert.ok(SERVER_ENFORCED_KEYS.includes(key), '전제가 깨졌습니다 — 서버 집행 키가 아닙니다');
+  assert.equal(can(key), true);
+
+  // 등급으로는 통과하지만 caps 가 막으면 막힌다
+  S.caps = { [capName(key)]: false };
+  assert.equal(can(key), false, 'caps 를 보지 않고 등급으로 판정했습니다');
+
+  S.caps = { [capName(key)]: true };
+  assert.equal(can(key), true);
+  S.caps = null;
+});
+
+test('caps 에 없는 키는 거부한다 (fail-closed)', () => {
+  as('센터장');
+  S.caps = {};   // 백필은 됐지만 이 키가 빠졌다
+  assert.equal(can('trx.reorder'), false);
+  S.caps = null;
+});
+
+test('UI 전용 키는 caps 가 있어도 등급으로 판정한다', () => {
+  // caps 는 서버가 집행하는 키만 담는다. UI 전용 키까지 caps 로 판정하면
+  // 백필된 사용자에게 그 기능이 통째로 사라진다.
+  const uiOnly = PERM_KEYS.filter(k => !SERVER_ENFORCED_KEYS.includes(k));
+  assert.ok(uiOnly.length > 0, 'UI 전용 키가 없습니다 — 전제가 깨졌습니다');
+
+  as('센터장');
+  S.caps = {};
+  for (const key of uiOnly) {
+    assert.equal(can(key), myRank() >= requiredRank(key), `${key}: caps 로 판정했습니다`);
+  }
+  S.caps = null;
+});
+
+test('caps 가 없으면 등급 계산으로 물러선다 (백필 전)', () => {
+  as('담당자');
+  S.caps = null;
+  assert.equal(can('trx.reorder'), true);
+  S.permOverride = { 'trx.reorder': ROLE_RANK.팀장 };
+  assert.equal(can('trx.reorder'), false);
+  S.permOverride = {};
 });

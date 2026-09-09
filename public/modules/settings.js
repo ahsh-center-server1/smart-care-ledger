@@ -30,8 +30,11 @@ import {
   RESET_OPERATION_ID, isResetLockActive, remainingCollections,
   resetProgressPercent, resetProgressLabel, isResetConfirmed,
 } from '../domain/data-reset.js';
-import { can, savePermissions, requiredRank, DEFAULT_MIN_RANK,
-         SELECTABLE_RANKS, RANK_LABEL, PERM_SECTIONS } from './permissions.js';
+import { can } from './permissions.js';
+// 권한 패널은 settings-permissions.js 로 나갔다. 여기서 다시 내보내는 이유는
+// app.js 의 전역 등록과 설정 탭 전환이 이 모듈을 통해 부르기 때문이다.
+import { renderPermissionPanel } from './settings-permissions.js';
+export { renderPermissionPanel };
 
 // ─────────────────────────────────────────────
 // 직원·입주자·계좌 관리 통합 렌더
@@ -769,83 +772,6 @@ async function runReset(opRef,prevState){
   showLoading(false);
 }
 
-// ─────────────────────────────────────────────
-// 권한 관리 패널 (관리자 전용)
-// ─────────────────────────────────────────────
-export function renderPermissionPanel(){
-  const container=document.getElementById('permission-panel-content');
-  if(!container)return;
-
-  // 편집용 초안 — 현재 유효 등급으로 시작한다
-  const draft={};
-  PERM_SECTIONS.forEach(sec=>Object.keys(sec.keys).forEach(k=>{draft[k]=requiredRank(k);}));
-
-  const rankOpts=(cur)=>SELECTABLE_RANKS
-    .map(r=>`<option value="${r}"${Number(cur)===r?' selected':''}>${escAttr(RANK_LABEL[r])}</option>`)
-    .join('');
-
-  function renderPanel(){
-    const changed=Object.entries(draft).filter(([k,v])=>Number(v)!==DEFAULT_MIN_RANK[k]).length;
-    container.innerHTML=`
-      <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:#5b21b6;line-height:1.6;">
-        각 기능을 <b>어느 등급부터</b> 쓸 수 있는지 정합니다.
-        등급은 <b>입력자 &lt; 담당자 &lt; 팀장 &lt; 센터장</b> 순이고,
-        관리자 권한은 역할이 아니라 직원 등록 화면의 체크박스로 부여합니다.
-        ${changed?`<div style="margin-top:6px;font-weight:700;">기본값과 다른 항목 ${changed}개</div>`:''}
-      </div>
-      <div style="overflow-x:auto;">
-        ${PERM_SECTIONS.map(sec=>`
-          <div style="font-weight:800;color:#fff;background:#3b82f6;padding:7px 12px;border-radius:8px 8px 0 0;font-size:12px;">${escAttr(sec.title)}</div>
-          <div style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;margin-bottom:14px;">
-            ${Object.entries(sec.keys).map(([key,label])=>{
-              const isDefault=Number(draft[key])===DEFAULT_MIN_RANK[key];
-              return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 12px;border-bottom:1px solid #f1f5f9;">
-                <span style="font-size:13px;color:var(--text);">${escAttr(label)}${isDefault?'':'<span style="margin-left:6px;font-size:10px;font-weight:700;color:#7c3aed;">변경됨</span>'}</span>
-                <select class="perm-rank input" data-key="${escAttr(key)}" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;flex-shrink:0;">${rankOpts(draft[key])}</select>
-              </div>`;
-            }).join('')}
-          </div>`).join('')}
-      </div>
-      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
-        <button id="btn-perm-save" class="btn" style="padding:9px 20px;font-size:13px;">💾 저장</button>
-        <button id="btn-perm-reset" style="padding:9px 20px;background:#fff;color:#64748b;border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">↺ 기본값으로</button>
-      </div>`;
-
-    container.querySelectorAll('.perm-rank').forEach(sel=>{
-      sel.addEventListener('change',()=>{
-        draft[sel.dataset.key]=Number(sel.value);
-        renderPanel();   // '변경됨' 표시와 개수를 갱신
-      });
-    });
-
-    document.getElementById('btn-perm-save')?.addEventListener('click',async()=>{
-      try{
-        // 어떤 키가 기본값에서 벗어났는지 기록한다. 권한 등급표는 앱 전체의
-        // 접근 범위를 정하므로, 나중에 "왜 이 사람이 이걸 할 수 있었나"를
-        // 되짚을 수 있어야 한다.
-        const changed=Object.keys(draft)
-          .filter(k=>draft[k]!==DEFAULT_MIN_RANK[k])
-          .map(k=>`${k}=${draft[k]}`);
-        await savePermissions(draft);
-        // 기록은 저장이 성공한 뒤에 남긴다(실패한 시도를 변경으로 남기지 않게).
-        await auditLog('permissions.update',{
-          summary:{ count:changed.length, target:changed.slice(0,8).join(', ') },
-        });
-        toast('권한이 저장되었습니다. 새로고침 후 적용됩니다.','success',5000);
-        setTimeout(()=>location.reload(),2000);
-      }catch(e){toast('저장 실패: '+(e.message||'다시 시도하세요.'),'error');}
-    });
-
-    document.getElementById('btn-perm-reset')?.addEventListener('click',()=>{
-      showConfirm('기본값으로','모든 기능의 최소 등급을 기본값으로 되돌립니다. 저장을 눌러야 반영됩니다.',()=>{
-        Object.keys(draft).forEach(k=>{draft[k]=DEFAULT_MIN_RANK[k];});
-        renderPanel();
-        toast('기본값으로 되돌렸습니다. 저장을 눌러 적용하세요.','info');
-      },'되돌리기');
-    });
-  }
-  renderPanel();
-}
 
 // ─────────────────────────────────────────────
 // 탭 전환

@@ -276,6 +276,12 @@ Object.assign(exports, require('./client-fns')({
   db, callable, HttpsError, logger, FieldValue,
 }));
 
+// 권한 등급표 — 저장이 곧 집행이 되도록 config 와 전 사용자 caps 를 함께 쓴다.
+// 콜러블만 꺼낸다(팩토리 반환값에 테스트용 순수 함수가 함께 들어 있다).
+exports.savePermissions = require('./permissions-fns')({
+  db, callable, HttpsError, logger, FieldValue,
+}).savePermissions;
+
 // signup 은 이 배선보다 위에 정의돼 있다. exports 에 걸면 Firebase 가 그것을
 // 배포 대상 함수로 취급하므로(모든 export 가 함수로 해석된다) 모듈 변수에 담는다.
 // 콜러블은 배포가 아니라 호출 시점에 실행되므로 순서는 문제되지 않는다.

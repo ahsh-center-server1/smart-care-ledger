@@ -2,6 +2,12 @@
   "_generated": "tools/gen-perm-catalog.mjs — 직접 고치지 마세요. public/domain/perm-catalog.js 를 고치고 `npm run perm-catalog:gen` 을 돌리세요.",
   "capSchemaVersion": 1,
   "adminRank": 99,
+  "roleRank": {
+    "입력자": 1,
+    "담당자": 2,
+    "팀장": 3,
+    "센터장": 4
+  },
   "selectableRanks": [
     1,
     2,
