@@ -29,6 +29,10 @@ const { diagnose } = require('./errors');
 admin.initializeApp();
 const db = admin.firestore();
 
+// 호출자 판정은 한 곳에서 한다 — 규칙·Storage 규칙과 같은 근거(authz/{uid})를
+// 본다. 토큰 클레임은 발급 시점에 굳어서 강등·퇴사를 반영하지 못한다.
+const { requireCaller } = require('./caller.cjs')({ db, HttpsError });
+
 // Firestore가 asia-northeast3(서울)에 있으므로 함수도 같은 리전에 둔다.
 setGlobalOptions({ region: 'asia-northeast3', maxInstances: 10 });
 
@@ -98,12 +102,6 @@ function rankOf(role) {
   return ROLE_RANK[role] || 0;
 }
 
-/** 호출자의 등급을 토큰에서 읽는다. 관리자는 최상위로 취급. */
-function callerRank(auth) {
-  if (!auth) return 0;
-  if (auth.token && auth.token.isAdmin === true) return 99;
-  return rankOf(auth.token && auth.token.role);
-}
 
 // ─────────────────────────────────────────────────────────────
 // login — 비밀번호 검증 후 커스텀 토큰 발급
@@ -165,7 +163,16 @@ exports.login = callable('login', async (request) => {
   const role = VALID_ROLES.includes(user.role) ? user.role : '입력자';
   const isAdmin = user.isAdmin === true;
 
-  const token = await admin.auth().createCustomToken(userId, { role, isAdmin });
+  // 토큰에는 **신원만** 싣는다(uid).
+  //
+  // 예전에는 { role, isAdmin } 을 클레임으로 실었고, 규칙과 함수가 그것으로
+  // 판정했다. 클레임은 발급 시점에 굳는다 — 강등해도, 퇴사시켜도 이미 나간
+  // 토큰은 옛 권한을 그대로 갖고 refresh 로 계속 갱신된다. 만료를 기다리는
+  // 것은 차단 정책이 아니다.
+  //
+  // 이제 판정 근거는 authz/{uid} 한 곳이고 매번 새로 읽는다. 아래 user 객체는
+  // 화면이 이름·역할을 표시하는 데 쓰는 값이지 권한의 근거가 아니다.
+  const token = await admin.auth().createCustomToken(userId);
 
   // 실패 카운트 초기화 (로그인 성공 경로를 막지 않도록 실패해도 무시)
   secretRef
@@ -283,6 +290,12 @@ exports.savePermissions = require('./permissions-fns')({
   db, callable, HttpsError, logger, FieldValue,
 }).savePermissions;
 
+// 자산이동 — 두 다리를 한 트랜잭션에서 만든다. 상대편을 찾는 조회까지
+// 그 안에 있어야 두 사람이 같은 상대편을 덮어쓰지 않는다.
+Object.assign(exports, require('./transfer-fns')({
+  db, callable, requireCaller, HttpsError, logger, FieldValue,
+}));
+
 // 연도 마감 — 잠긴 달의 거래를 지우고 보관 이미지를 덮어쓴다.
 // 둘 다 브라우저에서는 할 수 없는 일이다(규칙이 막고, generation 사전조건이 없다).
 Object.assign(exports, require('./archive-fns')({
@@ -309,7 +322,7 @@ Object.assign(exports, require('./receipt-fns')({
 authz = authzFns;
 
 Object.assign(exports, require('./staff-fns')({
-  db, callable, callerRank, rankOf, HttpsError, logger, FieldValue,
+  db, callable, requireCaller, rankOf, HttpsError, logger, FieldValue,
   hashPassword, validUserId, VALID_ROLES, USERS, SECRETS,
   currentOverride: authzFns.currentOverride,
   authzWriteFor: authzFns.authzWriteFor,
@@ -333,9 +346,12 @@ exports.changePassword = callable('changePassword', async (request) => {
   }
 
   const isSelf = targetId === auth.uid;
-  const isAdminCaller = auth.token && auth.token.isAdmin === true;
-  if (!isSelf && !isAdminCaller) {
-    throw new HttpsError('permission-denied', '다른 직원의 비밀번호는 관리자만 변경할 수 있습니다.');
+  if (!isSelf) {
+    // 남의 비밀번호를 바꾸는 것은 직원 관리 행위다 — 그 권한으로 판정한다.
+    // 본인 변경은 authz 를 읽지 않는다: 백필 전이거나 권한이 없어도
+    // 자기 비밀번호는 바꿀 수 있어야 한다.
+    const me = await requireCaller(auth);
+    me.require('settings.staff', '다른 직원의 비밀번호 변경');
   }
 
   const secretRef = db.collection(SECRETS).doc(targetId);
@@ -369,7 +385,7 @@ exports.changePassword = callable('changePassword', async (request) => {
 // ─────────────────────────────────────────────────────────────
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 Object.assign(exports, require('./ledger-triggers')({
-  db, callable, callerRank, HttpsError, logger, FieldValue,
+  db, callable, requireCaller, HttpsError, logger, FieldValue,
 }));
 
 // ─────────────────────────────────────────────────────────────
@@ -380,7 +396,7 @@ Object.assign(exports, require('./ledger-triggers')({
 // 인증과 아무 관계가 없어 따로 두는 편이 읽기 쉽다.
 // ─────────────────────────────────────────────────────────────
 Object.assign(exports, require('./directory-fns')({
-  db, callable, callerRank, HttpsError, logger, onDocumentWritten,
+  db, callable, requireCaller, HttpsError, logger, onDocumentWritten,
 }));
 
 // ─────────────────────────────────────────────────────────────
@@ -390,7 +406,7 @@ Object.assign(exports, require('./directory-fns')({
 // 이미 상한을 넘겨 있어(test/architecture.test.mjs), 관계없는 기능은 따로 둔다.
 // ─────────────────────────────────────────────────────────────
 Object.assign(exports, require('./ai-fns')({
-  db, callable, callerRank, HttpsError, logger, FieldValue, Timestamp,
+  db, callable, requireCaller, HttpsError, logger, FieldValue, Timestamp,
 }));
 
 

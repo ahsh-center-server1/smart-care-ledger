@@ -15,7 +15,7 @@
  */
 
 module.exports = function aiFns(ctx) {
-  const { db, callable, callerRank, HttpsError, logger, FieldValue, Timestamp } = ctx;
+  const { db, callable, requireCaller, HttpsError, logger, FieldValue, Timestamp } = ctx;
 
   const { isAiConfigured } = require('./ai/anthropic');
   const { extractReceipt, extractBankbook } = require('./ai/receipt-extract');
@@ -23,9 +23,6 @@ module.exports = function aiFns(ctx) {
 
   /** 호출마다 실제 비용이 든다 — 분당 20장으로 제한한다. */
   const AI_RATE = { maxAttempts: 20, windowMs: 60 * 1000 };
-
-  /** 사진 판독을 쓸 수 있는 최소 등급 — 증빙을 올릴 수 있는 사람과 같다. */
-  const AI_MIN_RANK = 1;
 
   /**
    * getAiStatus — 화면이 이 기능을 보여줄지 정한다.
@@ -42,7 +39,12 @@ module.exports = function aiFns(ctx) {
   const AI_SECRETS = { secrets: ['ANTHROPIC_API_KEY'] };
 
   const getAiStatus = callable('getAiStatus', async (request) => {
-    if (callerRank(request.auth) < AI_MIN_RANK) {
+    // 권한이 없거나 백필 전이면 "설정되지 않음"으로 답한다 — 이 호출은
+    // 버튼을 보일지 정하는 데 쓰이고, 거부를 던지면 화면이 오류로 멈춘다.
+    try {
+      const me = await requireCaller(request.auth);
+      if (!me.can('receipt.upload')) return { configured: false };
+    } catch (_) {
       return { configured: false };
     }
     return { configured: isAiConfigured() };
@@ -50,12 +52,8 @@ module.exports = function aiFns(ctx) {
 
   /** 사진 판독 공통 전처리 — 권한·한도·입력 검증. */
   async function guardImageCall(request, scope) {
-    if (!request.auth || !request.auth.uid) {
-      throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
-    }
-    if (callerRank(request.auth) < AI_MIN_RANK) {
-      throw new HttpsError('permission-denied', '사진 자동입력 권한이 없습니다.');
-    }
+    const me = await requireCaller(request.auth);
+    me.require('receipt.upload', '사진 자동입력');
     if (!isAiConfigured()) {
       // failed-precondition으로 던져야 메시지가 화면까지 간다(internal은 버려진다).
       throw new HttpsError(
@@ -83,7 +81,7 @@ module.exports = function aiFns(ctx) {
     if (!base64) {
       throw new HttpsError('invalid-argument', '사진이 전달되지 않았습니다.');
     }
-    return { base64, mediaType };
+    return { base64, mediaType, me };
   }
 
   /** 판독 실패를 사용자가 읽을 수 있는 메시지로 바꾼다. 끝은 항상 직접 입력 안내. */
@@ -118,13 +116,13 @@ module.exports = function aiFns(ctx) {
    * 클라이언트의 순수 모듈이 한다 — 그래야 재현되고 테스트된다.
    */
   const analyzeReceipt = callable('analyzeReceipt', async (request) => {
-    const { base64, mediaType } = await guardImageCall(request, 'receipt-analyze');
+    const { base64, mediaType, me } = await guardImageCall(request, 'receipt-analyze');
     try {
       const { extracted, usage, bytes } = await extractReceipt({ base64, mediaType });
 
       // 감사 로그는 **메타데이터만** 남긴다. 사진·상호명·품목은 기록하지 않는다
       // — 기록 자체가 개인정보 사본이 되면 안 된다.
-      await writeAiAuditLog(request, 'ai.receiptAnalyze', {
+      await writeAiAuditLog(request, me, 'ai.receiptAnalyze', {
         clientId: String((request.data && request.data.clientId) || ''),
         byteLength: bytes,
         confidence: Number(extracted && extracted.confidence) || 0,
@@ -145,11 +143,11 @@ module.exports = function aiFns(ctx) {
    * 결과는 기존 엑셀 업로드의 중복검사 → 미리보기 → 저장 경로로 들어간다.
    */
   const analyzeBankbook = callable('analyzeBankbook', async (request) => {
-    const { base64, mediaType } = await guardImageCall(request, 'bankbook-analyze');
+    const { base64, mediaType, me } = await guardImageCall(request, 'bankbook-analyze');
     try {
       const { extracted, usage, bytes } = await extractBankbook({ base64, mediaType });
 
-      await writeAiAuditLog(request, 'ai.receiptAnalyze', {
+      await writeAiAuditLog(request, me, 'ai.receiptAnalyze', {
         clientId: String((request.data && request.data.clientId) || ''),
         byteLength: bytes,
         count: Array.isArray(extracted && extracted.rows) ? extracted.rows.length : 0,
@@ -173,15 +171,16 @@ module.exports = function aiFns(ctx) {
    * 규칙을 우회하므로 serverTimestamp를 그대로 쓴다. 기록 실패가 판독 결과를
    * 버리게 하지 않는다 — 부수 작업이다.
    */
-  async function writeAiAuditLog(request, action, summary) {
+  async function writeAiAuditLog(request, actor, action, summary) {
     try {
-      const token = request.auth.token || {};
       const RETENTION_DAYS = 730;
       await db.collection('auditLogs').add({
         action,
         actorUid: request.auth.uid,
-        actorName: String(token.name || request.auth.uid),
-        actorRole: String(token.role || ''),
+        // 역할은 토큰이 아니라 권한 스냅샷에서 온다. 이름은 authz 에 없으므로
+        // uid 를 쓴다 — 예전에도 토큰에 name 클레임이 없어 결과는 같았다.
+        actorName: String(request.auth.uid),
+        actorRole: String((actor && actor.role) || ''),
         summary,
         timestamp: FieldValue.serverTimestamp(),
         expireAt: Timestamp.fromMillis(Date.now() + RETENTION_DAYS * 86400000),

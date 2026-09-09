@@ -19,7 +19,7 @@ const USERS = 'users';
 const CATEGORIES = 'categories';
 
 module.exports = function directoryFns(ctx) {
-  const { db, callable, callerRank, HttpsError, logger, onDocumentWritten } = ctx;
+  const { db, callable, requireCaller, logger, onDocumentWritten } = ctx;
 
   /** 컬렉션을 통째로 읽어 명부를 다시 만든다. */
   async function rebuildDirectory(name, col, build) {
@@ -67,9 +67,12 @@ module.exports = function directoryFns(ctx) {
      *   · 트리거가 실패해 명부가 어긋났을 때 복구
      */
     rebuildDirectories: callable('rebuildDirectories', async (request) => {
-      if (callerRank(request.auth) < 99) {
-        throw new HttpsError('permission-denied', '관리자만 실행할 수 있습니다.');
-      }
+      // 관리자 전용 복구 작업이다. 등급 리터럴(99) 대신 카탈로그 키로
+      // 판정한다 — settings.reset 은 관리자 전용이고 보안 하한이 걸려 있어
+      // 설정에서 낮출 수 없다. 복구 버튼 둘을 위해 새 권한 키를 만들면
+      // 정책적으로 구분되지 않는 caps 키가 하나 더 늘어난다.
+      const me = await requireCaller(request.auth);
+      me.require('settings.reset', '명부 재생성');
       const staff = await rebuildDirectory(DIRECTORIES.STAFF, USERS, buildStaffDirectory);
       const categories = await rebuildDirectory(
         DIRECTORIES.CATEGORIES, CATEGORIES, buildCategoryDirectory);

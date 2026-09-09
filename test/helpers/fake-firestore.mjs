@@ -91,7 +91,15 @@ class CollectionRef extends Query {
     this.path = path;
     this.id = path.slice(path.lastIndexOf('/') + 1);
   }
-  doc(id) { return new DocRef(this.db, `${this.path}/${id}`); }
+  /**
+   * `doc()` 을 인자 없이 부르면 **새 ID 를 만든다** — 실제 SDK 와 같다.
+   * 이것을 흉내내지 않으면 자산이동처럼 두 문서를 미리 만드는 코드가
+   * 같은 경로를 두 번 써서 한쪽이 다른 쪽을 덮는다(실제로 그랬다).
+   */
+  doc(id) {
+    const key = id === undefined ? this.db._newId() : id;
+    return new DocRef(this.db, `${this.path}/${key}`);
+  }
 }
 
 class WriteBuffer {
@@ -116,7 +124,11 @@ class FakeDb {
     /** 이 술어가 참인 경로에 쓰면 커밋이 통째로 실패한다. */
     this.failWrite = null;
     this.commits = 0;
+    this._autoId = 0;
   }
+
+  /** 자동 생성 문서 ID. 순서대로라 테스트 실패 메시지를 읽기 쉽다. */
+  _newId() { this._autoId += 1; return `auto${String(this._autoId).padStart(4, '0')}`; }
 
   collection(path) { return new CollectionRef(this, path); }
   /** `db.doc('a/b/c/d')` — 문서 경로를 통째로 받는 형태. */

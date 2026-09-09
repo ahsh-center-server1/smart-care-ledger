@@ -78,26 +78,16 @@ test('저장 직전에 중복을 다시 확인한다', () => {
 // ─────────────────────────────────────────────
 // 자산이동 — 한쪽만 남는 상태 금지
 // ─────────────────────────────────────────────
-test('자산이동은 양쪽 다리를 한 배치로 쓴다', () => {
-  // 예전에는 addDoc → addDoc → updateDoc 3회 연속 쓰기라, 두 번째에서 끊기면
-  // 출금만 남고 입금이 없었다 — 장부에서 돈이 증발한다.
-  const body = bodyOf(src('public/modules/modals.js'), 'async function saveTransfer(');
-  assert.ok(body.includes('writeBatch'), '배치로 쓰지 않습니다');
-  assert.ok(!body.includes('addDoc('), '개별 addDoc이 남아 있습니다');
-  const commits = (body.match(/batch\.commit\(\)/g) || []).length;
-  assert.ok(commits >= 1, 'commit이 없습니다');
-});
-
-test('상대편이 없으면 자산이동을 반쪽으로 저장하지 않는다', () => {
-  // 예전에는 상대편을 못 찾으면 토스트만 띄우고 그대로 '자산이동'으로 저장했다.
-  // 상대편 탐색이 S.transactions만 훑었으므로 이게 사실상 기본 동작이었다.
-  const body = bodyOf(src('public/modules/modals.js'), 'async function saveTransfer(');
-  assert.ok(body.includes('candidates.length>1'), '후보가 여럿일 때 처리가 없습니다');
-  assert.ok(/throw new Error/.test(body), '모호할 때 저장을 막지 않습니다');
-  // 후보 0건이면 상대편을 만든다
-  assert.ok(body.includes('batch.set(inRef'), '상대편을 만드는 경로가 없습니다');
-  assert.ok(body.includes('getDocs'), '상대편을 Firestore에서 찾지 않습니다');
-});
+/**
+ * 자산이동의 불변식은 **동작 테스트**로 옮겼다 — test/transfer.test.mjs.
+ *
+ * 저장이 서버로 갔기 때문이다(functions/transfer-fns.js). 브라우저 원문에서
+ * `writeBatch` 나 `candidates.length>1` 을 찾던 검사들은 검사할 원문이 없다.
+ *
+ * 그리고 서버로 옮기면서 마지막 구멍도 닫혔다: 상대편을 찾는 조회가 배치
+ * **밖에** 있어서, 두 사람이 같은 순간 각자의 거래를 자산이동으로 바꾸면
+ * 둘 다 같은 상대편을 발견해 서로를 덮어썼다.
+ */
 
 test('자산이동을 다른 유형으로 바꾸는 것을 막는다', () => {
   // linkedTrxId가 남아 한쪽은 지출, 다른 쪽은 여전히 자산이동인 짝이 생겼다

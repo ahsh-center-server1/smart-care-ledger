@@ -28,8 +28,8 @@
 | `state.js` | `public/state.js` | 전역 상태(S) |
 | `parser-config.js` | `public/parser-config.js` | 은행별 엑셀 파서 설정 (ES 모듈, 유일한 설정) |
 | `manifest.json` / `sw.js` | `public/` | PWA 매니페스트 / 서비스 워커 |
-| 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions |
-| 서비스 | `public/services/*.js` | firestore, image(이미지 압축), storage, balance(잔액 계산), excel-parser |
+| 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions, fixed-items, report-actor, settings-permissions |
+| 서비스 | `public/services/*.js` | firestore, image(이미지 압축), storage, balance(잔액 계산), excel-parser, receipt-upload, scoped-fetch, in-query |
 | 유틸 | `public/utils/ui.js` | UI 유틸리티 |
 | `firestore.rules` | `firestore.rules` (루트) | Firestore 보안 규칙 |
 
@@ -78,9 +78,21 @@ archive_YYYY: 마감된 거래 데이터 백업
 | 센터장 | 팀장 권한 + 최종 결재(2차)/반려/수정/삭제 + 데이터 마감 |
 | 관리자 | 모든 권한 + 역할별 권한 관리 + 전체 초기화 |
 
-> 권한은 `public/modules/permissions.js`의 `DEFAULT_PERMISSIONS`가 기본값이며,
-> `config/permissions` 문서로 역할별 오버라이드 가능(관리자, 설정→권한 탭).
-> 권한 판정은 `can('key')` 헬퍼로 수행.
+> **권한 카탈로그는 `public/domain/perm-catalog.js` 하나뿐이다.**
+> 키마다 기본 등급·보안 하한·조정 가능 여부·집행 지점을 담는다.
+> 서버는 같은 데이터를 `functions/perm-catalog.data.json`(생성물)으로 받아 쓴다.
+>
+> 판정 근거는 **`authz/{uid}` 문서 하나**다. 서버가 등급표로 caps(불리언 묶음)를
+> 미리 계산해 두고, firestore.rules · storage.rules · Cloud Functions 가 그것만 읽는다.
+> 화면의 `can('key')` 도 서버 집행 키에 대해서는 같은 caps 를 본다 —
+> 그래서 "버튼은 보이는데 서버가 거부한다"가 구조적으로 생기지 않는다.
+>
+> 관리자가 설정→권한에서 등급을 바꾸면 `savePermissions` 콜러블이
+> `config/permissions` 와 **전 직원의 caps** 를 함께 고친다. 조정할 수 없는 권한
+> (보안 하한)은 이름을 대고 거절한다.
+>
+> ⚠️ 커스텀 토큰에는 역할이 실리지 않는다. 클레임은 발급 시점에 굳어서
+> 강등·퇴사를 반영하지 못한다 — 이제 매 호출·매 규칙 평가마다 authz 를 읽는다.
 
 ---
 
@@ -325,6 +337,47 @@ HANA_BANK: {
 
 ---
 
+## 10-2. 서버가 하는 일 — 브라우저가 더 이상 쓰지 못하는 것
+
+보안 규칙이 카탈로그를 따르게 되면서, 브라우저가 직접 쓰던 것 중 여럿이
+Cloud Functions 콜러블로 옮겨 갔다. 규칙은 문서 하나만 보므로 **순서·짝·
+교차 문서 정합성**을 강제할 수 없기 때문이다.
+
+| 하는 일 | 콜러블 | 브라우저에서 왜 안 되나 |
+|---|---|---|
+| 직원 등록·승인·재직·삭제 | `upsertStaff` · `approveStaff` · `setStaffActive` · `deleteStaff` | `users` 와 `authz` 를 한 트랜잭션에서 써야 한다 |
+| 권한 등급표 저장 | `savePermissions` | 등급표와 전 직원 caps 를 함께 고쳐야 한다 |
+| 입주자 저장 | `saveClient` | 담당 배정과 투영본(`authz` · `clientAccess`)이 한 트랜잭션이어야 한다 |
+| 보고서 결재 | `applyReportTransition` · `saveReportComment` · `deleteReport` | 전이표가 순서를 강제해야 한다 |
+| 영수증 최종화 | `startReceiptUpload` · `finalizeReceipts` | 최종 경로 덮어쓰기 금지, generation 기록 |
+| 자산이동 | `saveTransfer` | 상대편 조회까지 트랜잭션 안이어야 한다 |
+| 연도 마감 | `runArchive` | 잠긴 달의 삭제 + generation 사전조건 |
+| 권한 백필 | `backfillAuthz` | 배포 후 **가장 먼저** 돌려야 한다 |
+
+### 배포 순서 (어기면 전원이 막힌다)
+
+```
+1. functions 배포      — 새 콜러블과 signup 의 authz 생성이 올라간다
+2. backfillAuthz 실행  — 전 직원의 authz/{uid} 를 만든다 (관리자 로그인 후)
+3. rules 배포          — 규칙이 authz 를 읽기 시작한다
+```
+
+2번을 건너뛰고 3번을 하면 **모든 사용자가 차단된다**(authz 문서가 없어 규칙
+평가가 실패한다 — fail-closed). 반대 순서로 되돌릴 수는 있지만, 그 사이
+운영이 멈춘다.
+
+`backfillAuthz` 는 caps 가 아니라 `users.isAdmin` 으로 판정하므로 백필 전에도
+관리자가 실행할 수 있다. 첫 관리자 계정은 `signup` 이 authz 를 함께 만든다.
+
+### 집행 계약 게이트
+
+`npm run test:contract` — 네 집행 지점(Functions · Firestore Rules ·
+Storage Rules · 브라우저)이 카탈로그를 실제로 따르는지 21개 항목으로 확인한다.
+`npm run test:contract:ratchet` 은 통과 개수를 `test/contract/ratchet.json`
+기준선과 대조한다(CI). 현재 21/21이므로 이제부터는 **회귀만** 잡는다.
+
+---
+
 ## 11. 코드 작성 규칙
 
 1. **함수 중복 절대 금지** — ESLint `no-redeclare`/`no-func-assign`이 잡아준다
@@ -387,7 +440,7 @@ https://smart-care-ledger.web.app
 | 업로드 크기 상한 | `storage.js` `validateUploadSize` | 이미지·HEIC 15MB / 기타(PDF) 8MB, 초과 시 예외 |
 | HEIC→JPEG 변환 | `image.js` `heicToJpeg` | iPhone HEIC 업로드 시 heic2any(CDN 지연 로드)로 JPEG 변환 후 압축, 실패 시 원본 유지 |
 | 삭제 시 파일 정리 | `deleteFromStorage` / `deleteManyFromStorage` | 거래·영수증·통장사진 삭제, 전체 초기화 시 Storage 객체까지 삭제 (고아 파일 방지) |
-| 연도 마감 시 재압축 보관 | `recompressStorageImage` + `settings.js executeArchive` | 해당 연도 영수증·통장사진을 900px/0.6으로 재압축(덮어쓰기), **삭제하지 않음** |
+| 연도 마감 시 재압축 보관 | `functions/archive-fns.js runArchive` | 해당 연도 영수증·통장사진을 900px/60 으로 재압축(덮어쓰기), **삭제하지 않음**. 서버가 `ifGenerationMatch` 로 **읽은 그 객체일 때만** 덮어쓴다 — 브라우저 판은 동시 교체를 조용히 뭉갰다. sharp 가 없으면 건너뛴다(best-effort) |
 | 목록용 썸네일 | `uploadImageWithThumb` | 통장사진 업로드 시 320px 썸네일 동시 생성 → 갤러리/보고서 목록은 `thumbUrl` 사용 (다운로드 대역폭 절감) |
 | 엑셀 원본 gzip 저장 | `storage.js` `uploadExcelOriginal` | 원본은 유지하되 gzip 압축 저장(다운로드 시 원본 복원), 중복 rawRows는 미저장 |
 

@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const staffFns = require('../functions/staff-fns.js');
 const authzModule = require('../functions/authz.cjs');
 const { computeCaps, rankOf, CAP_SCHEMA_VERSION } = require('../functions/perm-catalog.cjs');
+const makeCaller = require('../functions/caller.cjs');
 
 /**
  * 직원 변경의 **원자성** 검증.
@@ -34,8 +35,6 @@ const SECRETS = 'userSecrets';
 
 /** index.js 의 rankOf 와 같은 계산 — 역할 문자열 하나를 받는다. */
 const rankOfRole = (role) => ROLE_RANK[role] || 0;
-const callerRank = (auth) => (auth && auth.token && auth.token.isAdmin === true
-  ? 99 : rankOfRole(auth && auth.token && auth.token.role));
 
 /** 실제 배선과 같은 authzWriteFor. 카탈로그 계산까지 진짜를 쓴다. */
 function makeAuthzWriter(db) {
@@ -58,11 +57,14 @@ function makeAuthzWriter(db) {
 
 function build(seed) {
   const db = makeDb(seed);
+  // 호출자 판정은 이제 authz 문서를 읽는다 — 토큰 클레임이 아니다.
+  // 실제 배선과 같은 모듈을 쓴다(대역을 따로 만들면 검사가 헐거워진다).
+  const { requireCaller } = makeCaller({ db, HttpsError: FakeHttpsError });
   const fns = staffFns({
     db,
     // callable 은 배포용 래퍼다. 테스트는 핸들러를 그대로 부른다.
     callable: (name, handler) => handler,
-    callerRank,
+    requireCaller,
     rankOf: rankOfRole,
     HttpsError: FakeHttpsError,
     logger: silentLogger,
@@ -77,15 +79,25 @@ function build(seed) {
   return { db, fns };
 }
 
-const ADMIN = { uid: 'boss', token: { role: '센터장', isAdmin: true } };
+const ADMIN = { uid: 'boss' };
+
+/** 권한 스냅샷 하나. caps 는 실제 카탈로그로 계산한다 — 손으로 적지 않는다. */
+function authzOf(uid, role, isAdmin, clientIds = []) {
+  return {
+    uid, role, isAdmin: isAdmin === true, enabled: true,
+    accessibleClientIds: clientIds,
+    caps: computeCaps(rankOf({ role, isAdmin }), {}),
+    capSchemaVersion: CAP_SCHEMA_VERSION,
+  };
+}
 
 /** 관리자 1명 + 대상 직원 1명. authz 는 백필된 상태. */
 function seedTwo() {
   return {
     'users/boss': { userId: 'boss', name: '센터장', role: '센터장', isAdmin: true, approved: true, active: true },
     'users/kim': { userId: 'kim', name: '김담당', role: '담당자', isAdmin: false, approved: true, active: true },
-    'authz/boss': { uid: 'boss', role: '센터장', isAdmin: true, enabled: true, caps: {}, accessibleClientIds: [] },
-    'authz/kim': { uid: 'kim', role: '담당자', isAdmin: false, enabled: true, caps: {}, accessibleClientIds: ['c1'] },
+    'authz/boss': authzOf('boss', '센터장', true),
+    'authz/kim': authzOf('kim', '담당자', false, ['c1']),
   };
 }
 
@@ -152,9 +164,9 @@ test('마지막 관리자는 비활성화할 수 없다', async () => {
 
   // boss 를 지우면 kim 이 마지막 관리자가 된다
   db.docs.delete('users/boss');
-  const other = { uid: 'lead', token: { role: '팀장' } };
-  seed['users/lead'] = { userId: 'lead', role: '팀장', active: true };
-  db.docs.set('users/lead', seed['users/lead']);
+  const other = { uid: 'lead' };
+  db.docs.set('users/lead', { userId: 'lead', role: '팀장', active: true });
+  db.docs.set('authz/lead', authzOf('lead', '팀장', false));
 
   await assert.rejects(
     () => fns.setStaffActive({ auth: other, data: { userId: 'kim', active: false } }),
@@ -353,7 +365,7 @@ test('본인 계정은 삭제할 수 없다', async () => {
 
 test('팀장 미만은 직원 관리를 할 수 없다', async () => {
   const { fns } = build(seedTwo());
-  const staff = { uid: 'kim', token: { role: '담당자' } };
+  const staff = { uid: 'kim' };
   for (const [name, data] of [
     ['setStaffActive', { userId: 'boss', active: false }],
     ['upsertStaff', { userId: 'x', name: 'x', role: '입력자', password: 'longenough1' }],
@@ -369,8 +381,10 @@ test('팀장 미만은 직원 관리를 할 수 없다', async () => {
 });
 
 test('자기보다 높은 등급은 부여할 수 없다', async () => {
-  const { db, fns } = build(seedTwo());
-  const lead = { uid: 'lead', token: { role: '팀장' } };
+  const seed = seedTwo();
+  seed['authz/lead'] = authzOf('lead', '팀장', false);
+  const { db, fns } = build(seed);
+  const lead = { uid: 'lead' };
   await assert.rejects(
     () => fns.approveStaff({ auth: lead, data: { userId: 'kim', role: '센터장' } }),
     (e) => e.code === 'permission-denied',
@@ -379,8 +393,10 @@ test('자기보다 높은 등급은 부여할 수 없다', async () => {
 });
 
 test('관리자 플래그는 관리자만 줄 수 있다', async () => {
-  const { db, fns } = build(seedTwo());
-  const lead = { uid: 'lead', token: { role: '센터장' } };   // isAdmin 아님
+  const seed = seedTwo();
+  seed['authz/lead'] = authzOf('lead', '센터장', false);   // isAdmin 아님
+  const { db, fns } = build(seed);
+  const lead = { uid: 'lead' };
   await assert.rejects(
     () => fns.approveStaff({ auth: lead, data: { userId: 'kim', role: '담당자', isAdmin: true } }),
     (e) => e.code === 'permission-denied',

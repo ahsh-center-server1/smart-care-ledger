@@ -16,7 +16,7 @@ const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { calcAccountBalance, affectsBalance } = require('./balance.cjs');
 
 module.exports = function ledgerTriggers(ctx) {
-  const { db, callable, callerRank, HttpsError, logger, FieldValue } = ctx;
+  const { db, callable, requireCaller, logger, FieldValue } = ctx;
 
   // ─────────────────────────────────────────────────────────────
   // syncAccountBalance — 거래가 바뀌면 계좌 currentBalance를 서버에서 재계산
@@ -192,9 +192,10 @@ module.exports = function ledgerTriggers(ctx) {
    * 전체 스캔이므로 관리자만, 그리고 사람이 눌러야 돈다.
    */
   const rebuildLockedMonths = callable('rebuildLockedMonths', async (request) => {
-  if (callerRank(request.auth) < 99) {
-    throw new HttpsError('permission-denied', '관리자만 실행할 수 있습니다.');
-  }
+    // 관리자 전용 복구 작업이다. 등급 리터럴(99) 대신 카탈로그 키로 판정한다 —
+    // settings.reset 은 관리자 전용이고 보안 하한이 걸려 설정에서 낮출 수 없다.
+    const me = await requireCaller(request.auth);
+    me.require('settings.reset', '마감 색인 재생성');
 
   const snap = await db.collection(REPORTS).where('status', '==', 'confirmed').get();
   const months = buildLockIndex(snap.docs.map((d) => d.data()));

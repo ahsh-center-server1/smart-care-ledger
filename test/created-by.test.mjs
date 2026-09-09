@@ -21,6 +21,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 const PUBLIC = new URL('../public/', import.meta.url).pathname;
 
@@ -158,12 +161,44 @@ test('규칙이 실제로 createdBy를 요구한다 — 이 테스트의 전제'
 test('거래 생성 지점을 실제로 찾아낸다 — 검사기 자체의 확인', () => {
   // 정규식이 아무것도 못 잡으면 이 파일은 항상 통과하는 빈 테스트가 된다.
   // 그것이 가장 위험한 실패 방식이므로 최소 개수를 요구한다.
+  //
+  // 숫자가 6에서 3으로 내려왔다. 검사기가 놓치기 시작해서가 아니라,
+  // 자산이동·영수증 자동입력이 서버 콜러블로 옮겨 가 **브라우저에 남은
+  // 생성 지점이 실제로 줄었기** 때문이다. 아래 서버 쪽 검사가 그 몫을 받는다.
   let found = 0;
   for (const file of jsFiles()) {
     const src = readFileSync(file, 'utf8');
     if (!src.includes('COLS.TRANSACTIONS')) continue;
     found += transactionCreateSites(src, file).length;
   }
-  assert.ok(found >= 6,
+  assert.ok(found >= 3,
     `거래 생성 지점을 ${found}개만 찾았습니다 — 검사기가 형태를 놓치고 있습니다`);
+});
+
+test('서버가 만드는 거래도 createdBy를 남긴다 — 그리고 서버가 정한다', () => {
+  // 브라우저 쪽 검사는 "필드를 빠뜨리지 않았는가"를 본다. 서버는 한 걸음 더
+  // 나아가야 한다: 값을 **클라이언트가 보낼 수 없어야** 한다. 보낼 수 있으면
+  // 남의 이름으로 거래를 만들어 그 사람의 회수·수정 권한을 빌릴 수 있다.
+  //
+  // 거래 문서를 만드는 자리는 금액 필드로 알아본다 — tx.set 이든 스프레드든
+  // 형태와 무관하게 잡힌다.
+  const { readdirSync: rd, readFileSync: rf } = require('node:fs');
+  const FN = new URL('../functions/', import.meta.url).pathname;
+
+  const sites = [];
+  for (const name of rd(FN).filter(n => /\.(js|cjs)$/.test(n))) {
+    const src = rf(join(FN, name), 'utf8');
+    for (const m of src.matchAll(/amountOut:/g)) {
+      sites.push({ name, near: src.slice(Math.max(0, m.index - 400), m.index + 400) });
+    }
+  }
+  assert.ok(sites.length >= 3, `서버 거래 생성 지점을 ${sites.length}개만 찾았습니다`);
+
+  // 값이 서버에서 온다 — auth.uid 또는 호출자 객체(me.uid).
+  // 기존 작성자를 지키는 형태(`existing.createdBy || me.uid`)도 서버 값이다.
+  const bad = sites.filter(s => !/createdBy:[^,\n]*\b(auth\.uid|me\.uid)\b/.test(s.near));
+  assert.deepEqual(
+    bad.map(s => s.name), [],
+    'createdBy 를 서버가 정하지 않는 거래 생성 지점이 있습니다: ' + bad.map(s => s.name).join(', '),
+  );
 });

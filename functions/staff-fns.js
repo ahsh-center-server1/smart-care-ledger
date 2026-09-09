@@ -28,15 +28,16 @@
  *   되돌릴 방법이 없다(로그인 자체가 막힌다). 트랜잭션 안에서 읽으면
  *   그 쿼리 결과가 커밋 시점까지 잠기므로 둘 중 하나는 재시도·거부된다.
  *
- * ⚠️ 호출자 권한 판정은 **아직 토큰 클레임(callerRank)** 이다.
- *    caps 로 바꾸는 것은 백필이 끝난 뒤여야 한다 — 지금 바꾸면 caps 가 없는
- *    상태에서 직원 관리가 통째로 막히고, 그러면 백필을 실행할 관리자도
- *    아무것도 못 한다. 순서: 배포 → 백필 → 판정 근거 전환(게이트 A).
+ * 호출자 판정은 authz/{uid}.caps 다 — 규칙과 같은 근거다.
+ *   백필 전에는 이 파일의 모든 콜러블이 거부된다. 그것이 의도다.
+ *   부트스트랩은 막히지 않는다: signup 이 첫 관리자의 authz 를 함께 만들고,
+ *   backfillAuthz 는 caps 가 아니라 users.isAdmin 으로 판정한다.
+ *   순서는 여전히 배포 → 백필 → 규칙이다.
  */
 
 module.exports = function staffFns(ctx) {
   const {
-    db, callable, callerRank, rankOf, HttpsError, logger, FieldValue,
+    db, callable, requireCaller, rankOf, HttpsError, logger, FieldValue,
     hashPassword, validUserId, VALID_ROLES, USERS, SECRETS,
     currentOverride, authzWriteFor,
   } = ctx;
@@ -45,8 +46,6 @@ module.exports = function staffFns(ctx) {
   const AUTHZ = 'authz';
   const MEMBERS = 'members';
 
-  /** 직원 관리 최소 등급. 팀장 이상. */
-  const STAFF_ADMIN_RANK = 3;
 
   /**
    * 삭제 한 건이 만들 수 있는 쓰기 수 상한.
@@ -57,12 +56,15 @@ module.exports = function staffFns(ctx) {
    */
   const MAX_DELETE_WRITES = 400;
 
-  function requireStaffAdmin(auth, what) {
-    if (!auth) throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
-    if (callerRank(auth) < STAFF_ADMIN_RANK) {
-      throw new HttpsError('permission-denied', `${what} 권한이 없습니다.`);
-    }
-    return callerRank(auth);
+  /**
+   * 직원 관리 권한. 등급 리터럴이 아니라 카탈로그 키로 판정한다 —
+   * 관리자가 설정에서 등급표를 바꾸면 그것이 그대로 반영돼야 한다.
+   * (settings.staff 는 보안 하한이 걸려 있어 담당자 이하로는 못 내린다)
+   */
+  async function requireStaffAdmin(auth, what) {
+    const me = await requireCaller(auth);
+    me.require('settings.staff', what);
+    return me;
   }
 
   /**
@@ -100,7 +102,7 @@ module.exports = function staffFns(ctx) {
   // ───────────────────────────────────────────────────────────
   const approveStaff = callable('approveStaff', async (request) => {
     const auth = request.auth;
-    const myRank = requireStaffAdmin(auth, '직원 승인');
+    const me = await requireStaffAdmin(auth, '직원 승인');
 
     const d = request.data || {};
     const targetId = String(d.userId || '').trim();
@@ -111,10 +113,10 @@ module.exports = function staffFns(ctx) {
     if (!VALID_ROLES.includes(role)) throw new HttpsError('invalid-argument', '역할이 올바르지 않습니다.');
 
     // 자기 등급을 넘는 역할은 부여 불가. 관리자 플래그는 관리자만 줄 수 있다.
-    if (rankOf(role) > myRank) {
+    if (rankOf(role) > me.rank) {
       throw new HttpsError('permission-denied', '본인보다 높은 등급은 부여할 수 없습니다.');
     }
-    if (isAdmin && !(auth.token && auth.token.isAdmin === true)) {
+    if (isAdmin && !me.isAdmin) {
       throw new HttpsError('permission-denied', '관리자 권한은 관리자만 부여할 수 있습니다.');
     }
 
@@ -149,7 +151,7 @@ module.exports = function staffFns(ctx) {
 
   const upsertStaff = callable('upsertStaff', async (request) => {
     const auth = request.auth;
-    const myRank = requireStaffAdmin(auth, '직원 관리');
+    const me = await requireStaffAdmin(auth, '직원 관리');
 
     const list = Array.isArray(request.data && request.data.staff)
       ? request.data.staff
@@ -157,7 +159,7 @@ module.exports = function staffFns(ctx) {
     if (!list.length) throw new HttpsError('invalid-argument', '등록할 직원이 없습니다.');
     if (list.length > 200) throw new HttpsError('invalid-argument', '한 번에 200명까지만 처리할 수 있습니다.');
 
-    const isAdminCaller = auth.token && auth.token.isAdmin === true;
+    const isAdminCaller = me.isAdmin;
     const override = await currentOverride();
     const results = [];
 
@@ -181,7 +183,7 @@ module.exports = function staffFns(ctx) {
         results.push({ userId, ok: false, error: `알 수 없는 역할: ${role}` });
         continue;
       }
-      if (rankOf(role) > myRank) {
+      if (rankOf(role) > me.rank) {
         results.push({ userId, ok: false, error: '본인보다 높은 등급은 부여할 수 없습니다.' });
         continue;
       }
@@ -248,7 +250,7 @@ module.exports = function staffFns(ctx) {
   // ───────────────────────────────────────────────────────────
   const setStaffActive = callable('setStaffActive', async (request) => {
     const auth = request.auth;
-    requireStaffAdmin(auth, '직원 관리');
+    await requireStaffAdmin(auth, '직원 관리');
 
     const d = request.data || {};
     const userId = String(d.userId || '').trim();
@@ -294,7 +296,7 @@ module.exports = function staffFns(ctx) {
   // ───────────────────────────────────────────────────────────
   const deleteStaff = callable('deleteStaff', async (request) => {
     const auth = request.auth;
-    requireStaffAdmin(auth, '직원 관리');
+    await requireStaffAdmin(auth, '직원 관리');
 
     const userId = String((request.data && request.data.userId) || '').trim();
     if (!validUserId(userId)) throw new HttpsError('invalid-argument', '대상 아이디가 올바르지 않습니다.');

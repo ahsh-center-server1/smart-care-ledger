@@ -376,88 +376,31 @@ export function downloadManualTemplate(){
   toast('양식 다운로드 완료. 내용 작성 후 업로드하세요.','success');
 }
 /**
- * 자산이동 저장 — **양쪽 다리를 한 배치로 쓴다.**
+ * 자산이동 — **서버가 두 다리를 한 트랜잭션에서 만든다.**
  *
  * 예전에는 세 가지 방식으로 한쪽만 남는 상태가 만들어졌다.
  *   1. 생성이 addDoc → addDoc → updateDoc 3회 연속 쓰기였다(트랜잭션 아님).
  *      두 번째에서 끊기면 출금만 남고 입금이 없다 → 장부에서 돈이 증발한다.
  *   2. 지출 → 자산이동으로 바꿀 때 상대편을 못 찾으면 토스트만 띄우고
- *      그대로 '자산이동'으로 저장했다. 상대편 탐색이 S.transactions
- *      (당월·활성 입주자)만 훑었으므로 이게 사실상 기본 동작이었다.
+ *      그대로 '자산이동'으로 저장했다.
  *   3. 자산이동 → 지출로 바꾸면 linkedTrxId가 남아 짝이 어긋났다.
  *
- * 지금은 자산이동에 다리가 하나뿐인 상태를 만들지 않는다.
- * 상대편이 없으면 **만든다.** 후보가 여럿이면 저장을 막고 사람이 정리하게 한다.
+ * writeBatch 로 1·3 을 고친 뒤에도 한 곳이 남아 있었다: **상대편을 찾는
+ * 조회가 배치 밖에 있었다.** 두 사람이 같은 순간 각자의 거래를 자산이동으로
+ * 바꾸면 둘 다 같은 상대편을 발견해 서로를 덮어쓴다.
+ * 서버는 그 조회까지 트랜잭션 안에 둔다(functions/transfer-fns.js).
  */
 async function saveTransfer({existing,existId,acc,toAcc,accId,toAccId,date,time,desc,amount}){
-  const{writeBatch,doc,collection,getDocs,query,where}=fb();
-  const db=fdb();
-  const base={date,time,type:'자산이동',category:'자산이동',description:desc};
-  const outData={...base,clientId:acc.clientId,accountId:accId,
-    amountIn:0,amountOut:amount,receiptUrl:existing?.receiptUrl||'',linkedAccountId:toAccId,
-    createdBy:existing?.createdBy||String(S.user?.userId||'')};
-  const inData={...base,clientId:toAcc.clientId,accountId:toAccId,
-    amountIn:amount,amountOut:0,receiptUrl:'',linkedAccountId:accId,
-    createdBy:String(S.user?.userId||'')};
-
-  const batch=writeBatch(db);
-
-  // ── 신규 ──
-  if(!existId){
-    const outRef=doc(collection(db,COLS.TRANSACTIONS));
-    const inRef=doc(collection(db,COLS.TRANSACTIONS));
-    batch.set(outRef,{...outData,linkedTrxId:inRef.id});
-    batch.set(inRef ,{...inData ,linkedTrxId:outRef.id});
-    await batch.commit();
-    await afterTransfer(acc,toAcc,'자산이동 저장됨');
-    return;
-  }
-
-  // ── 이미 짝이 있는 자산이동 수정 ──
-  if(existing?.linkedTrxId){
-    batch.update(doc(db,COLS.TRANSACTIONS,existId),{...outData,linkedTrxId:existing.linkedTrxId});
-    batch.update(doc(db,COLS.TRANSACTIONS,existing.linkedTrxId),
-      {...inData,linkedTrxId:existId});
-    await batch.commit();
-    await afterTransfer(acc,toAcc,'자산이동 수정됨');
-    return;
-  }
-
-  // ── 일반 거래를 자산이동으로 바꾸는 경우: 상대편을 찾거나 만든다 ──
-  // 화면 캐시가 아니라 Firestore에서 그 계좌·그 날짜를 직접 본다.
-  // 예전에는 S.transactions만 훑어서 다른 입주자·다른 기간 상대편을 놓쳤다.
-  // clientId 제약이 없으면 담당 범위를 증명할 수 없어 쿼리가 통째로 거부된다.
-  // 계좌는 한 입주자에 속하므로 그 입주자로 좁힌다.
-  const toClientId=String((S.allAccounts||[]).find(a=>a.id===toAccId)?.clientId||'');
-  if(!toClientId)return null;
-  const snap=await getDocs(query(collection(db,COLS.TRANSACTIONS),
-    where('clientId','==',toClientId),
-    where('accountId','==',toAccId),where('date','>=',date),where('date','<=',date)));
-  const candidates=snap.docs
-    .map(d=>({id:d.id,...d.data()}))
-    .filter(x=>x.id!==existId&&x.type!=='자산이동'
-      &&Number(x.amountIn||0)===amount&&Number(x.amountOut||0)===0);
-
-  if(candidates.length>1){
-    throw new Error(`입금 계좌에 같은 날짜·금액 거래가 ${candidates.length}건 있습니다. `
-      +'어느 것이 상대편인지 알 수 없으니 입금 계좌에서 먼저 정리한 뒤 다시 시도하세요.');
-  }
-
-  if(candidates.length===1){
-    const cand=candidates[0];
-    batch.update(doc(db,COLS.TRANSACTIONS,existId),{...outData,linkedTrxId:cand.id});
-    batch.update(doc(db,COLS.TRANSACTIONS,cand.id),{...inData,linkedTrxId:existId});
-    await batch.commit();
-    await afterTransfer(acc,toAcc,'반대편 거래를 찾아 자산이동으로 연결했습니다.');
-    return;
-  }
-
-  // 상대편이 없으면 만든다 — 돈이 한쪽에서만 빠지는 상태를 만들지 않는다
-  const inRef=doc(collection(db,COLS.TRANSACTIONS));
-  batch.update(doc(db,COLS.TRANSACTIONS,existId),{...outData,linkedTrxId:inRef.id});
-  batch.set(inRef,{...inData,linkedTrxId:existId});
-  await batch.commit();
-  await afterTransfer(acc,toAcc,'입금 계좌에 상대편 거래를 새로 만들었습니다.');
+  const res=await window._fbFn.call('saveTransfer')({
+    fromAccountId:accId,toAccountId:toAccId,date,time,description:desc,amount,
+    existId:existId||'',
+  });
+  const out=res.data||{};
+  const msg=out.linkedExisting?'반대편 거래를 찾아 자산이동으로 연결했습니다.'
+    :out.createdMate?'입금 계좌에 상대편 거래를 새로 만들었습니다.'
+    :existId?'자산이동 수정됨':'자산이동 저장됨';
+  void existing; void toAcc;
+  await afterTransfer(acc,toAcc,msg);
 }
 
 async function afterTransfer(acc,toAcc,msg){
