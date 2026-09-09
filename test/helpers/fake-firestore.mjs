@@ -20,10 +20,14 @@ export const SERVER_TIMESTAMP = Symbol('serverTimestamp');
 /** 필드 삭제 센티넬. _apply 가 이 값을 보면 키를 지운다. */
 export const DELETE_FIELD = Symbol('deleteField');
 
+/** 증가 센티넬. 이전 값에 더한다 — 나눠 도는 작업의 진행 수를 세는 데 쓴다. */
+class Increment { constructor(by) { this.by = by; } }
+
 /** admin SDK 의 FieldValue 자리. 값은 센티넬이고 _apply 가 해석한다. */
 export const FieldValue = {
   serverTimestamp: () => SERVER_TIMESTAMP,
   delete: () => DELETE_FIELD,
+  increment: (n) => new Increment(n),
 };
 
 const isDoc = (path) => path.split('/').length % 2 === 0;
@@ -57,19 +61,23 @@ class Snapshot {
 
 class Query {
   /** @param {string|null} prefix 컬렉션 경로 (collectionGroup 이면 null) */
-  constructor(db, { prefix = null, group = null, filters = [], limit = null }) {
+  constructor(db, { prefix = null, group = null, filters = [], limit = null, offset = 0, order = null }) {
     this.db = db;
     this._prefix = prefix;
     this._group = group;
     this._filters = filters;
     this._limit = limit;
+    this._offset = offset;
+    this._order = order;
   }
   _with(patch) {
     return new Query(this.db, {
-      prefix: this._prefix, group: this._group,
-      filters: this._filters, limit: this._limit, ...patch,
+      prefix: this._prefix, group: this._group, filters: this._filters,
+      limit: this._limit, offset: this._offset, order: this._order, ...patch,
     });
   }
+  orderBy(field) { return this._with({ order: field }); }
+  offset(n) { return this._with({ offset: n }); }
   where(field, op, value) {
     return this._with({ filters: [...this._filters, { field, op, value }] });
   }
@@ -143,7 +151,7 @@ class FakeDb {
   _snapshot(path) { return new Snapshot(new DocRef(this, path), this.docs.get(path)); }
 
   _runQuery(q) {
-    const out = [];
+    let out = [];
     for (const [path, data] of this.docs) {
       if (q._prefix) {
         if (!path.startsWith(`${q._prefix}/`)) continue;
@@ -154,8 +162,11 @@ class FakeDb {
       }
       if (!q._filters.every((f) => match(data, f))) continue;
       out.push(new Snapshot(new DocRef(this, path), data));
-      if (q._limit != null && out.length >= q._limit) break;
     }
+    // 정렬은 문서 ID(__name__)만 흉내낸다 — 마감이 쓰는 유일한 정렬이다.
+    if (q._order === '__name__') out.sort((a, b) => (a.ref.path < b.ref.path ? -1 : 1));
+    if (q._offset) out = out.slice(q._offset);
+    if (q._limit != null) out = out.slice(0, q._limit);
     return { docs: out, size: out.length, empty: out.length === 0 };
   }
 
@@ -174,15 +185,25 @@ class FakeDb {
       const prev = next.get(o.path);
       if (o.op === 'update') {
         if (prev === undefined) throw new Error(`없는 문서를 update 했습니다: ${o.path}`);
-        next.set(o.path, dropDeleted({ ...prev, ...o.data }));
+        next.set(o.path, dropDeleted(applyIncrements(prev, { ...prev, ...o.data })));
       } else {
-        next.set(o.path, dropDeleted(o.merge ? { ...(prev || {}), ...o.data } : { ...o.data }));
+        const base = o.merge ? (prev || {}) : {};
+        next.set(o.path, dropDeleted(applyIncrements(base, { ...base, ...o.data })));
       }
     }
     this.docs = next;
     this.commits += 1;
     return ops.length;
   }
+}
+
+/** FieldValue.increment() 를 이전 값 기준으로 푼다. */
+function applyIncrements(prev, doc) {
+  const out = { ...doc };
+  for (const [k, v] of Object.entries(doc)) {
+    if (v instanceof Increment) out[k] = Number((prev || {})[k] || 0) + v.by;
+  }
+  return out;
 }
 
 /** FieldValue.delete() 로 표시된 키를 실제로 없앤다. */
@@ -197,6 +218,13 @@ function match(data, { field, op, value }) {
   if (op === '==') return v === value;
   if (op === '!=') return v !== value;
   if (op === 'in') return Array.isArray(value) && value.includes(v);
+  // 범위 비교는 마감이 날짜로 쓴다. 값이 없으면 어떤 범위에도 들지 않는다 —
+  // undefined 를 문자열과 비교하면 항상 false 인 JS 규칙과 같다.
+  if (v === undefined) return false;
+  if (op === '>=') return v >= value;
+  if (op === '<=') return v <= value;
+  if (op === '>') return v > value;
+  if (op === '<') return v < value;
   throw new Error(`대역이 모르는 연산자: ${op}`);
 }
 
@@ -243,7 +271,36 @@ class FakeFile {
   async getMetadata() {
     const o = this.bucket.objects.get(this.name);
     if (!o) { const e = new Error('없습니다'); e.code = 404; throw e; }
-    return [{ generation: o.generation, metadata: { ...o.metadata } }];
+    return [{
+      generation: o.generation,
+      size: (Buffer.isBuffer(o.data) ? o.data.length : String(o.data).length),
+      contentType: o.contentType || 'image/jpeg',
+      metadata: { ...o.metadata },
+    }];
+  }
+
+  async download() {
+    const o = this.bucket.objects.get(this.name);
+    if (!o) { const e = new Error('없습니다'); e.code = 404; throw e; }
+    return [Buffer.isBuffer(o.data) ? o.data : Buffer.from(String(o.data))];
+  }
+
+  /**
+   * 덮어쓰기. `preconditionOpts.ifGenerationMatch` 를 실제로 검사한다 —
+   * 그것이 이 대역을 만든 이유다(읽은 그 객체일 때만 써야 한다).
+   */
+  async save(data, opts) {
+    const o = this.bucket.objects.get(this.name);
+    const want = opts && opts.preconditionOpts && opts.preconditionOpts.ifGenerationMatch;
+    if (want != null && String((o || {}).generation) !== String(want)) {
+      const e = new Error('generation 이 다릅니다'); e.code = 412; throw e;
+    }
+    this.bucket.objects.set(this.name, {
+      data,
+      generation: this.bucket.nextGeneration(),
+      metadata: (opts && opts.metadata && opts.metadata.metadata) || (o || {}).metadata || {},
+      contentType: (opts && opts.contentType) || (o || {}).contentType,
+    });
   }
 
   async delete(opts) {
@@ -264,8 +321,10 @@ class FakeBucket {
   nextGeneration() { this._gen += 1; return String(this._gen); }
   file(path) { return new FakeFile(this, path); }
   /** 규칙을 우회해 객체를 심는다. */
-  put(path, data = 'bytes') {
-    this.objects.set(path, { data, generation: this.nextGeneration(), metadata: {} });
+  put(path, data = 'bytes', contentType = 'image/jpeg') {
+    this.objects.set(path, {
+      data, generation: this.nextGeneration(), metadata: {}, contentType,
+    });
   }
 }
 

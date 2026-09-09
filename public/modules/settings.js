@@ -13,8 +13,8 @@
 
 import { S } from '../state.js';
 import { toast, showConfirm, showLoading, escAttr, escHtml } from '../utils/ui.js';
-import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchSetDocs, batchMixedOps } from '../services/firestore.js';
-import { deleteManyFromStorage, recompressStorageImage } from '../services/storage.js';
+import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchMixedOps } from '../services/firestore.js';
+import { deleteManyFromStorage } from '../services/storage.js';
 import { COLS, DEFAULT_CATEGORIES } from '../constants.js';
 const SYSTEM_OPS = COLS.SYSTEM_OPS;
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
@@ -464,81 +464,33 @@ export async function executeArchive(year){
   // 탭 버튼만 숨겨져 있었고 window.executeArchive는 노출되어 있었다
   if(!can('settings.archive')){toast('연도 마감 권한이 없습니다.','error');return;}
   showLoading(true);
+  const btn=document.getElementById('btn-archive');
   try{
-    const{getDocs,collection,query,where,doc,setDoc,updateDoc}=fb();
-    const db=fdb();
-    const snap=await getDocs(query(collection(db,COLS.TRANSACTIONS),
-      where('date','>=',year+'-01-01'),where('date','<=',year+'-12-31')));
-    const trxList=snap.docs.map(d=>({id:d.id,...d.data()}));
-    if(!trxList.length){showLoading(false);toast(`${year}년 거래 데이터가 없습니다.`,'error');return;}
-
-    // 1. 이력을 먼저 남긴다. 문서 ID를 연도로 고정해 재시도가 이력을 늘리지 않는다.
-    const logRef=doc(db,COLS.CONFIG,'archive_'+year);
-    const startedAt=new Date().toISOString();
-    await setDoc(logRef,{type:'archive',year,status:'in_progress',
-      startedAt,count:trxList.length,by:String(S.user?.userId||'')},{merge:true});
-
-    // 2. 보관용 이미지 저해상도 재압축 (best-effort — 버킷 CORS가 없으면 건너뛴다)
-    let recompressed=0;
-    toast('보관용 이미지 압축 중...','info',3000);
-    for(const t of trxList){
-      if(t.receiptUrl){const nu=await recompressStorageImage(t.receiptUrl);if(nu){t.receiptUrl=nu;recompressed++;}}
-    }
-    const yr=String(year);
-    // 비활성 계좌까지 포함한 전 계좌 (S.accounts는 활성만 담는다)
-    const allAccounts=S.allAccounts||S.accounts||[];
-    const bankUpdateMap={};
-    for(const acc of allAccounts){
-      const stmts=acc.bankStatements||[]; let changed=false; const newStmts=[];
-      for(const st of stmts){
-        const item=typeof st==='string'?{url:st,month:''}:{...st};
-        if(item.url&&(item.month||'').startsWith(yr)){
-          const nu=await recompressStorageImage(item.url);
-          if(nu){item.url=nu;changed=true;recompressed++;}
-        }
-        newStmts.push(item);
-      }
-      if(changed)bankUpdateMap[acc.id]=newStmts;
+    // 마감은 **서버가** 한다. 두 가지가 브라우저에서는 불가능하다:
+    //   · 마감된 달의 거래 삭제 — 규칙이 막는다(막아야 한다)
+    //   · 보관 이미지 덮어쓰기 — Web SDK 에는 generation 사전조건이 없어
+    //     같은 순간의 증빙 교체를 조용히 뭉갠다
+    //
+    // 한 해 거래가 수천 건이면 한 번의 호출로 끝나지 않으므로, 서버가
+    // "아직 남았다"를 돌려주는 동안 계속 부른다. 모든 단계가 멱등이라
+    // 중간에 끊겨도 같은 연도로 다시 실행하면 이어서 진행된다.
+    let out={done:false}, rounds=0;
+    while(!out.done){
+      if(++rounds>200)throw new Error('마감이 끝나지 않습니다. 다시 실행하면 이어서 진행됩니다.');
+      const res=await window._fbFn.call('runArchive')({year});
+      out=res.data||{};
+      const phase={copy:'거래 보관 중',balance:'기초잔액 전진 중',recompress:'보관 이미지 압축 중',done:'마무리'}[out.phase]||'진행 중';
+      if(btn)btn.textContent=`${phase}... (${out.copied||out.count||0}건)`;
     }
 
-    // 3. 사본 저장 — **원본 문서 ID를 그대로** 쓴다. 재시도해도 복제되지 않는다.
-    await batchSetDocs(trxList.map(t=>({
-      col:'archive_'+year, docId:t.id, data:{...t, archivedFrom:t.id, archivedAt:startedAt},
-    })));
-
-    // 4. 기초잔액 전진 — 이미 전진한 계좌는 건드리지 않는다(이중 계상 방지)
-    const nextBase=(year+1)+'-01-01';
-    const accUpdates=[];
-    for(const acc of allAccounts){
-      const already=String(acc.initialBalanceDate||'')>=nextBase;
-      const data={};
-      if(bankUpdateMap[acc.id])data.bankStatements=bankUpdateMap[acc.id];
-      if(!already){
-        const net=trxList
-          .filter(t=>t.accountId===acc.id&&t.type!=='취소')
-          .reduce((sum,t)=>sum+(Number(t.amountIn||0)-Number(t.amountOut||0)),0);
-        const newBal=Number(acc.initialBalance||0)+net;
-        data.initialBalance=newBal;
-        data.initialBalanceDate=nextBase;
-        data.currentBalance=newBal;
-      }
-      if(Object.keys(data).length)accUpdates.push({col:COLS.ACCOUNTS,docId:acc.id,data});
-    }
-    if(accUpdates.length)await batchUpdateDocs(accUpdates);
-
-    // 5. 원본 삭제 (Storage 파일은 보관 — 사본이 같은 URL을 가리킨다)
-    await batchDeleteDocs(trxList.map(t=>({col:COLS.TRANSACTIONS,docId:t.id})));
-
-    // 6. 마무리
-    await updateDoc(logRef,{status:'done',archivedAt:new Date().toISOString(),recompressed});
     // 마감은 거래 원본을 삭제하고 기초잔액을 전진시킨다. 되돌릴 수 없으므로
     // 누가 언제 실행했는지가 남아야 한다.
     await auditLog('archive.run',{
       resourceId:'archive_'+year,
-      summary:{ year, count:trxList.length },
+      summary:{ year, count:out.count||0 },
     });
     await fetchBaseData(); loadSettings();
-    toast(`${year}년 마감 완료! ${trxList.length}건 보관, 이미지 ${recompressed}건 압축.`,'success',5000);
+    toast(`${year}년 마감 완료! ${out.count||0}건 보관, 이미지 ${out.recompressed||0}건 압축.`,'success',5000);
   }catch(e){
     // 실패도 기록한다 — 중단된 마감은 데이터가 어중간한 상태로 남을 수 있어
     // 나중에 "언제 무엇이 중단됐는지"가 복구의 출발점이 된다.
@@ -548,6 +500,7 @@ export async function executeArchive(year){
     });
     toast(`마감 중단: ${e.message}\n같은 연도로 다시 실행하면 이어서 진행됩니다(사본은 중복되지 않습니다).`,'error',8000);
   }
+  if(btn)btn.textContent='연도 마감 실행';
   showLoading(false);
 }
 

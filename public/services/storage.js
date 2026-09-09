@@ -130,29 +130,16 @@ export async function deleteManyFromStorage(urls) {
 }
 
 /**
- * 저장된 이미지를 저해상도로 재압축하여 같은 경로에 덮어쓴다 (아카이브용, best-effort)
- * - Firebase Storage 이미지가 아니거나, 재압축 효과가 없으면 null 반환(원본 유지)
- * - 재압축을 위해 브라우저에서 이미지를 다시 읽으므로 버킷 CORS 설정 필요(cors.json)
- * @returns {Promise<string|null>} 새 다운로드 URL 또는 null
+ * 보관용 재압축은 **서버가 한다**(functions/archive-fns.js).
+ *
+ * 여기 있던 recompressStorageImage 는 uploadBytes 로 같은 경로를 덮어썼는데,
+ * Web SDK 에는 generation 사전조건이 없다. 그래서 재압축이 도는 사이 누군가
+ * 증빙을 교체하면 그 교체가 조용히 뭉개졌다 — 새 영수증이 옛 사진으로
+ * 돌아가고, 아무 오류도 나지 않는다.
+ *
+ * 서버는 읽은 그 객체일 때만 덮어쓴다(ifGenerationMatch).
  */
-export async function recompressStorageImage(url, maxPx = 900, quality = 0.6) {
-  if (!isStorageUrl(url)) return null;
-  try {
-    const { storage, ref, uploadBytes, getDownloadURL } = window._fb;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    if (!blob.type.startsWith('image/')) return null; // PDF 등은 대상 아님
-    const recompressed = await compressImage(blob, maxPx, quality);
-    if (recompressed === blob || recompressed.size >= blob.size) return null; // 효과 없음
-    const objRef = ref(storage, url);          // 기존 객체 참조
-    await uploadBytes(objRef, recompressed);   // 동일 경로 덮어쓰기
-    return await getDownloadURL(objRef);       // 새 토큰이 포함된 URL
-  } catch (e) {
-    console.warn('아카이브 재압축 건너뜀:', e.message);
-    return null;
-  }
-}
+
 
 /**
  * URL 유형에 따라 표시용 이미지 URL 반환

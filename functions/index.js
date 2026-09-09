@@ -283,6 +283,12 @@ exports.savePermissions = require('./permissions-fns')({
   db, callable, HttpsError, logger, FieldValue,
 }).savePermissions;
 
+// 연도 마감 — 잠긴 달의 거래를 지우고 보관 이미지를 덮어쓴다.
+// 둘 다 브라우저에서는 할 수 없는 일이다(규칙이 막고, generation 사전조건이 없다).
+Object.assign(exports, require('./archive-fns')({
+  db, getBucket: () => admin.storage().bucket(), callable, HttpsError, logger, FieldValue,
+}));
+
 // 보고서 결재 — 전이표를 서버가 집행한다. 브라우저가 reports 를 직접 쓰면
 // 콘솔 한 줄로 팀장·센터장 결재를 건너뛸 수 있었다.
 Object.assign(exports, require('./report-fns')({

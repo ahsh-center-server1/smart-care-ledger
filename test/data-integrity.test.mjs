@@ -123,37 +123,20 @@ test('연결 때문에 딸려오는 상대편도 결재 잠금을 확인한다',
 // ─────────────────────────────────────────────
 // 연도 마감 — 중단되어도 안전해야 한다
 // ─────────────────────────────────────────────
-test('마감 사본은 원본 문서 ID를 쓴다 (재시도가 복제하지 않도록)', () => {
-  const body = bodyOf(src('public/modules/settings.js'), 'export async function executeArchive(');
-  assert.ok(body.includes('batchSetDocs'), '결정적 ID로 저장하지 않습니다');
-  assert.ok(!body.includes('batchAddDocs'), 'batchAddDocs는 재시도 시 사본을 복제합니다');
-  assert.ok(/docId:t\.id/.test(body), '원본 ID를 사본 ID로 쓰지 않습니다');
-});
-
-test('마감 이력을 작업 전에 남긴다', () => {
-  // 예전에는 마지막에 남겨서, 중간에 끊기면 화면상 미마감으로 보이고
-  // 다시 누르면 거래가 삼중으로 쌓였다.
-  const body = bodyOf(src('public/modules/settings.js'), 'export async function executeArchive(');
-  const logAt = body.indexOf("status:'in_progress'");
-  const copyAt = body.indexOf('batchSetDocs');
-  const deleteAt = body.indexOf('batchDeleteDocs');
-  assert.ok(logAt > 0, 'in_progress 이력이 없습니다');
-  assert.ok(logAt < copyAt && logAt < deleteAt, '이력이 작업보다 뒤에 있습니다');
-  assert.ok(body.includes("status:'done'"), '완료 표시가 없습니다');
-});
-
-test('마감은 비활성 계좌도 전진시킨다', () => {
-  // S.accounts는 활성 계좌만 담는다. 예전에는 비활성 계좌의 거래만 삭제되고
-  // 기초잔액은 전진하지 않아 1년치가 영구 증발했다.
-  const body = bodyOf(src('public/modules/settings.js'), 'export async function executeArchive(');
-  assert.ok(body.includes('S.allAccounts'), '전 계좌를 보지 않습니다');
-});
-
-test('마감은 이미 전진한 계좌를 다시 더하지 않는다', () => {
-  const body = bodyOf(src('public/modules/settings.js'), 'export async function executeArchive(');
-  assert.ok(/already\s*=\s*String\(acc\.initialBalanceDate/.test(body),
-    '이중 전진 방지 검사가 없습니다');
-});
+/**
+ * 마감의 불변식은 **동작 테스트**로 옮겼다 — test/archive.test.mjs.
+ *
+ * 마감이 서버로 갔기 때문이다(functions/archive-fns.js). 브라우저 원문에서
+ * `batchSetDocs` 나 `S.allAccounts` 를 찾던 검사들은 이제 검사할 원문이 없다.
+ * 그리고 원문 검사보다 동작 검사가 낫다 — "재시도해도 복제되지 않는다"는
+ * 실제로 두 번 돌려 봐야 아는 것이다.
+ *
+ * 옮겨 간 것들(같은 이유, 같은 과거 버그):
+ *   · 사본은 원본 문서 ID를 쓴다 — 재시도가 사본을 복제하지 않도록
+ *   · 이력을 작업 전에 남긴다 — 중간에 끊기면 미마감으로 보여 삼중으로 쌓였다
+ *   · 비활성 계좌도 전진시킨다 — 거래만 지워지고 잔액이 안 올라 1년치가 증발했다
+ *   · 이미 전진한 계좌를 다시 더하지 않는다
+ */
 
 test('중단된 마감이 이력 화면에 드러난다', () => {
   const body = bodyOf(src('public/modules/settings.js'), 'export async function loadArchiveHistory(');

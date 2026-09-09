@@ -501,12 +501,32 @@ test('[게이트 D] 브라우저가 config/permissions를 직접 쓰지 않는�
 });
 
 test('[게이트 D] 브라우저가 Storage 객체를 덮어쓰지 않는다', () => {
-  // 연도 마감 재압축이 최종 객체를 덮어쓴다. Web SDK의 uploadBytes에는
-  // generation 사전조건 인자가 없어 동시 교체가 조용히 뭉개진다.
-  const hits = findLines(APP_SOURCES, /uploadBytes\(\s*objRef/);
+  // 위험은 "이미 있는 객체를 다시 쓰는 것"이다. Web SDK 의 uploadBytes 에는
+  // generation 사전조건 인자가 없어서, 쓰는 사이 누군가 같은 경로를 교체하면
+  // 그 교체가 조용히 뭉개진다(연도 마감 재압축이 실제로 그랬다).
+  //
+  // 새 경로에 처음 올리는 것은 위험하지 않다. 그래서 변수 이름이 아니라
+  // **기존 객체를 가리키는 ref 를 만들어 거기에 쓰는가**를 본다:
+  // `ref(storage, url)` — 저장된 URL 로 만든 참조는 이미 있는 객체다.
+  const src = APP_SOURCES.map(f => [f, readFileSync(f, 'utf8')]);
+  const hits = [];
+  for (const [file, text] of src) {
+    // `const X = ref(storage, <url 을 담은 것>)` 로 만든 이름을 모은다
+    const fromUrl = new Set(
+      [...text.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*ref\(\s*storage\s*,\s*([^)]*)\)/g)]
+        .filter(m => /url/i.test(m[2]))
+        .map(m => m[1]),
+    );
+    if (!fromUrl.size) continue;
+    text.split('\n').forEach((line, i) => {
+      const m = line.match(/uploadBytes\(\s*(\w+)/);
+      if (m && fromUrl.has(m[1])) hits.push(`${relative(ROOT, file)}:${i + 1}  ${line.trim()}`);
+    });
+  }
   assert.deepEqual(
     hits, [],
-    '재압축을 서버 archive job으로 옮기세요 (ifGenerationMatch 필요):\n  ' + hits.join('\n  '),
+    '기존 객체를 브라우저가 덮어씁니다. 서버로 옮기세요 (ifGenerationMatch 필요):\n  '
+    + hits.join('\n  '),
   );
 });
 
