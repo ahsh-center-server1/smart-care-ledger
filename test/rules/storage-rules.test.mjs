@@ -37,6 +37,9 @@ import {
 
 const require = createRequire(import.meta.url);
 const { computeCaps, rankOf, CAP_SCHEMA_VERSION } = require('../../functions/perm-catalog.cjs');
+// 경로 모양을 테스트가 따로 적지 않는다 — 규칙과 코드가 같은 함수를 봐야
+// 세그먼트 개수가 어긋난 것을 여기서 잡는다.
+const { stagingPath } = require('../../functions/receipt-jobs.cjs');
 
 const HOST = '127.0.0.1';
 
@@ -153,25 +156,25 @@ describe('영수증 — 담당 범위', () => {
 describe('영수증 스테이징 — 소유권은 경로로', () => {
   it('본인 경로에는 올릴 수 있다', async () => {
     await assertSucceeds(uploadBytes(
-      ref(as(ACTORS.입력자), `receiptStaging/${ACTORS.입력자.uid}/u1`), bytes(),
+      ref(as(ACTORS.입력자), stagingPath(ACTORS.입력자.uid, 'u1')), bytes(),
     ));
   });
 
   it('남의 경로에는 올릴 수 없다', async () => {
     await assertFails(uploadBytes(
-      ref(as(ACTORS.입력자), `receiptStaging/${ACTORS.담당자.uid}/u2`), bytes(),
+      ref(as(ACTORS.입력자), stagingPath(ACTORS.담당자.uid, 'u2')), bytes(),
     ));
   });
 
   it('올린 파일을 덮어쓸 수 없다 — 판독 뒤 바꿔치기를 막는다', async () => {
-    const path = `receiptStaging/${ACTORS.담당자.uid}/dup`;
+    const path = stagingPath(ACTORS.담당자.uid, 'dup');
     await assertSucceeds(uploadBytes(ref(as(ACTORS.담당자), path), bytes()));
     await assertFails(uploadBytes(ref(as(ACTORS.담당자), path), new Uint8Array([9, 9])));
   });
 
   it('남의 스테이징은 읽을 수 없다', async () => {
     await assertFails(getBytes(
-      ref(as(ACTORS.팀장), `receiptStaging/${ACTORS.담당자.uid}/dup`),
+      ref(as(ACTORS.팀장), stagingPath(ACTORS.담당자.uid, 'dup')),
     ));
   });
 });

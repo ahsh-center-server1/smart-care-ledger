@@ -76,7 +76,11 @@ service firebase.storage {
     // 브라우저가 올리는 자리. 경로에 uid 가 있어 **소유권을 경로로** 검증한다
     // (문서 안의 필드로 판정하면 남의 것을 가리키는 파일을 만들 수 있다).
     // 여기서 최종 경로로 옮기는 것은 서버만 한다.
-    match /receiptStaging/{uid}/{uploadId} {
+    // 경로 모양은 receipt-jobs.cjs 의 stagingPath() 가 정한다:
+    //   receiptStaging/{uid}/{uploadId}/source
+    // 규칙은 세그먼트 **개수까지** 맞아야 매치된다. 한 칸이 어긋나면 어떤 규칙도
+    // 걸리지 않아 기본 거부가 되고, 그 사실은 실제 업로드를 해 봐야 드러난다.
+    match /receiptStaging/{uid}/{uploadId}/{fileName} {
       allow get:    if active() && request.auth.uid == uid;
       allow list:   if false;
       // 덮어쓰기 금지. 서버가 판독한 내용과 실제 파일이 달라질 수 있다 —
