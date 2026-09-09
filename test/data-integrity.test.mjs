@@ -171,7 +171,9 @@ test('마감 이력은 센터장도 쓸 수 있어야 한다', () => {
   const at = rules.indexOf('match /config/');
   assert.ok(at > 0, 'config 규칙을 찾을 수 없습니다');
   const block = rules.slice(at, rules.indexOf('\n    }', at)).replace(/\s+/g, ' ');
-  assert.ok(/id\.matches\('archive_\[0-9\]\{4\}'\) && atLeast\(4\)/.test(block),
+  // 등급 리터럴(atLeast(4))이 아니라 caps 로 판정한다 — 등급표는 서버가
+  // 계산해 authz.caps 에 담고, 규칙은 그 불리언만 읽는다.
+  assert.ok(/id\.matches\('archive_\[0-9\]\{4\}'\)\s*\?\s*cap\('settingsArchive'\)/.test(block),
     'config/archive_YYYY 예외가 없습니다 — 센터장이 마감을 시작하는 순간 거부됩니다');
 });
 

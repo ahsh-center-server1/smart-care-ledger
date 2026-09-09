@@ -21,35 +21,86 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid != null;
     }
 
-    // 역할 서열. 토큰에 role이 없으면 0 → 권한 없음(fail-closed).
-    function rank() {
-      return {'입력자': 1, '담당자': 2, '팀장': 3, '센터장': 4}
-        .get(request.auth.token.get('role', ''), 0);
+    /**
+     * 권한 스냅샷. **모든 판정의 유일한 근거.**
+     *
+     * 왜 토큰 클레임이 아닌가
+     *   클레임은 발급 시점에 굳는다. 역할을 강등하거나 퇴사 처리해도 이미
+     *   발급된 토큰은 refresh 로 계속 갱신되므로, 만료를 기다리는 것은
+     *   차단 정책이 아니다. 문서는 매 평가마다 최신값을 읽는다.
+     *
+     * 왜 한 문서에 다 담는가
+     *   get() 은 요청당 문서 읽기로 과금된다. 담당 목록·재직 여부·권한
+     *   불리언을 한 문서에 모아 조회를 1회로 유지한다. 같은 평가 안에서
+     *   여러 번 불러도 규칙 엔진이 캐시하므로 조회는 늘지 않는다.
+     *
+     * 문서가 없으면 평가가 실패해 거부된다(fail-closed). caps 백필 전에
+     * 이 규칙을 배포하면 전원이 막힌다 — 순서는 배포 → 백필 → 규칙이다.
+     */
+    function me() {
+      return get(/databases/$(database)/documents/authz/$(request.auth.uid)).data;
     }
 
-    function isAdmin() {
-      return signedIn() && request.auth.token.get('isAdmin', false) == true;
+    /** 재직 중인가. approved·active 를 서버가 하나로 계산해 둔 값이다. */
+    function active() {
+      return signedIn() && me().get('enabled', false) == true;
     }
 
-    // 등급 n 이상인가 (관리자는 항상 통과)
-    function atLeast(n) {
-      return signedIn() && (isAdmin() || rank() >= n);
+    /**
+     * 권한 하나. caps 는 서버가 등급표(config/permissions)로 계산해 둔 불리언이다.
+     *
+     * 규칙이 등급을 직접 계산하지 않는 이유: 그러면 등급표가 두 벌이 되고,
+     * 관리자가 설정에서 바꾼 값이 규칙에 반영되지 않는다. 실제로 그랬다.
+     */
+    function cap(name) {
+      return active() && me().get('caps', {}).get(name, false) == true;
+    }
+
+    /** 담당으로 배정된 입주자인가. */
+    function mine(clientId) {
+      return clientId in me().get('accessibleClientIds', []);
+    }
+
+    /**
+     * 이 입주자의 자료에 접근할 수 있는가.
+     *
+     * 담당이거나(배정), 담당과 무관하게 전체를 보는 권한이 있거나(팀장 이상).
+     * clientViewAll 은 문서와 무관한 상수라, 쿼리 평가에서 먼저 참이 되면
+     * clientId 제약 없이도 통과한다 — 그것이 의도다.
+     */
+    function seesClient(clientId) {
+      return cap('clientViewAll') || (active() && mine(clientId));
+    }
+
+    /**
+     * 마감(최종 결재 완료)된 월인가.
+     *
+     * config/lockedMonths 에 { months: { "clientId_YYYY-MM": true } } 로 들어 있다
+     * (functions/locked-months.cjs). 문서가 없으면 잠긴 달이 없는 것으로 본다 —
+     * 백필 전에 전 거래가 잠기면 앱을 쓸 수 없다.
+     */
+    function lockedMonths() {
+      return exists(/databases/$(database)/documents/config/lockedMonths)
+        ? get(/databases/$(database)/documents/config/lockedMonths).data.get('months', {})
+        : {};
+    }
+
+    /** 거래 하나가 잠긴 달에 속하는가. date 는 'YYYY-MM-DD'. */
+    function isLocked(data) {
+      return lockedMonths().get(
+        data.get('clientId', '') + '_' + data.get('date', '')[0:7], false) == true;
+    }
+
+    /** 잠긴 달의 거래를 건드릴 수 있는가 — 관리자 우회만 허용한다. */
+    function editableMonth(data) {
+      return cap('lockBypass') || !isLocked(data);
     }
 
     function myUid() { return request.auth.uid; }
 
-    /**
-     * 권한 투영 문서. **담당 접근 판정의 유일한 근거.**
-     *
-     * 문서가 없으면 규칙 평가가 실패해 거부된다(fail-closed) — caps 백필 전에는
-     * 새 경로가 열리지 않는다는 뜻이고, 그것이 의도다. 여는 것보다 닫아 두는
-     * 편이 안전하다.
-     *
-     * get()은 요청당 문서 읽기로 과금된다. 그래서 담당 목록·재직 여부·권한
-     * 불리언을 한 문서에 모아 조회를 1회로 유지한다.
-     */
-    function authzOf(uid) {
-      return get(/databases/$(database)/documents/authz/$(uid)).data;
+    /** 이 문서를 내가 만들었는가. 입력자는 본인 작성분만 다룬다. */
+    function isAuthor(data) {
+      return data.get('createdBy', '') == myUid();
     }
 
     // ── 비밀번호 해시 — 클라이언트 접근 전면 차단 (Functions는 Admin SDK로 우회) ──
@@ -59,44 +110,135 @@ service cloud.firestore {
 
     // ── 직원 ──
     // 비밀번호가 userSecrets로 분리되었으므로 남는 값은 이름·역할·팀뿐인 내부 인명부다.
-    // 로그인한 직원은 조회 가능(앱이 users 컬렉션 전체를 로드해 팀장/결재자 이름을 찾는다).
     // 쓰기는 Cloud Functions 전용 — 역할 변경·승인·비밀번호를 클라이언트가 못 건드린다.
+    //
+    // 본인 문서는 재직 여부와 무관하게 읽는다. 세션 복원이 이 문서를 먼저 읽고
+    // active:false 를 보고 안내 문구를 띄우기 때문이다 — 여기서 막으면 화면이
+    // 이유 없이 멈춘 것처럼 보인다(authz 본인 읽기와 같은 이유).
     match /users/{uid} {
-      allow read:  if signedIn();
+      allow read:  if signedIn() && (request.auth.uid == uid || active());
       allow write: if false;
     }
 
-    // ── 입주자 · 계좌 ── 조회는 로그인 전원, 변경은 팀장 이상
-    match /clients/{id}  { allow read: if signedIn(); allow write: if atLeast(3); }
-    match /accounts/{id} { allow read: if signedIn(); allow write: if atLeast(3); }
-
-    // ── 거래 ──
-    // 입력자(등급 1)는 본인이 작성한 거래만.
-    // ⚠️ 목록 조회 시 클라이언트가 where('createdBy','==',uid)를 함께 걸어야 한다.
-    //    규칙 엔진이 결과 전체의 조건 충족을 증명할 수 없으면 쿼리가 통째로 거부된다.
-    match /transactions/{id} {
-      allow read: if atLeast(2)
-                  || (signedIn() && resource.data.get('createdBy', '') == myUid());
-
-      allow create: if signedIn()
-                    && request.resource.data.get('createdBy', '') == myUid();
-
-      allow update, delete: if atLeast(2)
-                            || (signedIn() && resource.data.get('createdBy', '') == myUid());
+    // ── 입주자 ──
+    // 담당 배정 밖의 입주자는 이름조차 보이지 않는다. 전 입주자 조회는
+    // clientViewAll(팀장 이상)이 따로 연다.
+    // 쓰기는 saveClient 콜러블만 — 담당 배정을 바꾸면 투영본도 같이 바뀌어야 하고,
+    // 그 둘은 한 트랜잭션이어야 한다.
+    match /clients/{id} {
+      allow read:  if seesClient(id);
+      allow write: if false;
     }
 
-    // ── 카테고리 · 고정항목 ── 담당자 이상이 편집
-    match /categories/{id} { allow read: if signedIn(); allow write: if atLeast(2); }
-    match /fixedItems/{id} { allow read: if signedIn(); allow write: if atLeast(2); }
+    // ── 계좌 ──
+    // 계좌는 입주자에 속한다. 조회 범위도 그 입주자를 따른다.
+    // 변경은 settingsAccount(전 입주자 범위) — 계좌 신설은 담당 배정과 무관한
+    // 관리 행위다.
+    match /accounts/{id} {
+      allow read:  if seesClient(resource.data.get('clientId', ''));
+      allow write: if cap('settingsAccount');
+    }
 
-    // ── 보고서 ── 입력자는 접근 불가
-    match /reports/{id} { allow read, write: if atLeast(2); }
+    // ── 거래 ──
+    //
+    // 세 겹으로 좁힌다:
+    //   1. 담당 범위    seesClient — 배정 밖 입주자의 금전 기록은 보이지 않는다
+    //   2. 작성자 범위  trxViewAll 이 없으면 본인이 입력한 것만
+    //   3. 마감 잠금    최종 결재가 끝난 달은 lockBypass 없이 못 고친다
+    //
+    // ⚠️ 목록 조회는 클라이언트가 where('clientId','==',…)를 걸어야 한다.
+    //    규칙 엔진이 결과 전체의 조건 충족을 증명할 수 없으면 쿼리가 통째로
+    //    거부된다(가져온 뒤 걸러내는 방식으로는 안 된다).
+    //    trxViewAll 이 없으면 where('createdBy','==',uid)도 함께 걸어야 한다.
+    match /transactions/{id} {
+      allow read: if seesClient(resource.data.get('clientId', ''))
+                  && (cap('trxViewAll') || isAuthor(resource.data));
 
-    // ── 예산 ── 조회는 담당자 이상, 변경은 팀장 이상
-    match /budgets/{id} { allow read: if atLeast(2); allow write: if atLeast(3); }
+      // createdBy 를 자기 uid 로 강제한다. 남의 이름으로 거래를 만들 수 없다.
+      allow create: if cap('trxCreate')
+                    && seesClient(request.resource.data.get('clientId', ''))
+                    && isAuthor(request.resource.data)
+                    && editableMonth(request.resource.data);
+
+      // clientId·createdBy 는 불변이다. 바꿀 수 있으면 남의 거래를 자기 것으로
+      // 옮기거나, 담당 밖 입주자에게 거래를 밀어 넣을 수 있다.
+      allow update: if (cap('trxEdit') || cap('trxCategoryEdit') || cap('trxReorder'))
+                    && seesClient(resource.data.get('clientId', ''))
+                    && (cap('trxViewAll') || isAuthor(resource.data))
+                    && request.resource.data.get('createdBy', '')
+                       == resource.data.get('createdBy', '')
+                    && request.resource.data.get('clientId', '')
+                       == resource.data.get('clientId', '')
+                    && editableMonth(resource.data)
+                    && editableMonth(request.resource.data);
+
+      allow delete: if (cap('trxDelete') || cap('trxDeleteBulk'))
+                    && seesClient(resource.data.get('clientId', ''))
+                    && (cap('trxViewAll') || isAuthor(resource.data))
+                    && editableMonth(resource.data);
+    }
+
+    // ── 카테고리 ──
+    //
+    // 공통 분류(clientId 없음)와 입주자 전용 분류가 한 컬렉션에 있다.
+    // 공통은 전 입주자에게 영향을 주므로 한 단계 높은 권한을 쓴다.
+    // 조회를 담당 범위로 좁히지 않는 이유: 공통 분류는 clientId 가 없어서
+    // 범위 판정의 근거가 없고, 앱이 목록 전체를 한 번에 읽는다.
+    match /categories/{id} {
+      allow read: if active();
+
+      allow create: if request.resource.data.get('clientId', '') == ''
+                      ? cap('settingsCategoryCommon')
+                      : (cap('settingsCategory')
+                         && seesClient(request.resource.data.get('clientId', '')));
+
+      allow update, delete: if resource.data.get('clientId', '') == ''
+                      ? cap('settingsCategoryCommon')
+                      : (cap('settingsCategory')
+                         && seesClient(resource.data.get('clientId', '')));
+    }
+
+    // ── 고정항목 ── 입주자별 정기 수입·지출 템플릿. 금액이 들어 있다.
+    match /fixedItems/{id} {
+      allow read:   if seesClient(resource.data.get('clientId', ''));
+      allow create: if cap('settingsFixed')
+                    && seesClient(request.resource.data.get('clientId', ''));
+      allow update, delete: if cap('settingsFixed')
+                            && seesClient(resource.data.get('clientId', ''));
+    }
+
+    // ── 보고서 ──
+    //
+    // ⚠️ 쓰기가 아직 열려 있다. 결재 상태 전이는 서버가 강제해야 하고
+    //    (report-workflow 의 TRANSITIONS), 그 콜러블은 아직 없다.
+    //    집행 계약의 게이트 B「reports 직접 쓰기가 막혀 있다」가 그때까지 빨갛다.
+    match /reports/{id} {
+      allow read: if cap('reportViewAll')
+                  || (cap('reportOwn') && seesClient(resource.data.get('clientId', '')));
+
+      allow create: if cap('reportOwn')
+                    && seesClient(request.resource.data.get('clientId', ''));
+      allow update, delete: if (cap('reportViewAll') || cap('reportOwn'))
+                            && seesClient(resource.data.get('clientId', ''));
+    }
+
+    // ── 예산 ── 입주자별 연간 예산
+    match /budgets/{id} {
+      allow read:   if seesClient(resource.data.get('clientId', ''));
+      allow create: if cap('settingsBudget')
+                    && seesClient(request.resource.data.get('clientId', ''));
+      allow update, delete: if cap('settingsBudget')
+                            && seesClient(resource.data.get('clientId', ''));
+    }
 
     // ── 엑셀 업로드 이력 ──
-    match /excelUploads/{id} { allow read, write: if atLeast(2); }
+    match /excelUploads/{id} {
+      allow read:   if seesClient(resource.data.get('clientId', ''));
+      allow create: if cap('excelUpload')
+                    && seesClient(request.resource.data.get('clientId', ''));
+      allow update, delete: if cap('excelUpload')
+                            && seesClient(resource.data.get('clientId', ''));
+    }
 
     // ── 변경 이력 (감사 로그) ──
     //
@@ -113,8 +255,8 @@ service cloud.firestore {
     //
     // 조회는 등급 3(팀장) 이상 — 다른 직원의 활동 기록이므로 담당자에게는 열지 않는다.
     match /auditLogs/{id} {
-      allow read: if atLeast(3);
-      allow create: if signedIn()
+      allow read: if cap('auditView');
+      allow create: if active()
                     && request.resource.data.actorUid == myUid()
                     && request.resource.data.timestamp == request.time
                     && request.resource.data.expireAt is timestamp;
@@ -154,9 +296,7 @@ service cloud.firestore {
     //
     // 쓰기는 전면 차단 — authz와 같은 이유다.
     match /clientAccess/{clientId}/members/{uid} {
-      allow read:  if signedIn()
-                   && authzOf(request.auth.uid).enabled == true
-                   && clientId in authzOf(request.auth.uid).accessibleClientIds;
+      allow read:  if active() && mine(clientId);
       allow write: if false;
     }
 
@@ -171,7 +311,7 @@ service cloud.firestore {
     // 쓰기는 서버만. 클라이언트가 state를 바꿀 수 있으면 lease 선점이 무의미해지고,
     // finalGeneration을 바꿀 수 있으면 조건부 삭제가 남의 파일을 지운다.
     match /receiptJobs/{uid}/items/{uploadId} {
-      allow read:  if signedIn() && request.auth.uid == uid;
+      allow read:  if active() && request.auth.uid == uid;
       allow write: if false;
     }
 
@@ -190,7 +330,7 @@ service cloud.firestore {
     // (실제 권한은 토큰 클레임이 정하므로 데이터는 못 건드리지만, 화면에
     //  결재 버튼이 뜨는 것만으로도 혼란과 오탐 신고가 생긴다).
     match /directories/{id} {
-      allow read:  if signedIn();
+      allow read:  if active();
       allow write: if false;
     }
 
@@ -217,16 +357,16 @@ service cloud.firestore {
     //   · 삭제는 관리자만 — 캐시를 지우는 것은 정확성을 해치지 않지만
     //     (다시 계산된다) 읽기량이 튀므로 아무나 하지 않게 한다.
     match /summaryCaches/{id} {
-      allow read: if signedIn();
+      allow read: if active();
 
-      allow create: if atLeast(2)
+      allow create: if cap('trxViewAll')
                     && request.resource.data.clientId is string
                     && request.resource.data.schemaVersion is int
                     && request.resource.data.computedVersion is int
                     && request.resource.data.get('sourceVersion', -1) == 0
                     && request.resource.data.computedVersion == 0;
 
-      allow update: if atLeast(2)
+      allow update: if cap('trxViewAll')
                     && request.resource.data.clientId is string
                     && request.resource.data.schemaVersion is int
                     && request.resource.data.computedVersion is int
@@ -237,14 +377,14 @@ service cloud.firestore {
                     && request.resource.data.computedVersion
                        <= resource.data.get('sourceVersion', 0);
 
-      allow delete: if isAdmin();
+      allow delete: if cap('settingsReset');
     }
 
     // ── 오래 걸리는 파괴적 작업의 진행 상태 ──
     // 전체 초기화는 관리자만 실행하므로 상태도 관리자만 다룬다.
     // 다른 사람이 실행 중인지 확인하고 중단된 작업을 이어서 진행하기 위한 문서다.
     match /systemOperations/{id} {
-      allow read, write: if isAdmin();
+      allow read, write: if cap('settingsReset');
     }
 
     // ── 설정 ──
@@ -256,17 +396,19 @@ service cloud.firestore {
     // 쓰면 등급표만 바뀌고 규칙이 읽는 authz.caps 는 그대로여서, 저장은 됐는데
     // 아무것도 달라지지 않는다 — 이 프로젝트가 실제로 겪은 버그가 그것이다.
     match /config/{id} {
-      allow read:  if signedIn();
+      allow read:  if active();
       allow write: if id != 'permissions'
-                   && (isAdmin() || (id.matches('archive_[0-9]{4}') && atLeast(4)));
+                   && (id.matches('archive_[0-9]{4}')
+                       ? cap('settingsArchive')
+                       : cap('settingsPermissions'));
     }
 
     // ── 연도 마감 아카이브 (archive_2025 등) ──
     // Firestore 규칙은 세그먼트 일부 와일드카드(archive_{year})를 지원하지 않으므로
     // 컬렉션명을 변수로 받아 정규식으로 판별한다.
     match /{col}/{id} {
-      allow read:  if col.matches('archive_[0-9]{4}') && atLeast(2);
-      allow write: if col.matches('archive_[0-9]{4}') && atLeast(4);
+      allow read:  if col.matches('archive_[0-9]{4}') && cap('trxViewAll');
+      allow write: if col.matches('archive_[0-9]{4}') && cap('settingsArchive');
     }
   }
 }

@@ -135,7 +135,10 @@ test('[게이트 B] Firestore 집행 키의 caps를 규칙이 실제로 읽는�
  */
 function matchBlocks(src) {
   const out = [];
-  const re = /match\s+(\/[^\s{]+)\s*\{/g;
+  // 경로에 {wildcard} 세그먼트가 들어간다. `[^\s{]+` 로 잡으면 `match /users/{`
+  // 까지만 먹고 본문이 `uid` 한 단어가 된다 — 그러면 **모든 블록이 빈 것처럼**
+  // 보이고 게이트가 무엇을 검사하든 항상 실패한다. 실제로 그랬다.
+  const re = /match\s+((?:\/(?:\{[^}]*\}|[^\s{/]+))+)\s*\{/g;
   let m;
   while ((m = re.exec(src)) !== null) {
     const start = m.index + m[0].length;
@@ -149,6 +152,48 @@ function matchBlocks(src) {
     out.push({ path: m[1], body: src.slice(start, i - 1) });
   }
   return out;
+}
+
+/**
+ * 규칙 파일의 함수 정의 — 이름 → 본문.
+ *
+ * 왜 필요한가
+ *   처음에는 블록 본문에 'accessibleClientIds' 나 'enabled' 가 **문자열로**
+ *   있는지만 봤다. 그런데 규칙을 제대로 쓰면 그것은 헬퍼 안에 들어간다
+ *   (`seesClient(id)` · `cap('trxEdit')`). 그러면 올바른 구현이 게이트를
+ *   통과하지 못하고, 통과시키려고 검사를 느슨하게 하면 이번엔 아무 데나
+ *   그 단어만 적어도 통과한다.
+ *
+ *   그래서 **호출을 따라간다.** 블록이 부르는 함수의 본문까지 재귀로 펼쳐
+ *   그 안에 근거가 실제로 있는지 본다. 이름만 흉내낸 헬퍼는 통과하지 못한다.
+ */
+function ruleFunctions(src) {
+  const out = new Map();
+  const re = /function\s+(\w+)\s*\(([^)]*)\)\s*\{/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    while (i < src.length && depth > 0) {
+      if (src[i] === '{') depth += 1;
+      else if (src[i] === '}') depth -= 1;
+      i += 1;
+    }
+    out.set(m[1], src.slice(m.index + m[0].length, i - 1));
+  }
+  return out;
+}
+
+/** 본문 + 그 본문이 부르는 함수들의 본문(재귀). */
+function expand(body, fns, seen = new Set()) {
+  let text = body;
+  for (const [name, fnBody] of fns) {
+    if (seen.has(name)) continue;
+    if (!new RegExp(`\\b${name}\\s*\\(`).test(body)) continue;
+    seen.add(name);
+    text += '\n' + expand(fnBody, fns, seen);
+  }
+  return text;
 }
 
 /** 전면 차단 블록 — 지킬 것이 없으므로 가드 검사에서 제외한다. */
@@ -172,10 +217,12 @@ test('[게이트 B] 담당 범위가 필요한 컬렉션마다 accessibleClientI
     })
     .map(k => PERM_CATALOG[k].resource))];
 
+  const fns = ruleFunctions(stripComments(firestoreRules));
   const missing = needScope.filter((res) => {
     const b = blocks.filter(x => x.path.startsWith(`/${res}/`));
     if (b.length === 0) return true;
-    return !b.some(x => x.body.includes('accessibleClientIds'));
+    // 헬퍼를 거쳐도 통과한다. 다만 그 헬퍼가 **실제로** 담당 목록을 읽어야 한다.
+    return !b.some(x => expand(x.body, fns).includes('accessibleClientIds'));
   });
 
   assert.deepEqual(
@@ -187,13 +234,18 @@ test('[게이트 B] 담당 범위가 필요한 컬렉션마다 accessibleClientI
 test('[게이트 B] 모든 블록이 재직 여부를 검사한다', () => {
   // 퇴사자의 기존 토큰은 refresh token 으로 계속 갱신된다. 자연 만료를
   // 기다리는 것은 차단 정책이 아니다 — 블록마다 authz.enabled 를 봐야 한다.
-  const blocks = matchBlocks(stripComments(firestoreRules));
+  const src = stripComments(firestoreRules);
+  const blocks = matchBlocks(src);
+  const fns = ruleFunctions(src);
   const missing = blocks
     // authz 본인 문서 읽기는 예외다 — 비활성 사용자가 자기 상태를 확인해
     // 로그아웃할 수 있어야 한다. 이 예외로 열리는 것은 없다.
     .filter(b => !b.path.startsWith('/authz/'))
+    // users 본인 문서 읽기도 같은 예외다. 세션 복원이 이 문서를 먼저 읽고
+    // 비활성 안내를 띄운다. 다만 **남의 문서**를 읽을 때는 검사가 있어야 하므로
+    // 블록 전체를 면제하지 않고, 그 블록이 재직 검사를 갖고 있는지는 그대로 본다.
     .filter(b => !isDenyAll(b.body))
-    .filter(b => !ENABLED_GUARD.test(b.body))
+    .filter(b => !ENABLED_GUARD.test(expand(b.body, fns)))
     .map(b => b.path);
 
   assert.deepEqual(
@@ -211,11 +263,28 @@ test('[게이트 B] 마감된 월의 거래 수정을 규칙이 막는다', () =
 });
 
 test('[게이트 B] createdBy를 불변으로 강제한다', () => {
-  const src = stripComments(firestoreRules);
   // 수정 시 기존 값과 같아야 한다 — 없으면 남의 거래를 자기 것으로 바꿀 수 있다.
+  // 조건이 **transactions 블록의 update 안**에 있어야 한다. 파일 어딘가에
+  // 그 문자열이 있는 것만으로는 아무것도 보장하지 않는다.
+  const blocks = matchBlocks(stripComments(firestoreRules));
+  const trx = blocks.find(b => b.path.startsWith('/transactions/'));
+  assert.ok(trx, 'transactions match 블록을 찾을 수 없습니다');
+
+  const update = trx.body.match(/allow[^:]*\bupdate\b[^:]*:\s*if([\s\S]*?);/);
+  assert.ok(update, 'transactions 에 update 규칙이 없습니다');
+
+  // request 쪽과 resource 쪽의 createdBy 를 비교하는가 (접근자 형태는 자유)
+  const cond = update[1].replace(/\s+/g, '');
   assert.ok(
-    /resource\.data\.createdBy|createdBy\s*==\s*resource/.test(src),
-    'createdBy 불변 조건이 없습니다.',
+    /request\.resource\.data[^=]*createdBy[^=]*==resource\.data[^&]*createdBy/.test(cond)
+    || /resource\.data[^=]*createdBy[^=]*==request\.resource\.data[^&]*createdBy/.test(cond),
+    'createdBy 불변 조건이 update 규칙에 없습니다:\n' + update[1].trim(),
+  );
+
+  // clientId 도 같이 묶어 둔다 — 바꿀 수 있으면 담당 밖 입주자에게 거래를 민다.
+  assert.ok(
+    /request\.resource\.data[^=]*clientId[^=]*==resource\.data[^&]*clientId/.test(cond),
+    'clientId 불변 조건이 update 규칙에 없습니다.',
   );
 });
 
@@ -223,8 +292,14 @@ test('[게이트 B] reports 직접 쓰기가 막혀 있다', () => {
   const src = stripComments(firestoreRules);
   const m = src.match(/match\s+\/reports\/\{[^}]*\}\s*\{([\s\S]*?)\n\s{4}\}/);
   assert.ok(m, 'reports match 블록을 찾을 수 없습니다');
-  assert.ok(
-    !/allow\s+[^:]*write/.test(m[1]),
+  // `allow write` 만 찾으면 `allow create` · `allow update, delete` 를 놓친다.
+  // 실제로 그랬다 — 규칙을 create/update/delete 로 쪼개자 게이트가 초록으로
+  // 바뀌었다. 쓰기는 쓰기다.
+  const writes = [...m[1].matchAll(/allow\s+([^:]+):/g)]
+    .map(a => a[1])
+    .filter(a => /\b(write|create|update|delete)\b/.test(a));
+  assert.deepEqual(
+    writes, [],
     '보고서를 브라우저가 직접 씁니다. 상태 전이가 강제되지 않습니다:\n' + m[1].trim(),
   );
 });

@@ -169,6 +169,7 @@ export function roleCan(role, key) {
 export async function initPermissions() {
   S.permOverride = {};
   S.caps = null;
+  S.accessibleClientIds = [];
   const { getDoc, doc } = fb();
 
   try {
@@ -198,7 +199,12 @@ export async function initPermissions() {
     const snap = await getDoc(doc(fdb(), COLS.AUTHZ, uid));
     // enabled 가 false 면 caps 를 믿지 않는다 — 규칙도 그렇게 판정한다.
     if (snap.exists() && snap.data()?.enabled === true) {
-      S.caps = snap.data().caps || null;
+      const d = snap.data();
+      S.caps = d.caps || null;
+      // 담당 입주자 목록. 규칙이 범위를 이것으로 판정하므로, 앱의 조회도
+      // 같은 목록으로 좁혀야 한다 — 넓게 물으면 쿼리가 통째로 거부된다
+      // (규칙은 필터가 아니다).
+      S.accessibleClientIds = Array.isArray(d.accessibleClientIds) ? d.accessibleClientIds : [];
     }
   } catch (err) {
     // 규칙이 authz 읽기를 막는 경우도 여기로 온다. 등급 계산으로 물러선다.

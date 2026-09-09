@@ -16,11 +16,17 @@ import { fb, fdb } from '../services/firestore.js';
 import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
 import { fetchStaffDirectory, fetchCategoryDirectory } from '../services/directory.js';
 import { countUnpaidMandatory } from '../domain/monthly-summary.js';
+import { fetchInScope } from '../services/scoped-fetch.js';
 import * as Dash     from './dashboard.js';
 import * as Trx      from './transactions.js';
 import * as Rpt      from './report.js';
 import * as Settings from './settings.js';
 import { can } from './permissions.js';
+
+/** 지금 로그인한 사람의 조회 범위. 규칙이 보는 것과 같은 근거(authz)를 쓴다. */
+export function myScope(field) {
+  return { all: can('client.view.all'), ids: S.accessibleClientIds || [], field: field || null };
+}
 
 /**
  * 기본 데이터 로드.
@@ -29,7 +35,7 @@ import { can } from './permissions.js';
  *                                  미지정 시 전체 로드 (로그인·새로고침용)
  */
 export async function fetchBaseData(opts) {
-  const { getDocs, getDoc, collection, doc } = fb();
+  const { getDoc, doc } = fb();
   // 담당 입주자만 볼지 전체를 볼지 — 네비게이션 메뉴 권한이 아니라 전용 키로 판정한다.
   // 예전에는 can('nav.staff')를 썼기 때문에 팀장의 메뉴 표시를 끄면
   // 팀장이 전 입주자를 못 보게 되는 숨은 부작용이 있었다.
@@ -52,8 +58,8 @@ export async function fetchBaseData(opts) {
   //     전 계좌를 한 문서에 담으면 1 MiB 한도에 부딪힐 수 있고, 그때 명부 쓰기가
   //     조용히 실패해 명부가 낡은 채로 남는다.
   //   좁히려면 로그인용 필드만 담고 설정 화면이 원본을 따로 읽게 해야 한다.
-  if (need('clients'))    tasks.push(['clients',    getDocs(collection(db,COLS.CLIENTS))]);
-  if (need('accounts'))   tasks.push(['accounts',   getDocs(collection(db,COLS.ACCOUNTS))]);
+  if (need('clients'))    tasks.push(['clients',    fetchInScope(db, COLS.CLIENTS, myScope())]);
+  if (need('accounts'))   tasks.push(['accounts',   fetchInScope(db, COLS.ACCOUNTS, myScope('clientId'))]);
   // 마감 월 색인 — 예전에는 reports를 status='confirmed'로 조회해 만들었다.
   // 그런데 보안 규칙은 reports를 담당자(등급 2) 이상만 읽게 하므로, 입력자가
   // 로그인하면 이 조회가 거부되고 아래 Promise.all이 깨져 **앱 초기화가 통째로
@@ -131,7 +137,7 @@ export async function fetchBaseData(opts) {
 
       // 필수 고정항목 미납 카운트
       try {
-        const fSnap = await getDocs(collection(db, COLS.FIXED_ITEMS));
+        const fSnap = await fetchInScope(db, COLS.FIXED_ITEMS, myScope('clientId'));
         S.allFixedItems = fSnap.docs.map(d => ({ id: d.id, ...d.data() }));
         const unpaid = {};
         S.clients.forEach(c => {

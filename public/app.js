@@ -39,6 +39,7 @@ import * as Rpt      from './modules/report.js';
 import * as Settings from './modules/settings.js';
 import * as SettingsDerived from './modules/settings-derived.js';
 import * as Modals   from './modules/modals.js';
+import * as Fixed    from './modules/fixed-items.js';
 import * as Parser   from './services/excel-parser.js';
 import { initFontScale, setFontScale } from './modules/font-scale.js';
 
@@ -200,12 +201,12 @@ Object.assign(window, {
   openReceiptUpload: Modals.openReceiptUpload,
   openReceiptModal: Modals.openReceiptModal,
   closeReceiptModal: Modals.closeReceiptModal,
-  renderFixedItemForm: Modals.renderFixedItemForm,
-  loadFixedItems: Modals.loadFixedItems,
-  applyFixedItems: Modals.applyFixedItems,
-  saveFixedItem: Modals.saveFixedItem,
-  deleteFixedItem: Modals.deleteFixedItem,
-  renderFixedItemsList: Modals.renderFixedItemsList,
+  renderFixedItemForm: Fixed.renderFixedItemForm,
+  loadFixedItems: Fixed.loadFixedItems,
+  applyFixedItems: Fixed.applyFixedItems,
+  saveFixedItem: Fixed.saveFixedItem,
+  deleteFixedItem: Fixed.deleteFixedItem,
+  renderFixedItemsList: Fixed.renderFixedItemsList,
   printReceiptSheet: Modals.printReceiptSheet,
   openBankStatementModal: Modals.openBankStatementModal,
   renderBankStatementsList: Modals.renderBankStatementsList,
@@ -286,7 +287,7 @@ function bindEvents(){
   });
   document.getElementById('btn-bulk-del')?.addEventListener('click',Trx.confirmBulkDelete);
   document.getElementById('btn-filter-reset')?.addEventListener('click',Trx.resetFilters);
-  document.getElementById('btn-h-fixed')?.addEventListener('click',Modals.applyFixedItems);
+  document.getElementById('btn-h-fixed')?.addEventListener('click',Fixed.applyFixedItems);
   document.getElementById('btn-h-receipt-print')?.addEventListener('click',Modals.printReceiptSheet);
 
   // 정렬 헤더
