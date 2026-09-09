@@ -28,7 +28,7 @@
 
 const {
   AUTHZ, CLIENT_ACCESS, MEMBERS,
-  newAuthzDoc, withCaps, projectAssignments, isEnabled,
+  newAuthzDoc, withCaps, projectAssignments, authzIdentityPatch,
 } = require('./authz.cjs');
 const {
   CAP_SCHEMA_VERSION, computeCaps, rankOf, sanitizeOverride,
@@ -46,80 +46,52 @@ const BACKFILL_CHUNK = 100;
 module.exports = function authzFns(ctx) {
   const { db, callable, HttpsError, logger, FieldValue } = ctx;
 
-  /**
-   * 호출자가 담당 배정을 바꿀 수 있는가.
-   *
-   * caps 스냅샷만 본다. 등급 계산을 하지 않는 이유는 권한 카탈로그가
-   * public/domain/perm-catalog.js에 있고 그것은 functions/ 배포에 포함되지
-   * 않기 때문이다 — 서버가 caps를 미리 계산해 두고 여기서는 읽기만 한다.
-   */
-  async function requireClientAdmin(auth) {
-    if (!auth || !auth.uid) {
-      throw new HttpsError('unauthenticated', '로그인이 필요합니다.');
-    }
-    const snap = await db.collection(AUTHZ).doc(auth.uid).get();
-    if (!snap.exists) {
-      // 백필 전 상태. 무엇이 없는지 알려주지 않으면 "왜 안 되는지" 알 수 없다.
-      throw new HttpsError(
-        'failed-precondition',
-        '권한 정보가 아직 준비되지 않았습니다. 관리자에게 권한 백필을 요청하세요.',
-      );
-    }
-    const d = snap.data() || {};
-    if (d.enabled !== true) {
-      throw new HttpsError('permission-denied', '비활성화된 계정입니다.');
-    }
-    const caps = d.caps;
-    if (!caps || caps.settingsClient !== true) {
-      throw new HttpsError('permission-denied', '입주자 관리 권한이 없습니다.');
-    }
-    return d;
-  }
-
   // ───────────────────────────────────────────────────────────
-  // 한 사용자의 권한 스냅샷 재계산
+  // 한 사용자의 권한 스냅샷 — **쓰기를 만들어 주기만 한다**
   //
   // 역할·관리자 플래그·재직 상태가 바뀌면 caps 도 함께 바뀐다. 이것을
-  // 부르지 않으면 authz 문서가 낡은 채로 남고, 규칙은 그 낡은 값으로
-  // 판정한다 — 강등된 사람이 계속 통과하거나, 승진한 사람이 막힌다.
+  // 빠뜨리면 authz 문서가 낡은 채로 남고 규칙은 그 낡은 값으로 판정한다 —
+  // 강등된 사람이 계속 통과하거나, 승진한 사람이 막힌다.
   //
-  // 담당 목록은 건드리지 않는다. 그것은 updateClientAssignments 와
-  // backfillAuthz 만 바꾼다 — 역할 변경이 담당 배정을 건드리면 안 된다.
+  // 담당 목록(accessibleClientIds)은 건드리지 않는다. 그것은
+  // saveClient 와 backfillAuthz 만 바꾼다 — 역할 변경이 담당을 지우면 안 된다.
   // ───────────────────────────────────────────────────────────
 
   /**
-   * users/{uid} 를 근거로 authz/{uid} 의 등급·재직·caps 를 다시 쓴다.
+   * users 문서 하나로 authz 에 쓸 **쓰기 한 건**을 만든다. 쓰지는 않는다.
    *
-   * merge 로 쓰는 이유: accessibleClientIds 를 보존해야 한다. set 으로
-   * 덮으면 담당 목록이 사라지고, 그 사람은 자기 입주자를 못 보게 된다.
+   * 왜 여기서 쓰지 않고 돌려주나
+   *   users 쓰기와 authz 쓰기를 따로 커밋하면 그 사이에서 실패했을 때
+   *   `users.active=false` 인데 `authz.enabled=true` 가 남는다 — 화면에는
+   *   퇴사인데 규칙은 통과시킨다. 순서를 바꾸는 것으로는 못 막는다.
+   *   반대로 두면 이번엔 규칙이 막는데 화면은 재직이다.
+   *
+   *   그래서 호출부가 이 쓰기를 **users 쓰기와 같은 배치·트랜잭션에** 넣는다.
+   *   전부 성공하거나 전부 적용되지 않는다. 부분 상태가 만들어질 자리가 없다.
+   *
+   * override 를 인자로 받는 이유
+   *   트랜잭션은 모든 읽기가 모든 쓰기보다 앞서야 한다. 여기서 config 를
+   *   읽으면 호출부의 트랜잭션 안에서 읽기 순서를 어기거나, 그 문서까지
+   *   잠가서 직원 변경이 서로 직렬화된다. 그래서 호출부가 트랜잭션 **밖에서**
+   *   currentOverride() 를 한 번 읽어 넘긴다.
    *
    * @param {string} uid
-   * @param {Object} [user] 이미 읽어 둔 users 문서 데이터(있으면 재조회 생략)
+   * @param {Object} user users 문서 데이터(변경 후의 값)
+   * @param {Object} override sanitizeOverride 를 거친 등급 오버라이드
+   * @returns {{ref: Object, data: Object, merge: boolean}|null}
    */
-  async function syncAuthzForUser(uid, user) {
+  function authzWriteFor(uid, user, override) {
     const id = String(uid || '').trim();
     if (!id) return null;
-
-    let data = user;
-    if (!data) {
-      const snap = await db.collection(USERS).doc(id).get();
-      if (!snap.exists) return null;
-      data = snap.data() || {};
-    }
-
-    const override = await currentOverride();
+    const data = user || {};
     const caps = computeCaps(rankOf({ role: data.role, isAdmin: data.isAdmin }), override);
-
-    await db.collection(AUTHZ).doc(id).set({
-      uid: id,
-      role: String(data.role || '입력자'),
-      isAdmin: data.isAdmin === true,
-      enabled: isEnabled(data),
-      caps,
-      capSchemaVersion: CAP_SCHEMA_VERSION,
-    }, { merge: true });
-
-    return { uid: id, enabled: isEnabled(data) };
+    return {
+      ref: db.collection(AUTHZ).doc(id),
+      // merge 로 쓴다 — accessibleClientIds 를 보존해야 한다. set 으로 덮으면
+      // 담당 목록이 사라지고 그 사람은 자기 입주자를 못 보게 된다.
+      data: authzIdentityPatch({ uid: id, user: data, caps, capSchemaVersion: CAP_SCHEMA_VERSION }),
+      merge: true,
+    };
   }
 
   // ───────────────────────────────────────────────────────────
@@ -250,5 +222,5 @@ module.exports = function authzFns(ctx) {
     return result;
   });
 
-  return { backfillAuthz, syncAuthzForUser };
+  return { backfillAuthz, currentOverride, authzWriteFor };
 };

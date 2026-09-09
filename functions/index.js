@@ -66,13 +66,17 @@ function callable(name, handler, options) {
 }
 
 /**
- * 권한 스냅샷 재계산. 아래 authz-fns 배선에서 채워진다.
+ * 권한 투영 헬퍼. 아래 authz-fns 배선에서 채워진다.
  *
  * 여기에 선언해 두는 이유: signup 이 이 파일 위쪽에 있어 배선보다 먼저
  * 정의된다. exports 에 걸면 Firebase 가 배포 대상 함수로 해석하므로
  * 모듈 변수여야 한다.
+ *
+ * 초기값이 던지는 이유: 배선을 빠뜨리면 조용히 authz 없는 계정이 만들어지는
+ * 대신 가입이 실패한다. 둘 다 나쁘지만 조용한 쪽이 더 나쁘다.
  */
-let syncAuthzForUser = async () => null;
+const notWired = () => { throw new Error('authz-fns 배선 전에 호출됐습니다'); };
+let authz = { currentOverride: notWired, authzWriteFor: notWired };
 
 const USERS = 'users';
 const SECRETS = 'userSecrets';
@@ -195,6 +199,9 @@ exports.signup = callable('signup', async (request) => {
   const userRef = db.collection(USERS).doc(userId);
   const secretRef = db.collection(SECRETS).doc(userId);
   const secretRecord = await hashPassword(password);
+  // 등급표는 트랜잭션 밖에서 읽는다 — 안에서 읽으면 config 문서가 잠겨
+  // 가입이 서로 직렬화된다.
+  const override = await authz.currentOverride();
 
   // 첫 계정 판정과 아이디 중복 검사를 한 트랜잭션에서 처리해
   // 동시 가입으로 중복 아이디나 관리자 2명이 생기지 않게 한다.
@@ -207,7 +214,7 @@ exports.signup = callable('signup', async (request) => {
     const anyUser = await tx.get(db.collection(USERS).limit(1));
     const first = anyUser.empty;
 
-    tx.set(userRef, {
+    const userDoc = {
       userId,
       name,
       team,
@@ -216,28 +223,26 @@ exports.signup = callable('signup', async (request) => {
       approved: first,
       active: true,
       createdAt: FieldValue.serverTimestamp(),
-    });
+    };
+    tx.set(userRef, userDoc);
     tx.set(secretRef, {
       ...secretRecord,
       failedCount: 0,
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+    // 권한 스냅샷도 **같은 트랜잭션**에서 만든다. 뒤따라 쓰면 실패했을 때
+    // caps 없는 계정이 남고, 그것이 첫 관리자라면 백필조차 실행할 수 없어
+    // 부트스트랩이 통째로 막힌다.
+    // (승인 대기 계정은 enabled:false 로 만들어지므로 열리는 것은 없다)
+    const w = authz.authzWriteFor(userId, userDoc, override);
+    tx.set(w.ref, w.data, { merge: true });
+
     return first;
   });
 
   if (isFirst) {
     console.log(`[bootstrap] 첫 계정 '${userId}'을(를) 관리자로 생성했습니다.`);
-  }
-
-  // 새 계정에도 권한 스냅샷을 만든다. 빠뜨리면 첫 관리자가 caps 없이 생겨
-  // **백필조차 실행할 수 없다** — 부트스트랩이 통째로 막힌다.
-  // (승인 대기 계정은 enabled:false 로 만들어지므로 열리는 것은 없다)
-  try {
-    await syncAuthzForUser(userId);
-  } catch (err) {
-    logger.error('[signup] caps 생성 실패 — 백필로 복구하세요', {
-      userId, message: err && err.message,
-    });
   }
 
   return {
@@ -251,7 +256,7 @@ exports.signup = callable('signup', async (request) => {
 // ─────────────────────────────────────────────────────────────
 // 권한 투영 · 직원 관리
 //
-// 순서가 중요하다 — 직원 함수가 authz 의 syncAuthzForUser 를 받아 쓴다.
+// 순서가 중요하다 — 직원 함수가 authz 의 authzWriteFor 를 받아 쓴다.
 // 역할·재직이 바뀌면 caps 도 함께 바뀌어야 하고, 그것을 빠뜨리면 규칙이
 // 낡은 값으로 판정한다(강등된 사람이 계속 통과한다).
 //
@@ -263,7 +268,7 @@ const authzFns = require('./authz-fns')({
   db, callable, HttpsError, logger, FieldValue,
 });
 // 콜러블만 내보낸다. Firebase 는 **모든 export 를 배포 대상 함수로 해석**하므로,
-// syncAuthzForUser 같은 내부 헬퍼가 섞이면 정체불명의 함수가 배포된다.
+// authzWriteFor 같은 내부 헬퍼가 섞이면 정체불명의 함수가 배포된다.
 exports.backfillAuthz = authzFns.backfillAuthz;
 
 // 입주자 관리 — clients 원본과 두 투영본을 한 트랜잭션에서 쓴다.
@@ -274,12 +279,13 @@ Object.assign(exports, require('./client-fns')({
 // signup 은 이 배선보다 위에 정의돼 있다. exports 에 걸면 Firebase 가 그것을
 // 배포 대상 함수로 취급하므로(모든 export 가 함수로 해석된다) 모듈 변수에 담는다.
 // 콜러블은 배포가 아니라 호출 시점에 실행되므로 순서는 문제되지 않는다.
-syncAuthzForUser = authzFns.syncAuthzForUser;
+authz = authzFns;
 
 Object.assign(exports, require('./staff-fns')({
   db, callable, callerRank, rankOf, HttpsError, logger, FieldValue,
   hashPassword, validUserId, VALID_ROLES, USERS, SECRETS,
-  syncAuthzForUser: authzFns.syncAuthzForUser,
+  currentOverride: authzFns.currentOverride,
+  authzWriteFor: authzFns.authzWriteFor,
 }));
 
 // ─────────────────────────────────────────────────────────────

@@ -203,6 +203,27 @@ function withCaps(doc, caps, capSchemaVersion) {
 }
 
 /**
+ * users 문서 하나에서 authz 의 **신원·권한 부분**을 만든다. 순수 함수.
+ *
+ * accessibleClientIds 가 없는 것이 이 함수의 요점이다. 담당 목록의 원본은
+ * clients 이고 이 patch 는 역할·재직이 바뀔 때마다 merge 로 덮어쓴다 —
+ * 담당 목록을 넣으면 역할을 한 번 바꿀 때마다 그 사람의 담당이 통째로 날아간다.
+ *
+ * newAuthzDoc 과 나눠 둔 이유도 같다. 그쪽은 **처음 만들 때**(백필) 쓰고
+ * 담당 목록을 포함한다. 이쪽은 **고쳐 쓸 때** 쓰고 담당을 건드리지 않는다.
+ */
+function authzIdentityPatch({ uid, user, caps, capSchemaVersion }) {
+  return {
+    uid: String(uid),
+    role: String((user && user.role) || '입력자'),
+    isAdmin: !!(user && user.isAdmin === true),
+    enabled: isEnabled(user),
+    caps: { ...caps },
+    capSchemaVersion,
+  };
+}
+
+/**
  * 입주자 목록에서 사용자별 담당 입주자를 뽑는다. **순수 함수.**
  *
  * 백필은 clients 원본(userIds · teamLeader)에서 투영본을 다시 만든다.
@@ -259,5 +280,6 @@ module.exports = {
   memberPath,
   newAuthzDoc,
   withCaps,
+  authzIdentityPatch,
   projectAssignments,
 };
