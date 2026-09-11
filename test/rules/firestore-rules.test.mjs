@@ -101,6 +101,9 @@ before(async () => {
       rules: readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8'),
     },
   });
+  // 에뮬레이터 프로세스를 재사용해도 이전 실행의 성공 문서가 update로 분류돼
+  // 다음 실행을 오염시키지 않게 한다.
+  await testEnv.clearFirestore();
 
   // 판정 근거를 심는다. 이것이 없으면 규칙이 평가에 실패해 전원이 거부된다 —
   // 운영에서도 같다(배포 → 백필 → 규칙 순서를 지켜야 하는 이유).
@@ -350,7 +353,7 @@ describe('transactions', () => {
   it('거래 생성 시 createdBy는 본인이어야 한다', async () => {
     await assertSucceeds(
       setDoc(doc(as(ACTORS.입력자), 'transactions/t-new-ok'), {
-        clientId: 'c1', date: '2026-09-03', amountOut: 500, createdBy: 'staff-input',
+        clientId: 'c1', accountId: 'a1', date: '2026-09-03', amountOut: 500, createdBy: 'staff-input',
       }),
     );
   });
@@ -358,7 +361,7 @@ describe('transactions', () => {
   it('createdBy를 남의 uid로 위조해 만들 수 없다', async () => {
     await assertFails(
       setDoc(doc(as(ACTORS.입력자), 'transactions/t-forged'), {
-        clientId: 'c1', date: '2026-09-03', amountOut: 500, createdBy: 'staff-owner',
+        clientId: 'c1', accountId: 'a1', date: '2026-09-03', amountOut: 500, createdBy: 'staff-owner',
       }),
     );
   });
@@ -366,9 +369,40 @@ describe('transactions', () => {
   it('createdBy 없이 만들 수 없다', async () => {
     await assertFails(
       setDoc(doc(as(ACTORS.담당자), 'transactions/t-nocreator'), {
-        clientId: 'c1', date: '2026-09-03', amountOut: 500,
+        clientId: 'c1', accountId: 'a1', date: '2026-09-03', amountOut: 500,
       }),
     );
+  });
+
+  it('거래 생성 시 계좌가 같은 입주자 소속이어야 한다', async () => {
+    await assertFails(setDoc(doc(as(ACTORS.입력자), 'transactions/t-wrong-account'), {
+      clientId: 'c1', accountId: 'a9', date: '2026-09-03', amountOut: 500,
+      createdBy: 'staff-input',
+    }));
+  });
+
+  it('순서 변경 권한만 있으면 금액을 함께 바꿀 수 없다', async () => {
+    const a = ACTORS.입력자;
+    await seed(`authz/${a.uid}`, {
+      ...authzDoc(a.uid, a.role, a.isAdmin, [MY_CLIENT]),
+      caps: { trxReorder: true },
+    });
+    await assertSucceeds(updateDoc(doc(as(a), 'transactions/t-mine'), { sortOrder: 3 }));
+    await assertFails(updateDoc(doc(as(a), 'transactions/t-mine'), { sortOrder: 4, amountOut: 1 }));
+    await seed(`authz/${a.uid}`, authzDoc(a.uid, a.role, a.isAdmin, [MY_CLIENT]));
+  });
+
+  it('분류 수정 권한만 있으면 증빙 필드를 바꿀 수 없다', async () => {
+    const a = ACTORS.입력자;
+    await seed(`authz/${a.uid}`, {
+      ...authzDoc(a.uid, a.role, a.isAdmin, [MY_CLIENT]),
+      caps: { trxCategoryEdit: true },
+    });
+    await assertSucceeds(updateDoc(doc(as(a), 'transactions/t-mine'), { category: '생활비' }));
+    await assertFails(updateDoc(doc(as(a), 'transactions/t-mine'), {
+      category: '생활비', receiptPath: 'receipts/c1/forged',
+    }));
+    await seed(`authz/${a.uid}`, authzDoc(a.uid, a.role, a.isAdmin, [MY_CLIENT]));
   });
 });
 
@@ -499,10 +533,7 @@ describe('excelUploads', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// config — 관리자 전용, 단 연도 마감 이력은 센터장(4)도
-//
-// 이 예외가 없으면 센터장이 마감을 시작하는 순간 이력 쓰기에서 거부된다.
-// firestore.rules:93의 그 카브아웃이 실제로 동작하는지 확인한다.
+// config — 일반 설정은 관리자, 권한표·마감 이력은 서버 전용
 // ─────────────────────────────────────────────────────────────
 describe('config', () => {
   before(async () => {
@@ -536,8 +567,8 @@ describe('config', () => {
     );
   });
 
-  it('센터장은 마감 이력(archive_YYYY)을 쓸 수 있다 — 마감이 거부되지 않아야 한다', async () => {
-    await assertSucceeds(
+  it('센터장도 마감 이력(archive_YYYY)을 직접 쓸 수 없다 — runArchive 전용', async () => {
+    await assertFails(
       setDoc(doc(as(ACTORS.센터장), 'config/archive_2026'), {
         type: 'archive', year: 2026, count: 42,
       }),
@@ -561,7 +592,7 @@ describe('config', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// archive_YYYY 컬렉션 — 조회 담당자(2) 이상, 쓰기 센터장(4) 이상
+// archive_YYYY 컬렉션 — 조회 담당자(2) 이상, 쓰기 서버 전용
 //
 // 컬렉션명이 동적이라 match /{col}/{id} + 정규식으로 판별한다.
 // 와일드카드가 다른 컬렉션까지 열어버리지 않는지가 관건.
@@ -583,8 +614,8 @@ describe('archive_YYYY 컬렉션', () => {
     await assertFails(setDoc(doc(as(ACTORS.팀장), 'archive_2025/t2'), { x: 1 }));
   });
 
-  it('센터장은 쓸 수 있다 (마감이 여기에 복사한다)', async () => {
-    await assertSucceeds(setDoc(doc(as(ACTORS.센터장), 'archive_2025/t3'), { x: 1 }));
+  it('센터장도 직접 쓸 수 없다 (runArchive만 복사한다)', async () => {
+    await assertFails(setDoc(doc(as(ACTORS.센터장), 'archive_2025/t3'), { x: 1 }));
   });
 
   it('와일드카드가 임의 컬렉션을 열지 않는다', async () => {

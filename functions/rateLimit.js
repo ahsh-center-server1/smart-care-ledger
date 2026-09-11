@@ -67,4 +67,38 @@ async function consumeRateLimit(db, scope, uid, opts) {
   });
 }
 
-module.exports = { RATE_LIMITS, consume, consumeRateLimit };
+/**
+ * 서로 다른 한도를 **한 트랜잭션**에서 함께 소비한다.
+ * AI 공급자의 할당량은 사용자별이 아니라 프로젝트 전체이므로 사용자 한도만
+ * 두면 직원 수만큼 우회된다. 어느 하나라도 초과하면 아무 카운터도 증가하지 않는다.
+ */
+async function consumeRateLimits(db, limits) {
+  if (!Array.isArray(limits) || !limits.length) throw new Error('limits가 필요합니다');
+  const normalized = limits.map((item) => {
+    const scope = String((item && item.scope) || '');
+    const key = String((item && item.key) || '');
+    if (!scope || !key || scope.includes('/') || key.includes('/')) {
+      throw new Error('rate-limit-key-invalid');
+    }
+    return { ...item, scope, key, ref: db.collection(RATE_LIMITS).doc(`${scope}-${key}`) };
+  });
+  const now = Date.now();
+
+  await db.runTransaction(async (tx) => {
+    const snaps = [];
+    for (const item of normalized) snaps.push(await tx.get(item.ref));
+    const next = normalized.map((item, i) => consume(
+      snaps[i].exists ? snaps[i].data() : undefined,
+      now,
+      { maxAttempts: item.maxAttempts, windowMs: item.windowMs },
+    ));
+    normalized.forEach((item, i) => {
+      tx.set(item.ref, {
+        ...next[i], scope: item.scope, key: item.key,
+        updatedAt: new Date(now).toISOString(),
+      });
+    });
+  });
+}
+
+module.exports = { RATE_LIMITS, consume, consumeRateLimit, consumeRateLimits };

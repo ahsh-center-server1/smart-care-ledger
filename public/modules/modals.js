@@ -9,13 +9,13 @@ import { S } from '../state.js';
 import { COLS, cs } from '../constants.js';
 import { toast, escAttr, makeDraggable } from '../utils/ui.js';
 import { fb, fdb, batchAddDocs } from '../services/firestore.js';
-import { uploadImageWithThumb, uploadExcelOriginal, deleteFromStorage, deleteManyFromStorage, getImageUrl, validateUploadSize } from '../services/storage.js';
+import { uploadImageWithThumb, uploadExcelOriginal, deleteManyFromStorage, getImageUrl, validateUploadSize } from '../services/storage.js';
 import { loadTransactions, refetchUsers, refetchClients, refetchAccounts, isConfirmedLocked, myScope } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
 import { can } from './permissions.js';
 import { refreshSetupAfterChange } from './setup.js';
-import { uploadReceipt } from '../services/receipt-upload.js';
+import { uploadReceipt, removeReceipt } from '../services/receipt-upload.js';
 // 고정항목은 fixed-items.js 로 나갔다. openModal 이 그 렌더러를 부르므로
 // 이 방향(modals → fixed-items)만 import 하고, 반대 방향은 주입으로 끊는다.
 import { renderFixedItemForm, registerModalShell } from './fixed-items.js';
@@ -107,8 +107,9 @@ export function renderTrxForm(t){
       </div>
       <div>
         <label class="label">영수증 첨부 <span style="font-size:10px;color:var(--muted);">(선택)</span></label>
-        ${isEdit&&t.receiptUrl?`<div id="trx-receipt-current" style="margin-bottom:6px;"><a href="${escAttr(t.receiptUrl)}" target="_blank" style="font-size:12px;color:var(--blue);">📎 현재 첨부파일 보기</a> <button onclick="document.getElementById('trx-receipt-current').innerHTML='<span style=\\'font-size:12px;color:#dc2626;\\'>삭제됨</span>';window._trxReceiptClear=true;" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button></div>`:''}
-        <div id="trx-receipt-drop" style="border:2px dashed var(--border);border-radius:8px;background:var(--bg);padding:12px;text-align:center;cursor:pointer;font-size:13px;color:var(--muted);" onclick="document.getElementById('trx-receipt-file').click()">
+        ${isEdit&&t.receiptUrl?`<div id="trx-receipt-current" style="margin-bottom:6px;"><a href="${escAttr(t.receiptUrl)}" target="_blank" style="font-size:12px;color:var(--blue);">📎 현재 첨부파일 보기</a>${can('receipt.replace')?` <button onclick="document.getElementById('trx-receipt-current').innerHTML='<span style=\\'font-size:12px;color:#dc2626;\\'>삭제됨</span>';window._trxReceiptClear=true;" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button>`:''}</div>`:''}
+        ${isEdit&&t.receiptUrl&&!can('receipt.replace')?'<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">기존 증빙을 교체하려면 담당자 권한이 필요합니다.</div>':''}
+        <div id="trx-receipt-drop" style="border:2px dashed var(--border);border-radius:8px;background:var(--bg);padding:12px;text-align:center;cursor:pointer;font-size:13px;color:var(--muted);${isEdit&&t.receiptUrl&&!can('receipt.replace')?'display:none;':''}" onclick="document.getElementById('trx-receipt-file').click()">
           📎 영수증 클릭 또는 드래그
           <input type="file" id="trx-receipt-file" accept="image/*" style="display:none;">
         </div>
@@ -176,8 +177,6 @@ export function renderTrxForm(t){
       }
       // 영수증은 거래가 저장된 **뒤에** 서버가 붙인다. 브라우저는 최종 경로를
       // 쓸 수 없고, 새 거래는 아직 문서 ID 가 없기 때문이다.
-      const oldReceiptUrl=isEdit?(t.receiptUrl||''):'';
-      const receiptUrl=window._trxReceiptClear?'':oldReceiptUrl;
       const receiptFile=document.getElementById('trx-receipt-file')?.files[0];
       // 취소-수입/취소-지출은 저장 시 '취소'로 정규화
       const isCancelIn=type==='취소-수입';
@@ -185,22 +184,36 @@ export function renderTrxForm(t){
       const normType=(isCancelIn||isCancelOut)?'취소':type;
       const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,
         amountIn:(type==='수입'||isCancelIn)?amount:0,
-        amountOut:(type==='지출'||isCancelOut)?amount:0,
-        receiptUrl,
-        // 자산이동이 아닌 거래에 연결 정보가 남아 있으면 안 된다(짝 없는 링크 방지)
-        linkedAccountId:'',linkedTrxId:''};
+        amountOut:(type==='지출'||isCancelOut)?amount:0};
       if(existId)trxData.id=existId;
       closeModal();
       const savedId=await saveTrx(trxData);
       if(receiptFile&&savedId){
         try{
-          const r=await uploadReceipt({clientId:acc.clientId,file:receiptFile,trxId:savedId});
+          const r=await uploadReceipt({
+            clientId:acc.clientId,file:receiptFile,trxId:savedId,
+            expectedReceiptPath:t?.receiptPath||'',
+            expectedReceiptGeneration:t?.receiptGeneration||'',
+            expectedReceiptUrl:t?.receiptUrl||'',
+          });
           [S.transactions,S.filteredTrx].forEach(arr=>{const x=arr.find(y=>y.id===savedId);
-            if(x){x.receiptUrl=r.url;x.receiptPath=r.path;x.receiptMissing=false;}});
+            if(x){x.receiptUrl=r.url;x.receiptPath=r.path;x.receiptGeneration=r.generation;x.receiptMissing=false;}});
         }catch(e){toast('영수증 첨부 실패: '+(e.message||e),'error',6000);}
       }
-      // 증빙이 교체/해제되면 기존 파일은 Storage에서 삭제(고아 파일 방지)
-      if(oldReceiptUrl&&(receiptFile||window._trxReceiptClear))deleteFromStorage(oldReceiptUrl);
+      if(window._trxReceiptClear&&!receiptFile&&savedId&&isEdit){
+        try{
+          await removeReceipt({
+            trxId:savedId,
+            expectedReceiptPath:t?.receiptPath||'',
+            expectedReceiptGeneration:t?.receiptGeneration||'',
+            expectedReceiptUrl:t?.receiptUrl||'',
+          });
+          [S.transactions,S.filteredTrx].forEach(arr=>{const x=arr.find(y=>y.id===savedId);
+            if(x){delete x.receiptUrl;delete x.receiptPath;delete x.receiptGeneration;x.receiptMissing=false;}});
+        }catch(e){toast('영수증 해제 실패: '+(e.message||e),'error',6000);}
+      }
+      // 교체된 기존 증빙은 감사·보존 정책에 따라 서버 정리 대상으로 남긴다.
+      // 브라우저가 최종 receipts 경로를 삭제하는 권한은 없다.
     }
   });
   document.getElementById('f-copy-btn').addEventListener('click',async()=>{
@@ -239,8 +252,7 @@ export function renderTrxForm(t){
       const normType=(isCancelIn||isCancelOut)?'취소':type;
       const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,
         amountIn:(type==='수입'||isCancelIn)?amount:0,
-        amountOut:(type==='지출'||isCancelOut)?amount:0,
-        receiptUrl:''};
+        amountOut:(type==='지출'||isCancelOut)?amount:0};
       await saveTrx(trxData);
       toast('✅ 거래가 복사되었습니다.','success');
     }
@@ -483,7 +495,7 @@ export async function analyzeXlFile(){
       else if(rawIn<0){amOut=Math.abs(rawIn);type='취소';}
       const item={date:p.date,description:p.desc,descRaw:p.descRaw||p.desc,
         amountIn:amIn,amountOut:amOut,type,
-        category:p.cat||'확인필요',subcategory:p.sub||'',receiptUrl:'',
+        category:p.cat||'확인필요',subcategory:p.sub||'',
         sortOrder:existingMaxOrder+i+1};
       item._dup=existSet.has(dupKey({...item,accountId:accId}));
       return item;
@@ -590,7 +602,7 @@ async function fillExcelTempFromRows(rows,accId){
     else if(rawIn<0){amOut=Math.abs(rawIn);type='취소';}
     const item={date:p.date,description:p.desc,descRaw:p.descRaw||p.desc,
       amountIn:amIn,amountOut:amOut,type,
-      category:p.cat||'확인필요',subcategory:p.sub||'',receiptUrl:'',
+      category:p.cat||'확인필요',subcategory:p.sub||'',
       sortOrder:existingMaxOrder+i+1};
     item._dup=existSet.has(dupKey({...item,accountId:accId}));
     return item;
@@ -713,7 +725,7 @@ export async function saveExcelData(){
     clientId:acc.clientId,accountId:accId,date:item.date,type:item.type,
     category:item.category,subcategory:item.subcategory||'',
     description:item.description,amountIn:item.amountIn||0,amountOut:item.amountOut||0,
-    receiptUrl:'',sortOrder:item.sortOrder??null,
+    sortOrder:item.sortOrder??null,
     createdBy:String(S.user?.userId||''),
   }})));
   await updateAccBalance(accId);
@@ -802,12 +814,15 @@ export async function doReceiptUpload(trxId){
     btn.textContent='업로드 중...';
     if(status)status.textContent='Firebase Storage에 업로드 중입니다...';
     const target=S.transactions.find(x=>x.id===trxId);
-    const oldUrl=target?.receiptUrl||'';
     // 최종 경로 복사와 거래 갱신은 서버가 한다 — 브라우저는 스테이징까지만.
-    const r=await uploadReceipt({clientId:target?.clientId||S.activeClient,file:_receiptSelectedFile,trxId});
-    if(oldUrl&&oldUrl!==r.url)deleteFromStorage(oldUrl);
+    const r=await uploadReceipt({
+      clientId:target?.clientId||S.activeClient,file:_receiptSelectedFile,trxId,
+      expectedReceiptPath:target?.receiptPath||'',
+      expectedReceiptGeneration:target?.receiptGeneration||'',
+      expectedReceiptUrl:target?.receiptUrl||'',
+    });
     [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);
-      if(t){t.receiptUrl=r.url;t.receiptPath=r.path;t.receiptMissing=false;}});
+      if(t){t.receiptUrl=r.url;t.receiptPath=r.path;t.receiptGeneration=r.generation;t.receiptMissing=false;}});
     toast('업로드 완료!','success'); _receiptSelectedFile=null; closeModal(); renderHistoryTable();
   }catch(e){btn.disabled=false;btn.textContent='📤 업로드';if(status)status.style.display='none';toast('업로드 실패: '+e.message,'error');}
 }

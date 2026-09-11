@@ -15,14 +15,46 @@
  */
 
 module.exports = function aiFns(ctx) {
-  const { db, callable, requireCaller, HttpsError, logger, FieldValue, Timestamp } = ctx;
+  const {
+    db, getBucket, callable, requireCaller, HttpsError, logger, FieldValue, Timestamp,
+  } = ctx;
 
-  const { isAiConfigured } = require('./ai/anthropic');
-  const { extractReceipt, extractBankbook } = require('./ai/receipt-extract');
-  const { consumeRateLimit } = require('./rateLimit');
+  const { isAiConfigured } = ctx.aiProvider || require('./ai/anthropic');
+  const { extractReceipt, extractBankbook } = ctx.extractors || require('./ai/receipt-extract');
+  const { consumeRateLimits } = ctx.rateLimiter || require('./rateLimit');
+  const { capName } = require('./perm-catalog.cjs');
+  const { STATES, jobPath, stagingPath, millis } = require('./receipt-jobs.cjs');
 
-  /** 호출마다 실제 비용이 든다 — 분당 20장으로 제한한다. */
-  const AI_RATE = { maxAttempts: 20, windowMs: 60 * 1000 };
+  /** 공급자 콘솔의 실제 한도에 맞춰 런타임 환경변수로 더 낮출 수 있다. */
+  const positiveInt = (value, fallback) => {
+    const n = Number(value);
+    return Number.isInteger(n) && n > 0 ? n : fallback;
+  };
+  const AI_USER_RATE = {
+    maxAttempts: positiveInt(process.env.AI_USER_RPM, 10), windowMs: 60 * 1000,
+  };
+  const AI_PROJECT_RATE = {
+    maxAttempts: positiveInt(process.env.AI_PROJECT_RPM, 30), windowMs: 60 * 1000,
+  };
+
+  /** 사용자·프로젝트 한도를 함께 소비하고 재시도 가능 시각을 사용자에게 알린다. */
+  async function consumeAiRateLimits(scope, uid) {
+    try {
+      await consumeRateLimits(db, [
+        { scope: `${scope}-user`, key: uid, ...AI_USER_RATE },
+        { scope: `${scope}-project`, key: 'all', ...AI_PROJECT_RATE },
+      ]);
+    } catch (err) {
+      if (err && err.message === 'rate-limit-exceeded') {
+        const secs = Math.ceil((err.retryAfterMs || 60000) / 1000);
+        throw new HttpsError(
+          'resource-exhausted',
+          `사진 판독을 너무 자주 요청했습니다. ${secs}초 후 다시 시도하거나 직접 입력하세요.`,
+        );
+      }
+      throw err;
+    }
+  }
 
   /**
    * getAiStatus — 화면이 이 기능을 보여줄지 정한다.
@@ -62,18 +94,7 @@ module.exports = function aiFns(ctx) {
       );
     }
 
-    try {
-      await consumeRateLimit(db, scope, request.auth.uid, AI_RATE);
-    } catch (err) {
-      if (err && err.message === 'rate-limit-exceeded') {
-        const secs = Math.ceil((err.retryAfterMs || 60000) / 1000);
-        throw new HttpsError(
-          'resource-exhausted',
-          `사진 판독을 너무 자주 요청했습니다. ${secs}초 후 다시 시도하거나 직접 입력하세요.`
-        );
-      }
-      throw err;
-    }
+    await consumeAiRateLimits(scope, request.auth.uid);
 
     const d = request.data || {};
     const base64 = String(d.imageBase64 || '');
@@ -82,6 +103,60 @@ module.exports = function aiFns(ctx) {
       throw new HttpsError('invalid-argument', '사진이 전달되지 않았습니다.');
     }
     return { base64, mediaType, me };
+  }
+
+  /** 영수증 AI는 브라우저가 보낸 base64가 아니라 소유권이 확인된 staging을 읽는다. */
+  async function guardReceiptJob(request) {
+    const me = await requireCaller(request.auth);
+    me.require('receipt.upload', '사진 자동입력');
+    if (!isAiConfigured()) {
+      throw new HttpsError(
+        'failed-precondition',
+        '사진 자동입력이 설정되지 않았습니다. 직접 입력할 수 있습니다.',
+      );
+    }
+    const uploadId = String((request.data || {}).uploadId || '');
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(uploadId)) {
+      throw new HttpsError('invalid-argument', '업로드 식별자가 올바르지 않습니다.');
+    }
+    const ref = db.doc(jobPath(request.auth.uid, uploadId));
+    const snap = await ref.get();
+    if (!snap.exists) throw new HttpsError('not-found', '업로드 기록을 찾을 수 없습니다.');
+    const job = snap.data() || {};
+    if (job.uid !== request.auth.uid || job.uploadId !== uploadId) {
+      throw new HttpsError('permission-denied', '본인의 업로드가 아닙니다.');
+    }
+    me.requireSees(job.clientId);
+    if (job.state !== STATES.UPLOADED) {
+      throw new HttpsError('failed-precondition', '이미 판독했거나 처리 중인 업로드입니다.');
+    }
+    if (millis(job.expireAt) <= Date.now()) {
+      throw new HttpsError('deadline-exceeded', '업로드 유효 시간이 지났습니다. 다시 올려 주세요.');
+    }
+
+    await consumeAiRateLimits('receipt-analyze', request.auth.uid);
+
+    const file = getBucket().file(stagingPath(request.auth.uid, uploadId));
+    let meta;
+    let bytes;
+    try {
+      [meta] = await file.getMetadata();
+      [bytes] = await file.download();
+    } catch (err) {
+      if (Number(err && err.code) === 404) {
+        throw new HttpsError('failed-precondition', '업로드된 파일을 찾을 수 없습니다.');
+      }
+      throw err;
+    }
+    const mediaType = String(meta.contentType || '').toLowerCase();
+    const sourceGeneration = String(meta.generation || '');
+    if (!sourceGeneration || !mediaType.startsWith('image/')) {
+      throw new HttpsError('invalid-argument', '판독할 수 있는 이미지가 아닙니다.');
+    }
+    return {
+      base64: Buffer.from(bytes).toString('base64'), mediaType, me,
+      job, jobRef: ref, uploadId, sourceGeneration,
+    };
   }
 
   /** 판독 실패를 사용자가 읽을 수 있는 메시지로 바꾼다. 끝은 항상 직접 입력 안내. */
@@ -116,14 +191,45 @@ module.exports = function aiFns(ctx) {
    * 클라이언트의 순수 모듈이 한다 — 그래야 재현되고 테스트된다.
    */
   const analyzeReceipt = callable('analyzeReceipt', async (request) => {
-    const { base64, mediaType, me } = await guardImageCall(request, 'receipt-analyze');
+    const {
+      base64, mediaType, me, job, jobRef, uploadId, sourceGeneration,
+    } = await guardReceiptJob(request);
     try {
       const { extracted, usage, bytes } = await extractReceipt({ base64, mediaType });
+
+      // 판독이 끝난 시점에도 job과 현재 권한을 다시 읽는다. 판독 도중 퇴사·담당
+      // 해제되었거나 job이 바뀌었으면 최종화 가능한 상태로 넘기지 않는다.
+      await db.runTransaction(async (tx) => {
+        const authzRef = db.collection('authz').doc(request.auth.uid);
+        const jobSnap = await tx.get(jobRef);
+        const authzSnap = await tx.get(authzRef);
+        const current = jobSnap.exists ? (jobSnap.data() || {}) : {};
+        const authz = authzSnap.exists ? (authzSnap.data() || {}) : {};
+        const caps = authz.caps || {};
+        const sees = caps[capName('client.view.all')] === true
+          || (Array.isArray(authz.accessibleClientIds)
+            && authz.accessibleClientIds.includes(String(job.clientId)));
+        if (authz.enabled !== true || caps[capName('receipt.upload')] !== true || !sees) {
+          throw new HttpsError('permission-denied', '현재 계정 권한으로 판독을 완료할 수 없습니다.');
+        }
+        if (current.state !== STATES.UPLOADED
+            || current.uid !== request.auth.uid
+            || current.uploadId !== uploadId) {
+          throw new HttpsError('aborted', '업로드 상태가 바뀌었습니다. 다시 시도하세요.');
+        }
+        tx.update(jobRef, {
+          state: STATES.ANALYZED,
+          sourceGeneration,
+          sourceContentType: mediaType,
+          sourceSize: Number(bytes || 0),
+          analyzedAt: FieldValue.serverTimestamp(),
+        });
+      });
 
       // 감사 로그는 **메타데이터만** 남긴다. 사진·상호명·품목은 기록하지 않는다
       // — 기록 자체가 개인정보 사본이 되면 안 된다.
       await writeAiAuditLog(request, me, 'ai.receiptAnalyze', {
-        clientId: String((request.data && request.data.clientId) || ''),
+        clientId: String(job.clientId),
         byteLength: bytes,
         confidence: Number(extracted && extracted.confidence) || 0,
         inputTokens: (usage && usage.input_tokens) || 0,
@@ -192,3 +298,5 @@ module.exports = function aiFns(ctx) {
 
   return { getAiStatus, analyzeReceipt, analyzeBankbook };
 };
+
+module.exports.AI_DEFAULTS = { userRpm: 10, projectRpm: 30 };

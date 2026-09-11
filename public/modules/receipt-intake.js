@@ -24,7 +24,7 @@
 'use strict';
 
 import { S } from '../state.js';
-import { uploadReceipts } from '../services/receipt-upload.js';
+import { prepareReceiptForAnalysis, uploadReceipts } from '../services/receipt-upload.js';
 import { toast, showLoading } from '../utils/ui.js';
 import { batchMixedOps } from '../services/firestore.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
@@ -79,20 +79,6 @@ export async function refreshReceiptIntakeButtons() {
 // 판독
 // ─────────────────────────────────────────────────────────────
 
-/** File → base64 (data URL 접두어 제거). */
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onerror = () => reject(new Error('사진을 읽을 수 없습니다.'));
-    fr.onload = () => {
-      const s = String(fr.result || '');
-      const comma = s.indexOf(',');
-      resolve(comma >= 0 ? s.slice(comma + 1) : s);
-    };
-    fr.readAsDataURL(file);
-  });
-}
-
 /** 사진 한 장을 판독해 검토 행 하나를 만든다. */
 async function analyzeOne(file, ctx) {
   const row = {
@@ -101,6 +87,7 @@ async function analyzeOne(file, ctx) {
     file: null,          // 저장할 때 업로드할 (압축된) 파일
     thumb: '',
     draft: null,
+    uploadId: '',        // 서버가 만든 job — 판독과 최종화가 같은 원본을 쓴다
     matches: [],
     decision: 'none',
     // 사용자가 고른 것 — 'new' | 거래 id | 'skip'
@@ -117,11 +104,10 @@ async function analyzeOne(file, ctx) {
     row.file = compressed;
     row.thumb = URL.createObjectURL(compressed);
 
-    const base64 = await fileToBase64(compressed);
+    const prepared = await prepareReceiptForAnalysis(ctx.clientId, compressed);
+    row.uploadId = prepared.uploadId;
     const res = await window._fbFn.call('analyzeReceipt')({
-      imageBase64: base64,
-      mediaType: compressed.type || 'image/jpeg',
-      clientId: ctx.clientId,
+      uploadId: row.uploadId,
     });
 
     const draft = toReceiptDraft(res.data && res.data.extracted);
@@ -549,7 +535,7 @@ async function saveAll() {
     const entries = usable.map((row) => {
       const d = row.draft;
       if (row.target === 'new') {
-        return { file: row.file, draft: {
+        return { uploadId: row.uploadId, draft: {
           accountId: d.accountId || accountId,
           date: d.date,
           isCancellation: !!d.isCancellation,
@@ -559,7 +545,14 @@ async function saveAll() {
           createdByName: S.user?.name || '',
         } };
       }
-      return { file: row.file, trxId: row.target };
+      const current = S.transactions.find(t => t.id === row.target) || {};
+      return {
+        uploadId: row.uploadId,
+        trxId: row.target,
+        expectedReceiptPath: current.receiptPath || '',
+        expectedReceiptGeneration: current.receiptGeneration || '',
+        expectedReceiptUrl: current.receiptUrl || '',
+      };
     });
 
     const out = await uploadReceipts(clientId, entries, (done, total) => {

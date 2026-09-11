@@ -230,6 +230,20 @@ test('그 해 거래가 없어도 단계가 끝난다', async () => {
   assert.ok(rounds <= 5, `빈 마감에 ${rounds}회가 걸렸습니다`);
 });
 
+test('살아 있는 lease가 있으면 두 번째 마감 실행을 거부한다', async () => {
+  const { db, runArchive } = build({
+    'config/archive_2025': {
+      type: 'archive', year: 2025, status: 'in_progress', phase: 'copy',
+      leaseToken: 'other-worker', leaseUntil: new Date(Date.now() + 60_000),
+    },
+  });
+  await assert.rejects(
+    () => runArchive({ ...as('센터장'), data: { year: 2025 } }),
+    (e) => e.code === 'aborted',
+  );
+  assert.equal(db.docs.get('config/archive_2025').leaseToken, 'other-worker');
+});
+
 // ─────────────────────────────────────────────
 // 재압축
 // ─────────────────────────────────────────────
@@ -249,6 +263,42 @@ test('영수증을 저해상도로 다시 쓴다 — 경로가 없으면 URL 에
   const after = bucket.objects.get(path);
   assert.notEqual(after.generation, before, '옛 URL 의 영수증이 재압축되지 않았습니다');
   assert.ok(after.data.length < BIG_JPEG.length, '더 작아지지 않았습니다');
+  const archived = db.docs.get('archive_2025/t1');
+  assert.equal(archived.receiptGeneration, after.generation, '새 generation이 보관 거래에 반영되지 않았습니다');
+});
+
+test('Storage 성공 뒤 Firestore generation 반영 실패는 같은 객체를 다시 덮지 않고 재개한다', async () => {
+  const path = 'receipts/c1/recover.jpg';
+  const { db, bucket, runArchive } = build({
+    'accounts/a1': { clientId: 'c1', initialBalance: 0, initialBalanceDate: '2025-01-01' },
+  }, { [path]: BIG_JPEG });
+  const originalGeneration = bucket.objects.get(path).generation;
+  db.docs.set('transactions/t1', {
+    clientId: 'c1', accountId: 'a1', date: '2025-05-01', amountOut: 10,
+    receiptPath: path, receiptGeneration: originalGeneration,
+  });
+
+  // copy와 balance까지 진행한 뒤, archive 문서 generation 쓰기만 한 번 실패시킨다.
+  let out = await runArchive({ ...as('센터장'), data: { year: 2025 } });
+  while (out.phase !== 'recompress') {
+    out = await runArchive({ ...as('센터장'), data: { year: 2025 } });
+  }
+  let failedOnce = false;
+  db.failWrite = (p, op) => {
+    if (!failedOnce && p === 'archive_2025/t1' && op.op === 'update') {
+      failedOnce = true;
+      return true;
+    }
+    return false;
+  };
+  await assert.rejects(() => runArchive({ ...as('센터장'), data: { year: 2025 } }));
+  const compressedGeneration = bucket.objects.get(path).generation;
+  assert.notEqual(compressedGeneration, originalGeneration);
+
+  db.failWrite = null;
+  await runToCompletion(runArchive);
+  assert.equal(bucket.objects.get(path).generation, compressedGeneration, '복구 중 같은 객체를 다시 덮었습니다');
+  assert.equal(db.docs.get('archive_2025/t1').receiptGeneration, compressedGeneration);
 });
 
 test('다운로드 토큰을 보존한다 — 나가 있는 URL 이 깨지면 안 된다', async () => {
@@ -294,7 +344,10 @@ test('그 사이 교체된 객체는 덮어쓰지 않는다', async () => {
     return f;
   };
 
-  await runToCompletion(runArchive);
+  await assert.rejects(
+    () => runToCompletion(runArchive),
+    (e) => e.code === 'failed-precondition',
+  );
   assert.equal(
     bucket.objects.get(path).data, REPLACEMENT,
     '새 증빙이 옛 사진의 저해상도 판으로 덮였습니다',

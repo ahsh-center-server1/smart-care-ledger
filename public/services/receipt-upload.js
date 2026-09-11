@@ -7,10 +7,11 @@
  *   Storage 복사와 Firestore 갱신 사이에서 실패했을 때 "사진은 있는데 거래가
  *   없는" 상태가 쌓인다.
  *
- *   지금은 두 단계다:
+ *   지금은 세 단계다:
  *     1. 스테이징(`receiptStaging/{uid}/{uploadId}/source`)에 올린다 —
  *        규칙이 경로의 uid 로 소유권을 보고, 덮어쓰기를 막는다.
- *     2. 서버가 최종 경로로 복사하고 거래에 붙인다(functions/receipt-fns.js).
+ *     2. AI 판독은 그 staging 원본과 job 소유권을 서버가 확인한 뒤에만 한다.
+ *     3. 서버가 최종 경로로 복사하고 거래에 붙인다(functions/receipt-fns.js).
  *
  *   최종 경로는 브라우저가 쓸 수 없다. 그것이 이 파일이 있는 이유다.
  */
@@ -18,6 +19,16 @@
 'use strict';
 
 import { uploadToStorage } from './storage.js';
+
+/** AI 판독 전에 서버가 job을 만들고 불변 staging 원본을 올린다. */
+export async function prepareReceiptForAnalysis(clientId, file) {
+  const { call } = window._fbFn;
+  const started = await call('startReceiptUpload')({ clientId });
+  const { uploadId, stagingPath } = started.data || {};
+  if (!uploadId || !stagingPath) throw new Error('업로드를 시작하지 못했습니다.');
+  await uploadToStorage(file, stagingPath);
+  return { uploadId, stagingPath };
+}
 
 /**
  * 영수증 한 장을 올리고 거래에 붙인다.
@@ -29,7 +40,10 @@ import { uploadToStorage } from './storage.js';
  * @param {Object} [opts.draft]  새 거래를 만들 때 (date · amount · category …)
  * @returns {Promise<{trxId: string, url: string, path: string, created: boolean}>}
  */
-export async function uploadReceipt({ clientId, file, trxId, draft }) {
+export async function uploadReceipt({
+  clientId, file, trxId, draft,
+  expectedReceiptPath = '', expectedReceiptGeneration = '', expectedReceiptUrl = '',
+}) {
   const { call } = window._fbFn;
 
   const started = await call('startReceiptUpload')({ clientId });
@@ -37,9 +51,14 @@ export async function uploadReceipt({ clientId, file, trxId, draft }) {
   if (!uploadId || !stagingPath) throw new Error('업로드를 시작하지 못했습니다.');
 
   await uploadToStorage(file, stagingPath);
+  await call('completeReceiptUpload')({ uploadId });
 
   const res = await call('finalizeReceipts')({
-    items: [{ uploadId, ...(trxId ? { trxId } : {}), ...(draft ? { draft } : {}) }],
+    items: [{
+      uploadId,
+      ...(trxId ? { trxId, expectedReceiptPath, expectedReceiptGeneration, expectedReceiptUrl } : {}),
+      ...(draft ? { draft } : {}),
+    }],
   });
   const row = ((res.data || {}).results || [])[0];
   if (!row || !row.ok) throw new Error((row && row.error) || '증빙 저장에 실패했습니다.');
@@ -62,14 +81,38 @@ export async function uploadReceipts(clientId, entries, onProgress) {
 
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
-    const started = await call('startReceiptUpload')({ clientId });
-    const { uploadId, stagingPath } = started.data || {};
-    if (!uploadId || !stagingPath) throw new Error('업로드를 시작하지 못했습니다.');
-    await uploadToStorage(e.file, stagingPath);
-    items.push({ uploadId, ...(e.trxId ? { trxId: e.trxId } : {}), ...(e.draft ? { draft: e.draft } : {}) });
+    let uploadId = String(e.uploadId || '');
+    if (!uploadId) {
+      const started = await call('startReceiptUpload')({ clientId });
+      const stagingPath = (started.data || {}).stagingPath;
+      uploadId = String((started.data || {}).uploadId || '');
+      if (!uploadId || !stagingPath) throw new Error('업로드를 시작하지 못했습니다.');
+      await uploadToStorage(e.file, stagingPath);
+      await call('completeReceiptUpload')({ uploadId });
+    }
+    items.push({
+      uploadId,
+      ...(e.trxId ? {
+        trxId: e.trxId,
+        expectedReceiptPath: e.expectedReceiptPath || '',
+        expectedReceiptGeneration: e.expectedReceiptGeneration || '',
+        expectedReceiptUrl: e.expectedReceiptUrl || '',
+      } : {}),
+      ...(e.draft ? { draft: e.draft } : {}),
+    });
     if (onProgress) onProgress(i + 1, entries.length);
   }
 
   const res = await call('finalizeReceipts')({ items });
   return res.data || { okCount: 0, failCount: entries.length, results: [] };
+}
+
+export async function removeReceipt({
+  trxId, expectedReceiptPath = '', expectedReceiptGeneration = '', expectedReceiptUrl = '',
+}) {
+  const { call } = window._fbFn;
+  const res = await call('removeReceipt')({
+    trxId, expectedReceiptPath, expectedReceiptGeneration, expectedReceiptUrl,
+  });
+  return res.data || { ok: false };
 }

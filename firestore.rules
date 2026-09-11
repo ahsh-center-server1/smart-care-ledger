@@ -103,6 +103,40 @@ service cloud.firestore {
       return data.get('createdBy', '') == myUid();
     }
 
+    /** 거래가 가리키는 계좌가 같은 입주자 소속인가. */
+    function transactionAccountMatches(data) {
+      let accountId = data.get('accountId', '');
+      // 레거시·이월 거래에는 accountId가 없는 문서가 있다. 빈 값 자체는 다른
+      // 입주자의 계좌를 참조하지 않으므로 허용하되, 값이 있으면 소속을 강제한다.
+      return accountId == ''
+        || (accountId is string
+            && exists(/databases/$(database)/documents/accounts/$(accountId))
+            && get(/databases/$(database)/documents/accounts/$(accountId)).data.get('clientId', '')
+               == data.get('clientId', ''));
+    }
+
+    /** 브라우저가 새 거래에 넣을 수 있는 필드. 증빙·연결 필드는 서버 전용이다. */
+    function transactionCreateFieldsOk() {
+      return request.resource.data.keys().hasOnly([
+        'clientId', 'accountId', 'date', 'time', 'type', 'category',
+        'subcategory', 'description', 'descRaw', 'amountIn', 'amountOut',
+        'sortOrder', 'createdBy', 'createdAt', 'isFixed', 'fixedItemId'
+      ])
+      && (!('createdAt' in request.resource.data)
+          || request.resource.data.createdAt == request.time);
+    }
+
+    /** capability마다 허용된 필드만 바뀌었는가. */
+    function transactionUpdateFieldsOk() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return (cap('trxEdit') && changed.hasOnly([
+                'date', 'time', 'type', 'category', 'subcategory',
+                'description', 'amountIn', 'amountOut', 'accountId', 'receiptMissing'
+              ]))
+          || (cap('trxCategoryEdit') && changed.hasOnly(['category', 'subcategory']))
+          || (cap('trxReorder') && changed.hasOnly(['sortOrder']));
+    }
+
     // ── 비밀번호 해시 — 클라이언트 접근 전면 차단 (Functions는 Admin SDK로 우회) ──
     match /userSecrets/{uid} {
       allow read, write: if false;
@@ -158,17 +192,20 @@ service cloud.firestore {
       allow create: if cap('trxCreate')
                     && seesClient(request.resource.data.get('clientId', ''))
                     && isAuthor(request.resource.data)
+                    && transactionCreateFieldsOk()
+                    && transactionAccountMatches(request.resource.data)
                     && editableMonth(request.resource.data);
 
       // clientId·createdBy 는 불변이다. 바꿀 수 있으면 남의 거래를 자기 것으로
       // 옮기거나, 담당 밖 입주자에게 거래를 밀어 넣을 수 있다.
-      allow update: if (cap('trxEdit') || cap('trxCategoryEdit') || cap('trxReorder'))
+      allow update: if transactionUpdateFieldsOk()
                     && seesClient(resource.data.get('clientId', ''))
                     && (cap('trxViewAll') || isAuthor(resource.data))
                     && request.resource.data.get('createdBy', '')
                        == resource.data.get('createdBy', '')
                     && request.resource.data.get('clientId', '')
                        == resource.data.get('clientId', '')
+                    && transactionAccountMatches(request.resource.data)
                     && editableMonth(resource.data)
                     && editableMonth(request.resource.data);
 
@@ -398,7 +435,7 @@ service cloud.firestore {
       allow read:  if active();
       allow write: if id != 'permissions'
                    && (id.matches('archive_[0-9]{4}')
-                       ? cap('settingsArchive')
+                       ? false
                        : cap('settingsPermissions'));
     }
 
@@ -407,7 +444,8 @@ service cloud.firestore {
     // 컬렉션명을 변수로 받아 정규식으로 판별한다.
     match /{col}/{id} {
       allow read:  if col.matches('archive_[0-9]{4}') && cap('trxViewAll');
-      allow write: if col.matches('archive_[0-9]{4}') && cap('settingsArchive');
+      // 사본 저장→원본 삭제와 generation 갱신을 한 서버 작업으로 묶는다.
+      allow write: if false;
     }
   }
 }

@@ -29,14 +29,84 @@
  */
 
 import { build } from 'esbuild';
-import { mkdirSync, copyFileSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import {
+  mkdirSync, copyFileSync, writeFileSync, readFileSync, existsSync, statSync,
+} from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const VENDOR = join(ROOT, 'public', 'vendor');
 
 const CHECK = process.argv.includes('--check');
+
+function firstFile(base) {
+  const candidates = [
+    base, `${base}.js`, `${base}.mjs`, `${base}.cjs`, `${base}.json`,
+    join(base, 'index.js'), join(base, 'index.mjs'), join(base, 'index.cjs'),
+  ];
+  return candidates.find((p) => existsSync(p) && statSync(p).isFile());
+}
+
+function packageParts(specifier) {
+  const parts = specifier.split('/');
+  if (specifier.startsWith('@')) {
+    return { name: parts.slice(0, 2).join('/'), subpath: parts.slice(2).join('/') };
+  }
+  return { name: parts[0], subpath: parts.slice(1).join('/') };
+}
+
+/** package exports에서 브라우저 ESM 조건을 고른다. */
+function browserTarget(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = browserTarget(item);
+      if (found) return found;
+    }
+    return '';
+  }
+  if (!value || typeof value !== 'object') return '';
+  for (const key of ['browser', 'import', 'module', 'default']) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      const found = browserTarget(value[key]);
+      if (found) return found;
+    }
+  }
+  return '';
+}
+
+function resolveBrowserPackage(specifier, fromDir = ROOT) {
+  const { name, subpath } = packageParts(specifier);
+  let cursor = resolve(fromDir);
+  let root = '';
+  while (cursor.toLowerCase().startsWith(ROOT.toLowerCase())) {
+    const candidate = join(cursor, 'node_modules', ...name.split('/'));
+    if (existsSync(join(candidate, 'package.json'))) {
+      root = candidate;
+      break;
+    }
+    if (cursor.toLowerCase() === ROOT.toLowerCase()) break;
+    cursor = dirname(cursor);
+  }
+  if (!root) root = join(ROOT, 'node_modules', ...name.split('/'));
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const key = subpath ? `./${subpath}` : '.';
+  let target = '';
+  if (pkg.exports) {
+    const entry = Object.prototype.hasOwnProperty.call(pkg.exports, key)
+      ? pkg.exports[key]
+      : (!subpath ? pkg.exports : null);
+    target = browserTarget(entry);
+  }
+  if (!target && subpath) target = subpath;
+  if (!target) {
+    target = typeof pkg.browser === 'string' ? pkg.browser : (pkg.module || pkg.main || 'index.js');
+  }
+  const found = firstFile(resolve(root, target));
+  if (!found) throw new Error(`브라우저 엔트리를 찾을 수 없습니다: ${specifier}`);
+  return found;
+}
 
 /** package.json의 exports가 './package.json'을 막아도 버전을 읽는다. */
 function pkgVersion(name) {
@@ -78,6 +148,27 @@ export {
 async function bundleFirebase() {
   const out = join(VENDOR, 'firebase.js');
   const result = await build({
+    // Windows의 제한된 실행 환경에서는 상위 디렉터리를 끝까지 탐색하다가
+    // 드라이브 루트에서 EACCES가 나면 로컬 node_modules까지 놓칠 수 있다.
+    // 저장소 경계를 명시해 동일한 잠금 파일 설치본만 해석한다.
+    absWorkingDir: ROOT,
+    nodePaths: [join(ROOT, 'node_modules')],
+    plugins: [{
+      name: 'locked-firebase-resolver',
+      setup(esbuild) {
+        // 제한된 Windows 환경에서 esbuild의 상위 디렉터리 탐색이 드라이브
+        // 루트 EACCES로 끝나도, package-lock으로 설치한 정확한 엔트리를 쓴다.
+        esbuild.onResolve({ filter: /^[A-Za-z@]/ }, ({ path, resolveDir }) => {
+          if (/^[A-Za-z]:[\\/]/.test(path)) return undefined;
+          if (path.startsWith('node:')) return { path, external: true };
+          return { path: resolveBrowserPackage(path, resolveDir) };
+        });
+        esbuild.onResolve({ filter: /^\.\.?[\\/]/ }, ({ path, resolveDir }) => {
+          const found = firstFile(resolve(resolveDir, path));
+          return found ? { path: found } : undefined;
+        });
+      },
+    }],
     stdin: {
       contents: FIREBASE_ENTRY,
       resolveDir: ROOT,

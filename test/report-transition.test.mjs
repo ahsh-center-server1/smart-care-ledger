@@ -93,6 +93,19 @@ test('제출 → 팀장 결재 → 최종 결재 순서로는 통과한다', asy
   const r = db.docs.get('reports/r1');
   assert.equal(r.status, 'confirmed');
   assert.ok(r.centerApprovedAt && r.centerApprovedBy === '센터장');
+  assert.equal(db.docs.get('config/lockedMonths').months[`${MY}_2026-09`], true);
+});
+
+test('최종 결재와 월 잠금 중 하나가 실패하면 둘 다 반영되지 않는다', async () => {
+  const { db, fns } = build();
+  report(db, { status: 'team_approved' });
+  db.failWrite = (path) => path === 'config/lockedMonths';
+
+  await assert.rejects(
+    () => fns.applyReportTransition({ ...as('센터장'), data: at({ action: 'approveCenter' }) }),
+  );
+  assert.equal(db.docs.get('reports/r1').status, 'team_approved');
+  assert.equal(db.docs.has('config/lockedMonths'), false);
 });
 
 // ─────────────────────────────────────────────

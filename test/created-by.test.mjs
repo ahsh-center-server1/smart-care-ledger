@@ -22,10 +22,11 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
-const PUBLIC = new URL('../public/', import.meta.url).pathname;
+const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 
 /** public/ 아래 모든 .js (vendor 제외 — 우리 코드가 아니다). */
 function jsFiles(dir = PUBLIC, out = []) {
@@ -183,7 +184,7 @@ test('서버가 만드는 거래도 createdBy를 남긴다 — 그리고 서버�
   // 거래 문서를 만드는 자리는 금액 필드로 알아본다 — tx.set 이든 스프레드든
   // 형태와 무관하게 잡힌다.
   const { readdirSync: rd, readFileSync: rf } = require('node:fs');
-  const FN = new URL('../functions/', import.meta.url).pathname;
+  const FN = fileURLToPath(new URL('../functions/', import.meta.url));
 
   const sites = [];
   for (const name of rd(FN).filter(n => /\.(js|cjs)$/.test(n))) {

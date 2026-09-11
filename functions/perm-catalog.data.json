@@ -464,7 +464,6 @@
       "configurable": false,
       "enforcement": [
         "ui",
-        "firestore",
         "function",
         "storage"
       ],
@@ -639,7 +638,10 @@
         "amountIn",
         "amountOut",
         "sortOrder",
-        "createdBy"
+        "createdBy",
+        "createdAt",
+        "isFixed",
+        "fixedItemId"
       ],
       "relatedResourceChecks": [
         {
@@ -715,7 +717,8 @@
         "description",
         "amountIn",
         "amountOut",
-        "accountId"
+        "accountId",
+        "receiptMissing"
       ],
       "immutableFields": [
         "clientId",

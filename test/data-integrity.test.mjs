@@ -96,10 +96,10 @@ test('자산이동을 다른 유형으로 바꾸는 것을 막는다', () => {
     '유형 변경 차단이 없습니다');
 });
 
-test('자산이동이 아닌 거래에는 연결 정보를 남기지 않는다', () => {
+test('자산이동 연결 필드는 브라우저 일반 거래 저장 경로에서 쓰지 않는다', () => {
   const text = src('public/modules/modals.js');
-  assert.ok(/linkedAccountId:'',linkedTrxId:''/.test(text),
-    '일반 거래 저장 시 연결 필드를 비우지 않습니다');
+  assert.ok(!/linkedAccountId:'',linkedTrxId:''/.test(text),
+    '서버 전용 연결 필드를 브라우저 일반 거래 저장이 쓰고 있습니다');
 });
 
 test('연결 때문에 딸려오는 상대편도 결재 잠금을 확인한다', () => {
@@ -136,8 +136,8 @@ test('중단된 마감이 이력 화면에 드러난다', () => {
 // ─────────────────────────────────────────────
 // 보안 규칙
 // ─────────────────────────────────────────────
-test('마감 이력은 센터장도 쓸 수 있어야 한다', () => {
-  // config 쓰기가 관리자 전용이면 센터장이 마감을 시작하는 순간 거부된다
+test('마감 이력은 센터장도 직접 쓸 수 없어야 한다', () => {
+  // 사본·삭제·진행 기록은 runArchive 서버 작업만 원자적으로 쓴다.
   const rules = src('firestore.rules');
   // archive_YYYY '컬렉션' 규칙이 아니라 config 블록 안을 봐야 한다 —
   // 둘 다 같은 정규식을 담고 있어서 파일 전체를 훑으면 잘못된 쪽이 걸린다.
@@ -146,8 +146,8 @@ test('마감 이력은 센터장도 쓸 수 있어야 한다', () => {
   const block = rules.slice(at, rules.indexOf('\n    }', at)).replace(/\s+/g, ' ');
   // 등급 리터럴(atLeast(4))이 아니라 caps 로 판정한다 — 등급표는 서버가
   // 계산해 authz.caps 에 담고, 규칙은 그 불리언만 읽는다.
-  assert.ok(/id\.matches\('archive_\[0-9\]\{4\}'\)\s*\?\s*cap\('settingsArchive'\)/.test(block),
-    'config/archive_YYYY 예외가 없습니다 — 센터장이 마감을 시작하는 순간 거부됩니다');
+  assert.ok(/id\.matches\('archive_\[0-9\]\{4\}'\)\s*\?\s*false/.test(block),
+    'config/archive_YYYY가 브라우저 쓰기에 열려 있습니다');
 });
 
 test('엑셀 중복 대조 쿼리에 필요한 복합 인덱스가 등록되어 있다', () => {

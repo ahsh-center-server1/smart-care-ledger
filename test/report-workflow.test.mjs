@@ -374,7 +374,7 @@ test('보고서를 새로 만드는 모든 경로가 createdBy를 기록한다',
   // 있으면 남의 이름으로 보고서를 만들어 그것을 회수할 수 있다.
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../functions/report-fns.js', import.meta.url), 'utf8');
-  const creates = [...src.matchAll(/tx\.set\(ref,|ref\.set\(\{/g)];
+  const creates = [...src.matchAll(/tx\.set\(reportRef,|ref\.set\(\{/g)];
   assert.ok(creates.length >= 2, `보고서 생성 경로를 찾지 못했습니다 (${creates.length}건)`);
   for (const m of creates) {
     const around = src.slice(m.index, m.index + 500);

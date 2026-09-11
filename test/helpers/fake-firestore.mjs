@@ -316,9 +316,14 @@ class FakeFile {
   }
 
   async delete(opts) {
-    if (!this.bucket.objects.has(this.name)) {
+    const current = this.bucket.objects.get(this.name);
+    if (!current) {
       if (opts && opts.ignoreNotFound) return;
       const e = new Error('없습니다'); e.code = 404; throw e;
+    }
+    const want = opts && opts.preconditionOpts && opts.preconditionOpts.ifGenerationMatch;
+    if (want != null && String(current.generation) !== String(want)) {
+      const e = new Error('generation 이 다릅니다'); e.code = 412; throw e;
     }
     this.bucket.objects.delete(this.name);
   }

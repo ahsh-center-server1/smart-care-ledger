@@ -8,13 +8,11 @@
  * Firestore/Storage 보안 규칙이 request.auth를 근거로 판정할 수 있게 한다.
  *
  * 발급 토큰의 uid == users 문서 ID == 로그인 아이디.
- * 클레임 { role, isAdmin }이 실려 규칙의 rank()가 이를 읽는다.
- *
- * ⚠️ 클레임은 토큰에 고정되므로 역할 변경은 재로그인 후 반영된다.
- *    (BUGFIX_PLAN.md 「토큰과 역할 변경」 참조)
+ * 역할·재직·권한은 토큰에 싣지 않고 `authz/{uid}`를 매 요청마다 확인한다.
  */
 
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { setGlobalOptions, logger } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 // FieldValue/Timestamp는 서브경로에서 직접 가져온다.
@@ -269,8 +267,7 @@ exports.signup = callable('signup', async (request) => {
 // 낡은 값으로 판정한다(강등된 사람이 계속 통과한다).
 //
 // ⚠️ caps 백필 전에는 authz 콜러블이 모든 호출을 거부한다 — 의도된 것이다.
-//    직원 함수는 아직 토큰 클레임으로 판정한다(백필을 실행할 관리자가
-//    막히면 안 되므로). 판정 근거 전환은 백필 이후.
+//    백필은 기존 users 문서와 권한 카탈로그를 바탕으로 authz를 만든다.
 // ─────────────────────────────────────────────────────────────
 const authzFns = require('./authz-fns')({
   db, callable, HttpsError, logger, FieldValue,
@@ -313,6 +310,7 @@ Object.assign(exports, require('./report-fns')({
 // 테스트가 결정적인 값을 넣을 수 있어야 한다.
 Object.assign(exports, require('./receipt-fns')({
   db, getBucket: () => admin.storage().bucket(), callable, HttpsError, logger, FieldValue,
+  onSchedule,
   randomId: () => randomBytes(16).toString('base64url'),
 }));
 
@@ -406,7 +404,8 @@ Object.assign(exports, require('./directory-fns')({
 // 이미 상한을 넘겨 있어(test/architecture.test.mjs), 관계없는 기능은 따로 둔다.
 // ─────────────────────────────────────────────────────────────
 Object.assign(exports, require('./ai-fns')({
-  db, callable, requireCaller, HttpsError, logger, FieldValue, Timestamp,
+  db, getBucket: () => admin.storage().bucket(),
+  callable, requireCaller, HttpsError, logger, FieldValue, Timestamp,
 }));
 
 

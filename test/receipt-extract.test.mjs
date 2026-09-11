@@ -14,6 +14,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const {
@@ -231,7 +232,7 @@ test('callable 래퍼가 onCall 옵션을 전달한다', async () => {
 test('키가 public/ 어디에도 없다 — 있으면 즉시 공개된다', async () => {
   const { readFileSync, readdirSync, statSync } = await import('node:fs');
   const { join } = await import('node:path');
-  const PUBLIC = new URL('../public/', import.meta.url).pathname;
+  const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 
   const files = [];
   (function walk(dir) {

@@ -18,6 +18,8 @@ export default [
     ignores: [
       'node_modules/**',
       'functions/node_modules/**',
+      // Firebase CLI가 로컬 검증 중 내려받는 실행·설정 캐시
+      '.firebase-*/**',
       'public/lib/**',
       // 외부 라이브러리 결과물 — tools/vendor.mjs가 npm에서 만들어 넣는다.
       // 우리 코드가 아니고 minify돼 있어 검사할 것도, 고칠 수도 없다.

@@ -9,9 +9,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { makeDb } from './helpers/fake-firestore.mjs';
 
 const require = createRequire(import.meta.url);
-const { consume } = require('../functions/rateLimit.js');
+const { consume, consumeRateLimits } = require('../functions/rateLimit.js');
 
 const OPTS = { maxAttempts: 3, windowMs: 60_000 };
 const T0 = 1_700_000_000_000;
@@ -76,4 +77,19 @@ test('잘못된 설정은 거부한다 — 한도 0은 기능을 막아 버린�
   assert.throws(() => consume(undefined, T0, { maxAttempts: 0, windowMs: 1000 }), /maxAttempts/);
   assert.throws(() => consume(undefined, T0, { maxAttempts: -1, windowMs: 1000 }), /maxAttempts/);
   assert.throws(() => consume(undefined, T0, { maxAttempts: 3, windowMs: 0 }), /windowMs/);
+});
+
+test('사용자별 한도와 프로젝트 전체 한도를 한 트랜잭션에서 함께 센다', async () => {
+  const db = makeDb();
+  const limits = (uid) => [
+    { scope: 'ai-user', key: uid, maxAttempts: 2, windowMs: 60_000 },
+    { scope: 'ai-project', key: 'all', maxAttempts: 2, windowMs: 60_000 },
+  ];
+
+  await consumeRateLimits(db, limits('u1'));
+  await consumeRateLimits(db, limits('u2'));
+  await assert.rejects(() => consumeRateLimits(db, limits('u3')), /rate-limit-exceeded/);
+  assert.equal(db.docs.get('rateLimits/ai-project-all').count, 2);
+  assert.equal(db.docs.has('rateLimits/ai-user-u3'), false,
+    '프로젝트 한도 초과인데 사용자 카운터만 먼저 증가했습니다');
 });

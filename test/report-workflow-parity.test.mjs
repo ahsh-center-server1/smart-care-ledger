@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import * as esm from '../public/domain/report-workflow.js';
 
 const require = createRequire(import.meta.url);
@@ -26,7 +27,7 @@ const cjs = require('../functions/report-workflow.cjs');
 
 test('생성물이 원본과 동기화돼 있다', () => {
   execFileSync(process.execPath, ['tools/gen-report-workflow.mjs', '--check'], {
-    cwd: new URL('..', import.meta.url).pathname,
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
     stdio: 'pipe',
   });
 });

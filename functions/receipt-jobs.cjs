@@ -67,6 +67,12 @@ const LEASE_MS = 120 * 1000;
 /** 스테이징 파일 수명. 사용자가 검토를 중단하고 떠나는 경우가 실제로 있다. */
 const STAGING_TTL_MS = 24 * 60 * 60 * 1000;
 
+function millis(value) {
+  if (value && typeof value.toMillis === 'function') return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  return Number(value);
+}
+
 /**
  * 최종화를 선점할 수 있는가.
  *
@@ -83,7 +89,7 @@ function canClaim(job, now) {
   // 읽을 수 없는 leaseUntil 은 **만료로 본다.** NaN 을 "선점 불가"로 처리하면
   // 값이 손상된 job 이 영구히 갇힌다 — 막으려던 교착이 다른 경로로 되살아난다.
   // 정확성은 첨부 시점의 holdsLease() 가 지킨다(토큰·상태·만료를 다시 본다).
-  const until = Number(job.leaseUntil);
+  const until = millis(job.leaseUntil);
   return !Number.isFinite(until) || until <= now;
 }
 
@@ -96,7 +102,7 @@ function claimPatch({ token, now, trxId }) {
   return {
     state: STATES.FINALIZING,
     leaseToken: String(token),
-    leaseUntil: now + LEASE_MS,
+    leaseUntil: new Date(now + LEASE_MS),
     ...(trxId ? { trxId: String(trxId) } : {}),
   };
 }
@@ -111,13 +117,13 @@ function holdsLease(job, token, now) {
   if (!job || !token) return false;
   if (job.leaseToken !== token) return false;
   if (job.state !== STATES.FINALIZING) return false;
-  return Number(job.leaseUntil || 0) > now;
+  return millis(job.leaseUntil || 0) > now;
 }
 
 /** 오래 걸리는 작업을 위한 lease 연장. 연장도 소유권을 다시 확인한다. */
 function heartbeatPatch({ job, token, now }) {
   if (!holdsLease(job, token, now)) throw new Error('lease-lost');
-  return { leaseUntil: now + LEASE_MS };
+  return { leaseUntil: new Date(now + LEASE_MS) };
 }
 
 /**
@@ -166,7 +172,7 @@ function canDeleteFinal(job, actualGeneration) {
 function isAbandoned(job, now) {
   if (!job) return false;
   if (ATTACHED_STATES.includes(job.state)) return false;
-  return Number(job.expireAt || 0) <= now;
+  return millis(job.expireAt || 0) <= now;
 }
 
 /**
@@ -190,8 +196,8 @@ function newJob({ uid, uploadId, clientId, now }) {
     stagingPath: stagingPath(uid, uploadId),
     attempts: 0,
     leaseToken: '',
-    leaseUntil: 0,
-    expireAt: now + STAGING_TTL_MS,
+    leaseUntil: new Date(0),
+    expireAt: new Date(now + STAGING_TTL_MS),
   };
 }
 
@@ -202,6 +208,7 @@ module.exports = {
   ATTACHED_STATES,
   LEASE_MS,
   STAGING_TTL_MS,
+  millis,
   CLEANUP_ORDER,
   canClaim,
   claimPatch,

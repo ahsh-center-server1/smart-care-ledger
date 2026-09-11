@@ -26,6 +26,7 @@
  */
 
 const { capName } = require('./perm-catalog.cjs');
+const { randomUUID } = require('node:crypto');
 
 const AUTHZ = 'authz';
 const TRANSACTIONS = 'transactions';
@@ -36,6 +37,7 @@ const CONFIG = 'config';
 const COPY_CHUNK = 200;
 /** 한 번의 호출에서 재압축할 이미지 수. 다운로드·인코딩이 있어 더 작다. */
 const RECOMPRESS_CHUNK = 20;
+const ARCHIVE_LEASE_MS = 10 * 60 * 1000;
 
 /** 보관 이미지 목표 — services/image.js 의 마감 정책과 같은 값. */
 const ARCHIVE_MAX_PX = 900;
@@ -76,7 +78,7 @@ module.exports = function archiveFns(ctx) {
    * 정확성과는 무관하다 — 없다고 마감이 실패하면 안 된다(기존에도
    * 버킷 CORS 가 없으면 건너뛰는 best-effort 였다).
    */
-  async function recompressObject(path) {
+  async function recompressObject(path, expectedGeneration, year, assertLease) {
     let sharp;
     try {
       sharp = require('sharp');
@@ -86,6 +88,18 @@ module.exports = function archiveFns(ctx) {
 
     const file = getBucket().file(path);
     const [meta] = await file.getMetadata();
+    const custom = meta.metadata || {};
+    if (expectedGeneration != null
+        && String(meta.generation) !== String(expectedGeneration)) {
+      // 직전 실행이 Storage 저장 뒤 Firestore generation 반영 전에 끊긴 경우.
+      if (String(custom.archiveSourceGeneration || '') === String(expectedGeneration)
+          && String(custom.archiveYear || '') === String(year)) {
+        return { recovered: true, generation: String(meta.generation) };
+      }
+      const err = new Error('기록된 generation과 Storage 객체가 다릅니다');
+      err.code = 412;
+      throw err;
+    }
     if (!String(meta.contentType || '').startsWith('image/')) return { skipped: '이미지 아님' };
     const before = Number(meta.size || 0);
 
@@ -96,34 +110,96 @@ module.exports = function archiveFns(ctx) {
       .jpeg({ quality: ARCHIVE_QUALITY })
       .toBuffer();
 
-    if (out.length >= before) return { skipped: '효과 없음' };
+    if (out.length >= before) {
+      return { skipped: '효과 없음', generation: String(meta.generation) };
+    }
+
+    // 이미지 처리 중 lease가 만료돼 다른 호출이 선점했을 수 있다. Storage는
+    // Firestore 트랜잭션에 묶이지 않으므로 저장 직전에 소유권을 다시 확인한다.
+    if (assertLease) await assertLease();
 
     await file.save(out, {
       contentType: 'image/jpeg',
       // 읽은 그 객체일 때만 덮어쓴다. 그 사이 교체됐으면 412 로 실패한다.
       preconditionOpts: { ifGenerationMatch: meta.generation },
       // 토큰을 보존한다 — 잃으면 이미 나가 있는 URL 이 전부 깨진다.
-      metadata: { metadata: meta.metadata || {} },
+      metadata: { metadata: {
+        ...custom,
+        archiveSourceGeneration: String(meta.generation),
+        archiveYear: String(year),
+      } },
     });
-    return { before, after: out.length };
+    const [saved] = await file.getMetadata();
+    return { before, after: out.length, generation: String(saved.generation) };
   }
 
-  /** 진행 문서. 없으면 만든다. */
-  async function loadProgress(year, uid, ref) {
-    const snap = await ref.get();
-    if (snap.exists && snap.data().status === 'done') {
-      return { ...snap.data(), phase: PHASES.DONE };
-    }
-    if (snap.exists) return snap.data();
+  const millis = (value) => {
+    if (value && typeof value.toMillis === 'function') return value.toMillis();
+    if (value instanceof Date) return value.getTime();
+    return Number(value || 0);
+  };
 
-    const fresh = {
+  const clearLease = () => ({ leaseToken: '', leaseUntil: new Date(0) });
+
+  /** 진행 문서를 만들고 이번 호출의 lease를 원자적으로 선점한다. */
+  async function claimProgress(year, uid, ref, token) {
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const current = snap.exists ? (snap.data() || {}) : {
       type: 'archive', year, status: 'in_progress', phase: PHASES.COPY,
       startedAt: new Date().toISOString(), by: String(uid),
       count: 0, copied: 0, recompressed: 0,
       netByAccount: {}, recompressCursor: 0,
-    };
-    await ref.set(fresh, { merge: true });
-    return fresh;
+      };
+      if (current.status === 'done') return { ...current, phase: PHASES.DONE };
+      if (current.leaseToken && millis(current.leaseUntil) > Date.now()) {
+        throw new HttpsError('aborted', '다른 연도 마감 작업이 진행 중입니다. 잠시 후 다시 시도하세요.');
+      }
+      tx.set(ref, {
+        ...current,
+        leaseToken: token,
+        leaseUntil: new Date(Date.now() + ARCHIVE_LEASE_MS),
+      }, { merge: true });
+      return current;
+    });
+  }
+
+  async function updateOwned(ref, token, patch) {
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const current = snap.exists ? (snap.data() || {}) : {};
+      if (current.leaseToken !== token) {
+        throw new HttpsError('aborted', '연도 마감 lease를 잃었습니다. 다시 시도하세요.');
+      }
+      tx.update(ref, patch);
+      return current;
+    });
+  }
+
+  async function heartbeat(ref, token) {
+    await updateOwned(ref, token, { leaseUntil: new Date(Date.now() + ARCHIVE_LEASE_MS) });
+  }
+
+  /** 재압축 결과와 lease 확인을 같은 Firestore 트랜잭션에 둔다. */
+  async function recordGeneration(logRef, token, targetRef, expectedGeneration, generation) {
+    await db.runTransaction(async (tx) => {
+      const logSnap = await tx.get(logRef);
+      const targetSnap = await tx.get(targetRef);
+      const current = logSnap.exists ? (logSnap.data() || {}) : {};
+      if (current.leaseToken !== token || millis(current.leaseUntil) <= Date.now()) {
+        throw new HttpsError('aborted', '연도 마감 lease를 잃었습니다. 다시 시도하세요.');
+      }
+      if (!targetSnap.exists) throw new HttpsError('not-found', '보관 거래를 찾을 수 없습니다.');
+      const target = targetSnap.data() || {};
+      if (String(target.receiptGeneration || '') !== String(expectedGeneration || '')) {
+        throw new HttpsError('aborted', '재압축 중 증빙 버전이 바뀌었습니다. 다시 시도하세요.');
+      }
+      tx.update(targetRef, { receiptGeneration: String(generation) });
+    });
+  }
+
+  async function release(ref, token) {
+    try { await updateOwned(ref, token, clearLease()); } catch (_) { /* lease를 잃었으면 건드리지 않는다 */ }
   }
 
   // ───────────────────────────────────────────────────────────
@@ -139,7 +215,8 @@ module.exports = function archiveFns(ctx) {
     }
     const archiveCol = `archive_${year}`;
     const logRef = db.collection(CONFIG).doc(archiveCol);
-    const progress = await loadProgress(year, auth.uid, logRef);
+    const leaseToken = randomUUID();
+    const progress = await claimProgress(year, auth.uid, logRef, leaseToken);
 
     if (progress.phase === PHASES.DONE) {
       return { phase: PHASES.DONE, done: true, ...counts(progress) };
@@ -147,66 +224,74 @@ module.exports = function archiveFns(ctx) {
 
     // ── 1단계: 사본 저장 → 원본 삭제 ──
     if (progress.phase === PHASES.COPY) {
-      const snap = await db.collection(TRANSACTIONS)
-        .where('date', '>=', `${year}-01-01`)
-        .where('date', '<=', `${year}-12-31`)
-        .limit(COPY_CHUNK)
-        .get();
-
-      if (snap.empty) {
-        await logRef.update({ phase: PHASES.BALANCE });
-        return { phase: PHASES.BALANCE, done: false, ...counts(progress) };
-      }
-
-      const net = { ...(progress.netByAccount || {}) };
-      const batch = db.batch();
-      for (const d of snap.docs) {
-        const t = d.data() || {};
-        batch.set(db.collection(archiveCol).doc(d.id), {
-          ...t, archivedFrom: d.id, archivedAt: progress.startedAt,
+      try {
+        return await db.runTransaction(async (tx) => {
+          const logSnap = await tx.get(logRef);
+          const current = logSnap.data() || {};
+          if (current.leaseToken !== leaseToken) throw new HttpsError('aborted', '연도 마감 lease를 잃었습니다.');
+          const snap = await tx.get(db.collection(TRANSACTIONS)
+            .where('date', '>=', `${year}-01-01`)
+            .where('date', '<=', `${year}-12-31`)
+            .limit(COPY_CHUNK));
+          if (snap.empty) {
+            tx.update(logRef, { phase: PHASES.BALANCE, ...clearLease() });
+            return { phase: PHASES.BALANCE, done: false, ...counts(current) };
+          }
+          const net = { ...(current.netByAccount || {}) };
+          for (const d of snap.docs) {
+            const t = d.data() || {};
+            tx.set(db.collection(archiveCol).doc(d.id), {
+              ...t, archivedFrom: d.id, archivedAt: current.startedAt,
+            });
+            if (t.type !== '취소' && t.accountId) {
+              net[t.accountId] = (net[t.accountId] || 0)
+                + (Number(t.amountIn || 0) - Number(t.amountOut || 0));
+            }
+            tx.delete(d.ref);
+          }
+          tx.update(logRef, {
+            netByAccount: net,
+            copied: FieldValue.increment(snap.size),
+            count: FieldValue.increment(snap.size),
+            ...clearLease(),
+          });
+          return { phase: PHASES.COPY, done: false, copied: (current.copied || 0) + snap.size };
         });
-        // 취소 거래는 잔액에 들어가지 않는다 — 기초잔액 전진에서도 뺀다.
-        if (t.type !== '취소' && t.accountId) {
-          net[t.accountId] = (net[t.accountId] || 0)
-            + (Number(t.amountIn || 0) - Number(t.amountOut || 0));
-        }
-        batch.delete(d.ref);
+      } catch (err) {
+        await release(logRef, leaseToken);
+        throw err;
       }
-      batch.update(logRef, {
-        netByAccount: net,
-        copied: FieldValue.increment(snap.size),
-        count: FieldValue.increment(snap.size),
-      });
-      // 사본·삭제·진행 기록이 한 커밋이다 — 중간 상태가 없다.
-      await batch.commit();
-
-      return { phase: PHASES.COPY, done: false, copied: (progress.copied || 0) + snap.size };
     }
 
     // ── 2단계: 기초잔액 전진 ──
     if (progress.phase === PHASES.BALANCE) {
       const nextBase = `${year + 1}-01-01`;
-      const accounts = await db.collection(ACCOUNTS).get();
-      const net = progress.netByAccount || {};
-
-      const batch = db.batch();
-      let moved = 0;
-      for (const d of accounts.docs) {
-        const acc = d.data() || {};
-        // 이미 전진한 계좌는 건드리지 않는다 — 이중 계상 방지.
-        if (String(acc.initialBalanceDate || '') >= nextBase) continue;
-        const balance = Number(acc.initialBalance || 0) + (net[d.id] || 0);
-        batch.update(d.ref, {
-          initialBalance: balance,
-          initialBalanceDate: nextBase,
-          currentBalance: balance,
+      try {
+        return await db.runTransaction(async (tx) => {
+          const logSnap = await tx.get(logRef);
+          const current = logSnap.data() || {};
+          if (current.leaseToken !== leaseToken) throw new HttpsError('aborted', '연도 마감 lease를 잃었습니다.');
+          const accounts = await tx.get(db.collection(ACCOUNTS));
+          const net = current.netByAccount || {};
+          let moved = 0;
+          for (const d of accounts.docs) {
+            const acc = d.data() || {};
+            if (String(acc.initialBalanceDate || '') >= nextBase) continue;
+            const balance = Number(acc.initialBalance || 0) + (net[d.id] || 0);
+            tx.update(d.ref, {
+              initialBalance: balance, initialBalanceDate: nextBase, currentBalance: balance,
+            });
+            moved += 1;
+          }
+          tx.update(logRef, {
+            phase: PHASES.RECOMPRESS, accountsAdvanced: moved, ...clearLease(),
+          });
+          return { phase: PHASES.RECOMPRESS, done: false, accountsAdvanced: moved };
         });
-        moved += 1;
+      } catch (err) {
+        await release(logRef, leaseToken);
+        throw err;
       }
-      batch.update(logRef, { phase: PHASES.RECOMPRESS, accountsAdvanced: moved });
-      await batch.commit();
-
-      return { phase: PHASES.RECOMPRESS, done: false, accountsAdvanced: moved };
     }
 
     // ── 3단계: 보관용 재압축 (best-effort) ──
@@ -216,41 +301,68 @@ module.exports = function archiveFns(ctx) {
     // 같은 목록을 영원히 다시 받는다.
     const cursor = Number(progress.recompressCursor || 0);
     const bank = progress.phase === PHASES.RECOMPRESS_BANK;
-    const { paths, exhausted, scanned } = bank
+    const { targets, exhausted, scanned } = bank
       ? await bankbookTargets(year, cursor)
       : await receiptTargets(archiveCol, cursor);
 
     if (exhausted) {
       if (!bank) {
         // 거래 쪽이 끝났다. 커서를 되돌리고 통장 사진으로 넘어간다.
-        await logRef.update({ phase: PHASES.RECOMPRESS_BANK, recompressCursor: 0 });
+        await updateOwned(logRef, leaseToken, {
+          phase: PHASES.RECOMPRESS_BANK, recompressCursor: 0, ...clearLease(),
+        });
         return { phase: PHASES.RECOMPRESS_BANK, done: false, ...counts(progress) };
       }
-      await logRef.update({
-        phase: PHASES.DONE, status: 'done', archivedAt: new Date().toISOString(),
+      await updateOwned(logRef, leaseToken, {
+        phase: PHASES.DONE, status: 'done', archivedAt: new Date().toISOString(), ...clearLease(),
       });
       logger.info('[runArchive] 완료', { year, ...counts(progress) });
       return { phase: PHASES.DONE, done: true, ...counts(progress) };
     }
 
     let ok = 0;
-    for (const path of paths) {
+    try {
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      const path = target.path;
+      let r;
       try {
-        const r = await recompressObject(path);
+        // 파일마다 lease를 연장하고, 압축 직후 Storage 쓰기 전에도 다시 확인한다.
+        await heartbeat(logRef, leaseToken);
+        r = await recompressObject(
+          path, target.receiptGeneration, year,
+          () => heartbeat(logRef, leaseToken),
+        );
         if (!r.skipped) ok += 1;
       } catch (err) {
-        // 412(그 사이 교체됨)를 포함해 실패는 넘어간다. 재압축은 용량을
-        // 아끼는 일이고, 원본이 남는 것이 잘못된 덮어쓰기보다 낫다.
+        // generation 충돌은 조용히 건너뛰면 archive 문서가 영구히 낡는다.
+        if (Number(err && err.code) === 412) throw new HttpsError(
+          'failed-precondition', `증빙 파일 버전이 달라 마감을 중단했습니다: ${path}`,
+        );
         logger.warn('[runArchive] 재압축 건너뜀', { path, message: err && err.message });
+        continue;
+      }
+      if (target.ref && r.generation
+          && String(target.receiptGeneration || '') !== String(r.generation)) {
+        // 이 쓰기는 이미지 오류처럼 삼키면 안 된다. 실패하면 cursor를 전진시키지
+        // 않아 다음 호출이 archiveSourceGeneration metadata로 정확히 재개한다.
+        await recordGeneration(
+          logRef, leaseToken, target.ref, target.receiptGeneration, r.generation,
+        );
       }
     }
-    await logRef.update({
+    await updateOwned(logRef, leaseToken, {
       recompressed: FieldValue.increment(ok),
       // 커서는 **훑은 개수**만큼 나아간다. 압축한 개수만큼 나아가면
       // 증빙 없는 거래에서 제자리를 돈다.
       recompressCursor: cursor + scanned,
+      ...clearLease(),
     });
     return { phase: progress.phase, done: false, recompressed: ok };
+    } catch (err) {
+      await release(logRef, leaseToken);
+      throw err;
+    }
   });
 
   /**
@@ -281,13 +393,13 @@ module.exports = function archiveFns(ctx) {
       .limit(RECOMPRESS_CHUNK)
       .get();
 
-    const paths = [];
+    const targets = [];
     for (const d of snap.docs) {
       const t = d.data() || {};
       const path = t.receiptPath || pathFromUrl(t.receiptUrl);
-      if (path) paths.push(path);
+      if (path) targets.push({ path, ref: d.ref, receiptGeneration: t.receiptGeneration });
     }
-    return { paths, exhausted: snap.empty, scanned: snap.size };
+    return { targets, exhausted: snap.empty, scanned: snap.size };
   }
 
   /**
@@ -311,7 +423,11 @@ module.exports = function archiveFns(ctx) {
       }
     }
     const paths = all.slice(cursor, cursor + RECOMPRESS_CHUNK);
-    return { paths, exhausted: cursor >= all.length, scanned: paths.length };
+    return {
+      targets: paths.map((path) => ({ path })),
+      exhausted: cursor >= all.length,
+      scanned: paths.length,
+    };
   }
 
   const counts = (p) => ({

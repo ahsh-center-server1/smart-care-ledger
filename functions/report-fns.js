@@ -26,11 +26,15 @@
 
 const { planTransition, normalizeStatus } = require('./report-workflow.cjs');
 const { capName } = require('./perm-catalog.cjs');
+const { LOCKED_MONTHS_DOC, lockIndexChange } = require('./locked-months.cjs');
 
 const AUTHZ = 'authz';
 const REPORTS = 'reports';
 const CLIENT_ACCESS = 'clientAccess';
 const MEMBERS = 'members';
+const CONFIG = 'config';
+const AUDIT_LOGS = 'auditLogs';
+const AUDIT_TTL_MS = 2 * 365 * 24 * 60 * 60 * 1000;
 
 /**
  * 클라이언트가 함께 보낼 수 있는 필드.
@@ -161,24 +165,29 @@ module.exports = function reportFns(ctx) {
 
     let reportId = report && report.id;
     await db.runTransaction(async (tx) => {
+      const lockRef = db.collection(CONFIG).doc(LOCKED_MONTHS_DOC);
+      let lockChange = null;
+      let reportRef;
       if (reportId) {
-        const ref = db.collection(REPORTS).doc(reportId);
-        const snap = await tx.get(ref);
+        reportRef = db.collection(REPORTS).doc(reportId);
+        const snap = await tx.get(reportRef);
         if (!snap.exists) throw new HttpsError('not-found', '보고서를 찾을 수 없습니다.');
         // 읽은 뒤 상태가 바뀌었을 수 있다 — 탭 두 개, 동시 결재.
         // 여기서 다시 확인하지 않으면 낡은 판단으로 전이한다.
         if (normalizeStatus(snap.data().status) !== plan.from) {
           throw new HttpsError('aborted', '그 사이 보고서 상태가 바뀌었습니다. 새로고침 후 다시 시도하세요.');
         }
+        lockChange = lockIndexChange(snap.data(), { ...snap.data(), status: plan.next });
+        if (lockChange) await tx.get(lockRef);
         const full = { ...patch };
         // 도착 상태보다 뒤 단계의 도장을 지운다 —
         // 취소된 서명이 인쇄물에 남지 않아야 한다.
         for (const f of plan.clear) full[f] = FieldValue.delete();
-        tx.update(ref, full);
+        tx.update(reportRef, full);
       } else {
-        const ref = db.collection(REPORTS).doc();
-        reportId = ref.id;
-        tx.set(ref, {
+        reportRef = db.collection(REPORTS).doc();
+        reportId = reportRef.id;
+        tx.set(reportRef, {
           clientId, year, month,
           createdAt: FieldValue.serverTimestamp(),
           // createdBy 는 서버가 정한다. 회수 권한 판정의 근거이므로
@@ -188,6 +197,25 @@ module.exports = function reportFns(ctx) {
           ...patch,
         });
       }
+
+      if (lockChange) {
+        tx.set(lockRef, {
+          months: {
+            [lockChange.key]: lockChange.locked ? true : FieldValue.delete(),
+          },
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      const auditRef = db.collection(AUDIT_LOGS).doc();
+      tx.set(auditRef, {
+        action: 'report.transition',
+        actorUid: auth.uid,
+        clientId, targetId: reportId,
+        detail: { action, from: plan.from, to: plan.next, lockKey: lockChange && lockChange.key },
+        timestamp: FieldValue.serverTimestamp(),
+        expireAt: new Date(Date.now() + AUDIT_TTL_MS),
+      });
     });
 
     logger.info('[applyReportTransition]', {

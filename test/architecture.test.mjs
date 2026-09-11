@@ -20,9 +20,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const PUBLIC = join(ROOT, 'public');
+const repoPath = (path) => path.replaceAll('\\', '/');
 
 const MAX_LINES = 600;
 
@@ -38,14 +40,12 @@ const MAX_LINES = 600;
  *   functions/index.js auth / balance / triggers / ai
  *   settings.js       패널별 (settings-*.js가 이미 시작한 방향)
  *   transactions.js   표 렌더 / 필터·정렬 / 저장
- *   receipt-intake.js 판독 호출 / 검토 표 / 저장
  */
 const PENDING_SPLIT = {
   'public/modules/modals.js':         1666,
   'public/modules/report.js':         1451,
   'public/modules/settings.js':       924,
   'public/modules/transactions.js':   728,
-  'public/modules/receipt-intake.js': 619,
 };
 
 /** 우리가 쓰지 않은 코드는 대상이 아니다. */
@@ -62,7 +62,7 @@ function jsFiles(dir, out = []) {
 }
 
 const SOURCES = [...jsFiles(PUBLIC), ...jsFiles(join(ROOT, 'functions'))]
-  .map((p) => relative(ROOT, p));
+  .map((p) => repoPath(relative(ROOT, p)));
 
 const lineCount = (rel) => readFileSync(join(ROOT, rel), 'utf8').split('\n').length;
 
@@ -125,7 +125,7 @@ function importsOf(rel) {
 /** 상대 import를 저장소 기준 경로로 바꾼다. 외부 모듈은 null. */
 function resolveImport(fromRel, spec) {
   if (!spec.startsWith('.')) return null;
-  return relative(ROOT, resolve(dirname(join(ROOT, fromRel)), spec));
+  return repoPath(relative(ROOT, resolve(dirname(join(ROOT, fromRel)), spec)));
 }
 
 test('domain/은 DOM·Firestore·화면 모듈을 모르는 순수 계층이다', () => {

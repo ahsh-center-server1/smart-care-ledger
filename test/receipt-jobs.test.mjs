@@ -68,7 +68,7 @@ test('선점 패치가 상태와 만료 시각을 담는다', () => {
   const p = claimPatch({ token: 'tok1', now: NOW });
   assert.equal(p.state, STATES.FINALIZING);
   assert.equal(p.leaseToken, 'tok1');
-  assert.equal(p.leaseUntil, NOW + LEASE_MS);
+  assert.equal(p.leaseUntil.getTime(), NOW + LEASE_MS);
 });
 
 test('선점 패치는 토큰 없이 만들 수 없다', () => {
@@ -114,7 +114,7 @@ test('토큰이 비면 lease가 없다', () => {
 
 test('lease를 들고 있으면 연장할 수 있다', () => {
   const job = { state: STATES.FINALIZING, leaseToken: 'mine', leaseUntil: NOW + 10 };
-  assert.equal(heartbeatPatch({ job, token: 'mine', now: NOW }).leaseUntil, NOW + LEASE_MS);
+  assert.equal(heartbeatPatch({ job, token: 'mine', now: NOW }).leaseUntil.getTime(), NOW + LEASE_MS);
 });
 
 test('lease를 잃었으면 연장할 수 없다', () => {
@@ -211,14 +211,14 @@ test('새 job은 uploaded 상태로 시작한다', () => {
   const job = newJob({ uid: 'u1', uploadId: 'up1', clientId: 'c1', now: NOW });
   assert.equal(job.state, STATES.UPLOADED);
   assert.equal(job.leaseToken, '');
-  assert.equal(job.leaseUntil, 0);
+  assert.equal(job.leaseUntil.getTime(), 0);
   assert.equal(job.attempts, 0);
 });
 
 test('새 job이 스테이징 경로와 수명을 담는다', () => {
   const job = newJob({ uid: 'u1', uploadId: 'up1', clientId: 'c1', now: NOW });
   assert.equal(job.stagingPath, 'receiptStaging/u1/up1/source');
-  assert.equal(job.expireAt, NOW + STAGING_TTL_MS);
+  assert.equal(job.expireAt.getTime(), NOW + STAGING_TTL_MS);
 });
 
 test('새 job은 필수 인자 없이 만들 수 없다', () => {

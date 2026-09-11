@@ -84,7 +84,7 @@ export async function applyFixedItems(){
         type:f.type,category:f.category,description:f.description,
         amountIn:f.type==='수입'?Number(f.amount):0,
         amountOut:f.type==='지출'?Number(f.amount):0,
-        receiptUrl:'',isFixed:true,fixedItemId:f.id,
+        isFixed:true,fixedItemId:f.id,
         createdBy:String(S.user?.userId||''),
       }})));
       toast(`${toAdd.length}건 입력 완료`,'success');

@@ -31,7 +31,9 @@ const BASELINE = join(ROOT, 'test', 'contract', 'ratchet.json');
 
 const res = spawnSync(
   process.execPath,
-  ['--test', 'test/contract/enforcement.test.mjs'],
+  // Node 24는 대화형 터미널에서 기본 spec reporter를 선택해 `ℹ tests`를
+  // 출력한다. 래칫은 안정된 TAP 요약을 명시적으로 요청해야 버전에 좌우되지 않는다.
+  ['--test', '--test-reporter=tap', 'test/contract/enforcement.test.mjs'],
   { cwd: ROOT, encoding: 'utf8' },
 );
 

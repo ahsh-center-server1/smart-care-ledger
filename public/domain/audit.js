@@ -45,6 +45,10 @@ export const ACTION_LABELS = {
   // 엑셀·증빙
   'excel.upload':        '엑셀 업로드',
   'receipt.upload':      '증빙 첨부',
+  'receipt.attach':      '기존 거래 증빙 연결',
+  'receipt.create':      '영수증 거래 자동 입력',
+  'receipt.remove':      '증빙 연결 해제',
+  'receipt.orphan':      '확인 필요 증빙 발견',
   'receipt.delete':      '증빙 삭제',
   'receipt.missing':     '증빙 분실 표시',
   'bankbook.upload':     '통장 사진 업로드',
@@ -59,6 +63,7 @@ export const ACTION_LABELS = {
   'report.revert':       '결재 취소',
   'report.release':      '반려 해제',
   'report.delete':       '보고서 삭제',
+  'report.transition':   '보고서 상태 전이',
 
   // 입주자·계좌
   'client.create':       '입주자 등록',

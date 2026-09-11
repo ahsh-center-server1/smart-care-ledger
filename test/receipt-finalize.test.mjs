@@ -60,10 +60,11 @@ const as = (uid) => ({ auth: { uid } });
 
 /** 스테이징에 파일이 올라간 상태의 job 하나. */
 function staged(db, bucket, uid, uploadId, clientId = MY, state = jobs.STATES.ANALYZED) {
-  db.docs.set(jobs.jobPath(uid, uploadId), {
-    ...jobs.newJob({ uid, uploadId, clientId, now: Date.now() }), state,
-  });
   bucket.put(jobs.stagingPath(uid, uploadId));
+  const sourceGeneration = bucket.objects.get(jobs.stagingPath(uid, uploadId)).generation;
+  db.docs.set(jobs.jobPath(uid, uploadId), {
+    ...jobs.newJob({ uid, uploadId, clientId, now: Date.now() }), state, sourceGeneration,
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -96,6 +97,31 @@ test('권한 정보가 없으면 무엇을 해야 하는지 말한다', async ()
     () => fns.startReceiptUpload({ ...as('없는사람'), data: { clientId: MY } }),
     (e) => e.code === 'failed-precondition' && /백필/.test(e.message),
   );
+});
+
+test('업로드 확인이 실제 staging generation을 기록하고 analyzed로 전환한다', async () => {
+  const { db, bucket, fns } = build();
+  const started = await fns.startReceiptUpload({ ...as('담당자'), data: { clientId: MY } });
+  bucket.put(started.stagingPath, 'image-bytes');
+  const expected = bucket.objects.get(started.stagingPath).generation;
+
+  const out = await fns.completeReceiptUpload({
+    ...as('담당자'), data: { uploadId: started.uploadId },
+  });
+  assert.equal(out.sourceGeneration, expected);
+  const job = db.docs.get(jobs.jobPath('담당자', started.uploadId));
+  assert.equal(job.state, jobs.STATES.ANALYZED);
+  assert.equal(job.sourceGeneration, expected);
+});
+
+test('staging 파일 확인 전에는 최종화할 수 없다', async () => {
+  const { fns } = build();
+  const started = await fns.startReceiptUpload({ ...as('담당자'), data: { clientId: MY } });
+  const out = await fns.finalizeReceipts({
+    ...as('담당자'), data: { items: [{ uploadId: started.uploadId, trxId: 't1' }] },
+  });
+  assert.equal(out.okCount, 0);
+  assert.match(out.results[0].error, /이미 처리 중이거나 완료/);
 });
 
 // ─────────────────────────────────────────────
@@ -167,7 +193,9 @@ test('이미 증빙이 있으면 교체 권한이 있어야 바꾼다', async ()
   const b = build(seed);
   staged(b.db, b.bucket, '담당자', 'up000001');
   const r2 = await b.fns.finalizeReceipts({
-    ...as('담당자'), data: { items: [{ uploadId: 'up000001', trxId: 't1' }] },
+    ...as('담당자'), data: { items: [{
+      uploadId: 'up000001', trxId: 't1', expectedReceiptUrl: 'https://old',
+    }] },
   });
   assert.equal(r2.okCount, 1, JSON.stringify(r2.results));
 });
@@ -237,13 +265,20 @@ test('날짜·금액이 이상하면 만들지 않는다', async () => {
 // 복사 · 동시성
 // ─────────────────────────────────────────────
 
-test('최종 객체가 이미 있으면 실패가 아니라 이어 간다', async () => {
+test('최종 객체가 이미 있으면 출처 metadata가 일치할 때만 이어 간다', async () => {
   // 두 작업자가 같은 원본을 같은 목적지로 복사하면 내용이 같다.
   const finalP = jobs.finalPath(MY, 'up000001');
   const { db, bucket, fns } = build({
     'transactions/t1': { clientId: MY, date: '2026-09-01', createdBy: '담당자' },
   }, { [finalP]: '먼저 복사된 것' });
   staged(db, bucket, '담당자', 'up000001');
+  const job = db.docs.get(jobs.jobPath('담당자', 'up000001'));
+  bucket.objects.get(finalP).metadata = {
+    firebaseStorageDownloadTokens: 'existing-token',
+    uploadId: 'up000001',
+    jobId: jobs.jobPath('담당자', 'up000001'),
+    sourceGeneration: job.sourceGeneration,
+  };
   const genBefore = bucket.objects.get(finalP).generation;
 
   const out = await fns.finalizeReceipts({
@@ -253,6 +288,43 @@ test('최종 객체가 이미 있으면 실패가 아니라 이어 간다', asyn
   assert.equal(out.okCount, 1, JSON.stringify(out.results));
   assert.equal(bucket.objects.get(finalP).generation, genBefore, '이미 있는 객체를 덮었습니다');
   assert.equal(db.docs.get('transactions/t1').receiptGeneration, genBefore);
+});
+
+test('412 목적지의 출처 metadata가 다르면 충돌로 중단한다', async () => {
+  const finalP = jobs.finalPath(MY, 'up000001');
+  const { db, bucket, fns } = build({
+    'transactions/t1': { clientId: MY, date: '2026-09-01', createdBy: '담당자' },
+  }, { [finalP]: '다른 업로드' });
+  staged(db, bucket, '담당자', 'up000001');
+  bucket.objects.get(finalP).metadata = {
+    firebaseStorageDownloadTokens: 'other-token', uploadId: 'different',
+    jobId: 'receiptJobs/other/items/different', sourceGeneration: '999',
+  };
+
+  const out = await fns.finalizeReceipts({
+    ...as('담당자'), data: { items: [{ uploadId: 'up000001', trxId: 't1' }] },
+  });
+  assert.equal(out.okCount, 0);
+  assert.match(out.results[0].error, /충돌/);
+  assert.equal(db.docs.get('transactions/t1').receiptPath, undefined);
+});
+
+test('교체는 예상 경로와 generation이 모두 일치해야 한다', async () => {
+  const seed = { 'transactions/t1': {
+    clientId: MY, date: '2026-09-01', createdBy: '담당자',
+    receiptPath: 'receipts/c1/old', receiptGeneration: '7', receiptUrl: 'https://old',
+  } };
+  const { db, bucket, fns } = build(seed);
+  staged(db, bucket, '담당자', 'up000001');
+  const out = await fns.finalizeReceipts({
+    ...as('담당자'), data: { items: [{
+      uploadId: 'up000001', trxId: 't1',
+      expectedReceiptPath: 'receipts/c1/old', expectedReceiptGeneration: '6',
+    }] },
+  });
+  assert.equal(out.okCount, 0);
+  assert.match(out.results[0].error, /그 사이 증빙/);
+  assert.equal(db.docs.get('transactions/t1').receiptGeneration, '7');
 });
 
 test('이미 최종화된 업로드는 다시 처리하지 않는다', async () => {
@@ -352,4 +424,113 @@ test('한 번에 처리할 수 있는 건수에 상한이 있다', async () => {
     () => fns.finalizeReceipts({ ...as('담당자'), data: { items } }),
     (e) => e.code === 'invalid-argument',
   );
+});
+
+// ─────────────────────────────────────────────
+// 해제 · 만료 정리
+// ─────────────────────────────────────────────
+
+test('증빙 해제는 경로와 generation이 일치할 때 거래·감사를 원자 갱신하고 파일을 지운다', async () => {
+  const path = jobs.finalPath(MY, 'up000001');
+  const { db, bucket, fns } = build({
+    'transactions/t1': {
+      clientId: MY, date: '2026-09-01', createdBy: '담당자',
+      receiptPath: path, receiptGeneration: '1001', receiptUrl: 'https://old',
+    },
+  }, { [path]: 'receipt' });
+
+  await fns.removeReceipt({
+    ...as('담당자'), data: {
+      trxId: 't1', expectedReceiptPath: path, expectedReceiptGeneration: '1001',
+    },
+  });
+
+  const trx = db.docs.get('transactions/t1');
+  assert.equal(trx.receiptPath, undefined);
+  assert.equal(trx.receiptGeneration, undefined);
+  assert.equal(bucket.objects.has(path), false);
+  const audit = [...db.docs.values()].find((d) => d.action === 'receipt.remove');
+  assert.equal(audit.receiptPath, path);
+  assert.equal(audit.receiptGeneration, '1001');
+});
+
+test('증빙 해제의 예상 generation이 낡았으면 거래와 파일을 모두 보존한다', async () => {
+  const path = jobs.finalPath(MY, 'up000001');
+  const { db, bucket, fns } = build({
+    'transactions/t1': {
+      clientId: MY, date: '2026-09-01', createdBy: '담당자',
+      receiptPath: path, receiptGeneration: '1001', receiptUrl: 'https://old',
+    },
+  }, { [path]: 'receipt' });
+
+  await assert.rejects(
+    () => fns.removeReceipt({
+      ...as('담당자'), data: {
+        trxId: 't1', expectedReceiptPath: path, expectedReceiptGeneration: '1000',
+      },
+    }),
+    (e) => e.code === 'aborted',
+  );
+  assert.equal(db.docs.get('transactions/t1').receiptGeneration, '1001');
+  assert.equal(bucket.objects.has(path), true);
+});
+
+test('만료된 미첨부 job은 검증된 final → staging → job 순서로 정리한다', async () => {
+  const { db, bucket, fns } = build();
+  staged(db, bucket, '담당자', 'up000001', MY, jobs.STATES.FINALIZING);
+  const jp = jobs.jobPath('담당자', 'up000001');
+  const final = jobs.finalPath(MY, 'up000001');
+  bucket.put(final, 'copied');
+  const meta = bucket.objects.get(final);
+  const job = db.docs.get(jp);
+  meta.metadata = {
+    firebaseStorageDownloadTokens: 'token', uploadId: 'up000001', jobId: jp,
+    sourceGeneration: job.sourceGeneration,
+  };
+  db.docs.set(jp, {
+    ...job, finalPath: final, finalGeneration: meta.generation,
+    expireAt: new Date(Date.now() - 1),
+  });
+
+  await fns.cleanupReceiptJobs();
+  assert.equal(bucket.objects.has(final), false);
+  assert.equal(bucket.objects.has(jobs.stagingPath('담당자', 'up000001')), false);
+  assert.equal(db.docs.has(jp), false);
+});
+
+test('job TTL 정리는 거래에 첨부된 최종 영수증을 삭제하지 않는다', async () => {
+  const { db, bucket, fns } = build();
+  staged(db, bucket, '담당자', 'up000001', MY, jobs.STATES.COMPLETED);
+  const jp = jobs.jobPath('담당자', 'up000001');
+  const final = jobs.finalPath(MY, 'up000001');
+  bucket.put(final, 'attached');
+  db.docs.set(jp, {
+    ...db.docs.get(jp), finalPath: final,
+    finalGeneration: bucket.objects.get(final).generation,
+    expireAt: new Date(Date.now() - 1),
+  });
+
+  await fns.cleanupReceiptJobs();
+  assert.equal(bucket.objects.has(final), true, '최종 영수증이 TTL로 삭제됐습니다');
+  assert.equal(bucket.objects.has(jobs.stagingPath('담당자', 'up000001')), false);
+  assert.equal(db.docs.has(jp), false);
+});
+
+test('출처 metadata가 다른 final은 지우지 않고 orphan 감사 대상으로 남긴다', async () => {
+  const { db, bucket, fns } = build();
+  staged(db, bucket, '담당자', 'up000001', MY, jobs.STATES.FINALIZING);
+  const jp = jobs.jobPath('담당자', 'up000001');
+  const final = jobs.finalPath(MY, 'up000001');
+  bucket.put(final, 'unknown');
+  const meta = bucket.objects.get(final);
+  meta.metadata = { uploadId: 'different', jobId: 'different', sourceGeneration: '0' };
+  db.docs.set(jp, {
+    ...db.docs.get(jp), finalPath: final, finalGeneration: meta.generation,
+    expireAt: new Date(Date.now() - 1),
+  });
+
+  await fns.cleanupReceiptJobs();
+  assert.equal(bucket.objects.has(final), true);
+  assert.equal(db.docs.has(jp), false);
+  assert.ok([...db.docs.values()].some((d) => d.action === 'receipt.orphan'));
 });

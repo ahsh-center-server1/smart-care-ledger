@@ -45,6 +45,9 @@ const HOST = '127.0.0.1';
 
 const MY_CLIENT = 'c1';
 const OTHER_CLIENT = 'c9';
+// Storage 에뮬레이터는 프로세스를 재사용할 수 있다. 성공 업로드 경로는 실행마다
+// 달라야 이전 실패 실행의 객체가 이번 create 전제를 오염시키지 않는다.
+const RUN_ID = String(process.pid);
 
 const ACTORS = {
   입력자: { uid: 'st-input', role: '입력자', isAdmin: false },
@@ -70,6 +73,19 @@ async function seedFile(path) {
   });
 }
 
+async function seedJob(uid, uploadId, extra = {}) {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), `receiptJobs/${uid}/items/${uploadId}`), {
+      uid, uploadId, clientId: MY_CLIENT, state: 'uploaded',
+      expireAt: new Date(Date.now() + 60 * 60 * 1000),
+      ...extra,
+    });
+  });
+}
+
+const uploadReceiptBytes = (storage, path, data = bytes(), contentType = 'image/jpeg') =>
+  uploadBytes(ref(storage, path), data, { contentType });
+
 const bytes = () => new Uint8Array([1, 2, 3]);
 
 before(async () => {
@@ -84,6 +100,10 @@ before(async () => {
       rules: readFileSync(new URL('../../storage.rules', import.meta.url), 'utf8'),
     },
   });
+  // 동일 에뮬레이터를 반복 사용해도 예전 객체가 create를 update로 바꾸거나,
+  // 남아 있는 authz/job 문서가 이번 실행의 전제가 되지 않게 한다.
+  await testEnv.clearStorage();
+  await testEnv.clearFirestore();
 
   // 판정 근거는 Firestore 에 있다. Storage 규칙이 firestore.get() 으로 읽는다.
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -157,26 +177,51 @@ describe('영수증 — 담당 범위', () => {
 
 describe('영수증 스테이징 — 소유권은 경로로', () => {
   it('본인 경로에는 올릴 수 있다', async () => {
-    await assertSucceeds(uploadBytes(
-      ref(as(ACTORS.입력자), stagingPath(ACTORS.입력자.uid, 'u1')), bytes(),
+    const uploadId = `upload001-${RUN_ID}`;
+    await seedJob(ACTORS.입력자.uid, uploadId);
+    await assertSucceeds(uploadReceiptBytes(
+      as(ACTORS.입력자), stagingPath(ACTORS.입력자.uid, uploadId),
     ));
   });
 
   it('남의 경로에는 올릴 수 없다', async () => {
-    await assertFails(uploadBytes(
-      ref(as(ACTORS.입력자), stagingPath(ACTORS.담당자.uid, 'u2')), bytes(),
+    await seedJob(ACTORS.담당자.uid, 'upload002');
+    await assertFails(uploadReceiptBytes(
+      as(ACTORS.입력자), stagingPath(ACTORS.담당자.uid, 'upload002'),
     ));
   });
 
   it('올린 파일을 덮어쓸 수 없다 — 판독 뒤 바꿔치기를 막는다', async () => {
-    const path = stagingPath(ACTORS.담당자.uid, 'dup');
-    await assertSucceeds(uploadBytes(ref(as(ACTORS.담당자), path), bytes()));
-    await assertFails(uploadBytes(ref(as(ACTORS.담당자), path), new Uint8Array([9, 9])));
+    const uploadId = `upload003-${RUN_ID}`;
+    const path = stagingPath(ACTORS.담당자.uid, uploadId);
+    await seedJob(ACTORS.담당자.uid, uploadId);
+    await assertSucceeds(uploadReceiptBytes(as(ACTORS.담당자), path));
+    await assertFails(uploadReceiptBytes(as(ACTORS.담당자), path, new Uint8Array([9, 9])));
   });
 
   it('남의 스테이징은 읽을 수 없다', async () => {
     await assertFails(getBytes(
       ref(as(ACTORS.팀장), stagingPath(ACTORS.담당자.uid, 'dup')),
+    ));
+  });
+
+  it('job이 없거나 만료됐으면 업로드할 수 없다', async () => {
+    await assertFails(uploadReceiptBytes(
+      as(ACTORS.담당자), stagingPath(ACTORS.담당자.uid, 'nojob001'),
+    ));
+    await seedJob(ACTORS.담당자.uid, 'expired1', { expireAt: new Date(Date.now() - 1000) });
+    await assertFails(uploadReceiptBytes(
+      as(ACTORS.담당자), stagingPath(ACTORS.담당자.uid, 'expired1'),
+    ));
+  });
+
+  it('source 이외 파일명과 허용하지 않은 MIME은 거부한다', async () => {
+    await seedJob(ACTORS.담당자.uid, 'upload004');
+    await assertFails(uploadReceiptBytes(
+      as(ACTORS.담당자), `receiptStaging/${ACTORS.담당자.uid}/upload004/other`,
+    ));
+    await assertFails(uploadReceiptBytes(
+      as(ACTORS.담당자), stagingPath(ACTORS.담당자.uid, 'upload004'), bytes(), 'text/plain',
     ));
   });
 });
@@ -268,13 +313,15 @@ describe('삭제', () => {
   });
 
   it('본인 스테이징은 지울 수 있다 — 검토를 중단하고 떠날 수 있어야 한다', async () => {
-    const path = stagingPath(ACTORS.담당자.uid, 'todelete');
+    const path = stagingPath(ACTORS.담당자.uid, 'todelete1');
+    await seedJob(ACTORS.담당자.uid, 'todelete1');
     await seedFile(path);
     await assertSucceeds(deleteObject(ref(as(ACTORS.담당자), path)));
   });
 
   it('남의 스테이징은 지울 수 없다', async () => {
-    const path = stagingPath(ACTORS.담당자.uid, 'notyours');
+    const path = stagingPath(ACTORS.담당자.uid, 'notyours1');
+    await seedJob(ACTORS.담당자.uid, 'notyours1');
     await seedFile(path);
     await assertFails(deleteObject(ref(as(ACTORS.입력자), path)));
   });

@@ -10,13 +10,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   ACTION_LABELS, AUDIT_RETENTION_DAYS, AUDIT_RESOURCES,
   actionLabel, actionResource, isKnownAction,
   auditExpireAt, buildAuditEntry, pruneSummary, summaryText,
 } from '../public/domain/audit.js';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 test('라벨 표가 비어 있지 않고 모든 값이 한글 설명이다', () => {
   const keys = Object.keys(ACTION_LABELS);

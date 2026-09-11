@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
-  PERM_CATALOG, PERM_KEYS, SERVER_ENFORCED_KEYS, CONFIGURABLE_KEYS,
+  PERM_CATALOG, PERM_KEYS, SERVER_ENFORCED_KEYS,
   SCOPE, ENFORCE, SERVER_ENFORCED, ADMIN_RANK, SELECTABLE_RANKS,
   CAP_SCHEMA_VERSION, capName, effectiveRank, scopeFor, computeCaps,
 } from '../public/domain/perm-catalog.js';
