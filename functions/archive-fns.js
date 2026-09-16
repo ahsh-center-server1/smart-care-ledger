@@ -25,7 +25,7 @@
  *   두 번 계산된다.
  */
 
-const { capName } = require('./perm-catalog.cjs');
+const { fixedCan } = require('./fixed-role-policy.cjs');
 const { randomUUID } = require('node:crypto');
 
 const AUTHZ = 'authz';
@@ -62,7 +62,7 @@ module.exports = function archiveFns(ctx) {
     }
     const d = snap.data() || {};
     if (d.enabled !== true) throw new HttpsError('permission-denied', '비활성화된 계정입니다.');
-    if ((d.caps || {})[capName('settings.archive')] !== true) {
+    if (!fixedCan(d, 'settings.archive')) {
       throw new HttpsError('permission-denied', '연도 마감 권한이 없습니다.');
     }
     return d;
@@ -237,13 +237,24 @@ module.exports = function archiveFns(ctx) {
             tx.update(logRef, { phase: PHASES.BALANCE, ...clearLease() });
             return { phase: PHASES.BALANCE, done: false, ...counts(current) };
           }
+          const accountIds = [...new Set(snap.docs
+            .map((d) => String((d.data() || {}).accountId || ''))
+            .filter(Boolean))];
+          const accountSnaps = await Promise.all(
+            accountIds.map((id) => tx.get(db.collection(ACCOUNTS).doc(id))),
+          );
+          const baseDateByAccount = new Map(accountSnaps.map((s, i) => [
+            accountIds[i], s.exists ? String((s.data() || {}).initialBalanceDate || '') : '',
+          ]));
           const net = { ...(current.netByAccount || {}) };
           for (const d of snap.docs) {
             const t = d.data() || {};
             tx.set(db.collection(archiveCol).doc(d.id), {
               ...t, archivedFrom: d.id, archivedAt: current.startedAt,
             });
-            if (t.type !== '취소' && t.accountId) {
+            const baseDate = baseDateByAccount.get(String(t.accountId || '')) || '';
+            if (t.type !== '취소' && t.accountId
+                && (!baseDate || String(t.date || '') > baseDate)) {
               net[t.accountId] = (net[t.accountId] || 0)
                 + (Number(t.amountIn || 0) - Number(t.amountOut || 0));
             }
@@ -265,7 +276,9 @@ module.exports = function archiveFns(ctx) {
 
     // ── 2단계: 기초잔액 전진 ──
     if (progress.phase === PHASES.BALANCE) {
-      const nextBase = `${year + 1}-01-01`;
+      // initialBalance는 이 날짜가 끝난 시점의 잔액이다. 다음 해 1월 1일로
+      // 기록하면 잔액식(date > initialBalanceDate)이 1월 1일 거래까지 제외한다.
+      const nextBase = `${year}-12-31`;
       try {
         return await db.runTransaction(async (tx) => {
           const logSnap = await tx.get(logRef);

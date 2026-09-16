@@ -29,19 +29,19 @@ test('isNarrowScreen의 기준폭이 CSS 미디어 쿼리와 일치한다', () =
   );
 });
 
-test('PC 전용 화면 목록에 보고서와 설정이 들어 있다', () => {
+test('보고서만 PC 전용이고 설정의 역할 안내는 모바일에서도 연다', () => {
   const m = coreSrc.match(/DESKTOP_ONLY_VIEWS\s*=\s*\{([^}]*)\}/);
   assert.ok(m, 'DESKTOP_ONLY_VIEWS를 찾지 못했습니다');
   assert.ok(m[1].includes('report'),   '보고서가 PC 전용 목록에 없습니다');
-  assert.ok(m[1].includes('settings'), '설정이 PC 전용 목록에 없습니다');
+  assert.ok(!m[1].includes('settings'), '설정 전체가 PC 전용으로 막혀 있습니다');
 });
 
-test('CSS도 좁은 화면에서 보고서·설정 네비를 숨긴다', () => {
+test('CSS는 보고서만 숨기고 설정 네비는 유지한다', () => {
   // JS만 막고 CSS가 안 숨기면 눌러서 실패하는 버튼이 남는다
   assert.ok(
     htmlSrc.includes('.mobile-nav-item[data-view="report"]') &&
-    htmlSrc.includes('.mobile-nav-item[data-view="settings"]'),
-    '좁은 화면에서 보고서·설정 네비를 숨기는 규칙이 없습니다'
+    !/\.mobile-nav-item\[data-view="settings"\][^{]*\{display:none!important;\}/.test(htmlSrc),
+    '좁은 화면의 역할 안내 진입점이 숨겨져 있습니다'
   );
 });
 

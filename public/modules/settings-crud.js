@@ -69,20 +69,28 @@ export async function toggleAccountActive(id,makeActive){
   }catch(e){ toast('저장 오류: '+e.message,'error'); }
 }
 // 직원 재직/퇴사(비활성) 토글 — 비활성 시 로그인 차단, 데이터·결재 이력은 보존
-export async function toggleStaffActive(id,makeActive){
+export async function toggleStaffActive(id,makeActive,assignmentsConfirmed=false){
   // 본인 계정 비활성화 방지 (셀프 잠금 방지)
   const self=S.users.find(u=>String(u.userId)===String(S.user?.userId));
   if(!makeActive&&self&&String(self.id)===String(id)){toast('본인 계정은 비활성화할 수 없습니다.','error');return;}
+  if(makeActive&&!assignmentsConfirmed){
+    const assigned=(S.allClients||S.clients).filter(c=>{
+      const staff=String(c.userIds||'').split(',').map(x=>x.trim());
+      return staff.includes(String(id))||String(c.teamLeader||'')===String(id);
+    });
+    showConfirm('재직 복귀와 담당 관계 확인',`기존 담당 관계 ${assigned.length}건을 확인했습니다. 이 관계를 유지한 채 재직 처리하시겠습니까?`,()=>toggleStaffActive(id,true,true));
+    return;
+  }
   try{
     // users 쓰기는 보안 규칙이 막는다. 서버가 등급을 확인하고,
     // 마지막 관리자를 비활성화해 영구 잠금되는 것도 막아 준다.
-    await window._fbFn.call('setStaffActive')({ userId:id, active:makeActive });
+    await window._fbFn.call('setStaffActive')({ userId:id, active:makeActive, confirmAssignments:assignmentsConfirmed });
     await auditLog('staff.activeChange',{resourceId:id,summary:{
       target:S.users.find(u=>u.id===id)?.name||id, to:makeActive?'재직':'퇴사'}});
     // 비활성화 대상이 어느 입주자의 팀장이면 안내 (결재 공백 방지)
     if(!makeActive){
       const asLeader=(S.allClients||S.clients).filter(c=>String(c.teamLeader)===String(id));
-      if(asLeader.length)toast(`이 직원은 입주자 ${asLeader.length}명의 팀장입니다. 팀장을 재지정하거나, 공석 시 센터장이 팀장 결재를 대행할 수 있어요.`,'info',5000);
+      if(asLeader.length)toast(`이 직원은 입주자 ${asLeader.length}명의 지정 팀장입니다. 다른 팀장을 지정할 때까지 결재가 보류됩니다.`,'info',5000);
     }
     toast(makeActive?'재직 상태로 전환했습니다.':'퇴사(비활성) 처리했습니다. 해당 계정은 로그인할 수 없습니다.','success');
     await deps.refetchUsers(); deps.refresh();

@@ -1,114 +1,56 @@
-/**
- * settings-permissions.js — 권한 등급표 패널 (관리자 전용)
- *
- * settings.js 에서 떼어 왔다. 그 파일은 이미 상한을 넘어 있고
- * test/architecture.test.mjs 가 "기능을 더할 곳이 아니라 쪼갤 곳"이라고 말한다.
- *
- * 이 화면이 하는 일은 하나다 — 각 기능의 **최소 등급**을 고르고 저장한다.
- * 저장은 서버 콜러블(savePermissions)이 받아 config/permissions 와 전 직원의
- * authz.caps 를 함께 고친다. 브라우저가 config 를 직접 쓰던 시절에는
- * 등급표만 바뀌고 규칙은 그대로여서 아무 일도 일어나지 않았다.
- */
-
 'use strict';
 
-import { escAttr, toast, showConfirm } from '../utils/ui.js';
-import { auditLog } from '../services/audit.js';
-import {
-  savePermissions, requiredRank, DEFAULT_MIN_RANK,
-  SELECTABLE_RANKS, RANK_LABEL, PERM_SECTIONS,
-  isConfigurable, fixedReason,
-} from './permissions.js';
+import { S } from '../state.js';
+import { escAttr } from '../utils/ui.js';
 
-// ─────────────────────────────────────────────
-// 권한 관리 패널 (관리자 전용)
-// ─────────────────────────────────────────────
-export function renderPermissionPanel(){
-  const container=document.getElementById('permission-panel-content');
-  if(!container)return;
+const ROLE_GUIDE = {
+  '입력자': { scope: '배정된 입주자의 본인 작성 자료 중심', tasks: ['거래 입력과 본인 미제출 자료 정정', '본인 거래에 영수증 추가', '제출·확정 자료는 담당자에게 정정 요청'] },
+  '담당자': { scope: '배정된 입주자', tasks: ['담당 장부 관리와 미제출 자료 정정', '증빙·엑셀·통장 사진 입력', '보고서 작성·제출과 반려 자료 보완'] },
+  '팀장': { scope: '담당 팀장으로 지정된 입주자', tasks: ['지정된 입주자 자료 검토와 1차 결재', '오류 자료 반려·정정 요청', '담당 배정 검토'] },
+  '센터장': { scope: '시설 전체 입주자', tasks: ['시설 전체 자료 검토와 최종 결재', '사유를 기록한 확정 취소와 재결재', '마감 및 중요한 운영 변경 승인'] },
+};
 
-  // 편집용 초안 — 현재 유효 등급으로 시작한다
-  const draft={};
-  PERM_SECTIONS.forEach(sec=>Object.keys(sec.keys).forEach(k=>{draft[k]=requiredRank(k);}));
-
-  const rankOpts=(cur)=>SELECTABLE_RANKS
-    .map(r=>`<option value="${r}"${Number(cur)===r?' selected':''}>${escAttr(RANK_LABEL[r])}</option>`)
-    .join('');
-
-  function renderPanel(){
-    const changed=Object.entries(draft).filter(([k,v])=>Number(v)!==DEFAULT_MIN_RANK[k]).length;
-    container.innerHTML=`
-      <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:#5b21b6;line-height:1.6;">
-        각 기능을 <b>어느 등급부터</b> 쓸 수 있는지 정합니다.
-        등급은 <b>입력자 &lt; 담당자 &lt; 팀장 &lt; 센터장</b> 순이고,
-        관리자 권한은 역할이 아니라 직원 등록 화면의 체크박스로 부여합니다.
-        <div style="margin-top:6px;">🔒 표시는 보안 하한이 걸려 <b>등급을 낮출 수 없는</b> 권한입니다.</div>
-        ${changed?`<div style="margin-top:6px;font-weight:700;">기본값과 다른 항목 ${changed}개</div>`:''}
-      </div>
-      <div style="overflow-x:auto;">
-        ${PERM_SECTIONS.map(sec=>`
-          <div style="font-weight:800;color:#fff;background:#3b82f6;padding:7px 12px;border-radius:8px 8px 0 0;font-size:12px;">${escAttr(sec.title)}</div>
-          <div style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;margin-bottom:14px;">
-            ${Object.entries(sec.keys).map(([key,label])=>{
-              const isDefault=Number(draft[key])===DEFAULT_MIN_RANK[key];
-              // 조정할 수 없는 권한은 드롭다운을 주지 않는다. 예전에는 똑같이
-              // 선택할 수 있게 보여 주고 저장까지 됐지만 아무 일도 일어나지
-              // 않았다 — "저장했는데 반영이 안 된다"의 절반이 이것이었다.
-              const fixed=!isConfigurable(key);
-              const ctrl=fixed
-                ? `<span title="${escAttr(fixedReason(key))}" style="font-size:12px;color:var(--muted);white-space:nowrap;flex-shrink:0;">🔒 ${escAttr(RANK_LABEL[draft[key]]||'')}</span>`
-                : `<select class="perm-rank input" data-key="${escAttr(key)}" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;flex-shrink:0;">${rankOpts(draft[key])}</select>`;
-              return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 12px;border-bottom:1px solid #f1f5f9;">
-                <span style="font-size:13px;color:${fixed?'var(--muted)':'var(--text)'};">${escAttr(label)}${isDefault?'':'<span style="margin-left:6px;font-size:10px;font-weight:700;color:#7c3aed;">변경됨</span>'}</span>
-                ${ctrl}
-              </div>`;
-            }).join('')}
-          </div>`).join('')}
-      </div>
-      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
-        <button id="btn-perm-save" class="btn" style="padding:9px 20px;font-size:13px;">💾 저장</button>
-        <button id="btn-perm-reset" style="padding:9px 20px;background:#fff;color:#64748b;border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">↺ 기본값으로</button>
-      </div>`;
-
-    container.querySelectorAll('.perm-rank').forEach(sel=>{
-      sel.addEventListener('change',()=>{
-        draft[sel.dataset.key]=Number(sel.value);
-        renderPanel();   // '변경됨' 표시와 개수를 갱신
-      });
-    });
-
-    document.getElementById('btn-perm-save')?.addEventListener('click',async()=>{
-      try{
-        // 어떤 키가 기본값에서 벗어났는지 기록한다. 권한 등급표는 앱 전체의
-        // 접근 범위를 정하므로, 나중에 "왜 이 사람이 이걸 할 수 있었나"를
-        // 되짚을 수 있어야 한다.
-        const changed=Object.keys(draft)
-          .filter(k=>draft[k]!==DEFAULT_MIN_RANK[k])
-          .map(k=>`${k}=${draft[k]}`);
-        const res=await savePermissions(draft);
-        // 기록은 저장이 성공한 뒤에 남긴다(실패한 시도를 변경으로 남기지 않게).
-        await auditLog('permissions.update',{
-          summary:{ count:changed.length, target:changed.slice(0,8).join(', ') },
-        });
-        // 서버가 전 직원의 권한 스냅샷까지 다시 계산했다. 몇 명에게
-        // 적용됐는지 말해 주지 않으면 "정말 반영됐나"를 확인할 방법이 없다.
-        if(res.missingAuthz){
-          toast(`권한을 저장했지만 ${res.missingAuthz}명에게 적용되지 않았습니다. `
-            +'권한 백필을 실행하세요.','error',9000);
-        }else{
-          toast(`권한이 저장되었습니다. 직원 ${res.users||0}명에게 적용했습니다.`,'success',5000);
-        }
-        setTimeout(()=>location.reload(),2000);
-      }catch(e){toast('저장 실패: '+(e.message||'다시 시도하세요.'),'error');}
-    });
-
-    document.getElementById('btn-perm-reset')?.addEventListener('click',()=>{
-      showConfirm('기본값으로','모든 기능의 최소 등급을 기본값으로 되돌립니다. 저장을 눌러야 반영됩니다.',()=>{
-        Object.keys(draft).forEach(k=>{draft[k]=DEFAULT_MIN_RANK[k];});
-        renderPanel();
-        toast('기본값으로 되돌렸습니다. 저장을 눌러 적용하세요.','info');
-      },'되돌리기');
-    });
+export function renderPermissionPanel() {
+  const container = document.getElementById('permission-panel-content');
+  if (!container) return;
+  if (!S.user) {
+    container.innerHTML = '<p role="status">내 역할 정보를 확인하고 있습니다. 로그인이 완료된 뒤 다시 열어 주세요.</p>';
+    return;
   }
-  renderPanel();
+  const ready = S.authzStatus === 'ready' && !!S.authz && S.user.userId === S.authz.uid;
+  const identity = ready ? S.authz : S.user;
+  if (S.user.active === false || (ready && identity.enabled !== true)) {
+    container.innerHTML = '<p role="alert">비활성 계정입니다. 업무에 접근할 수 없습니다. 계정 담당자에게 확인해 주세요.</p>';
+    return;
+  }
+  const role = typeof identity.role === 'string' ? identity.role : '';
+  const guide = Object.hasOwn(ROLE_GUIDE, role) ? ROLE_GUIDE[role] : null;
+  const technicalOnly = role === '' && identity.isAdmin === true;
+  const assigned = role === '팀장' ? (S.authz?.leaderClientIds ?? S.leaderClientIds) : S.accessibleClientIds;
+  const ids = Array.isArray(assigned) ? [...new Set(assigned.filter(id => typeof id === 'string' && id))] : [];
+  const capsReady = ready && S.caps !== null && typeof S.caps === 'object' && !Array.isArray(S.caps);
+  const capsEmpty = capsReady && !Object.values(S.caps).some(value => value === true);
+  const status = S.authzStatus === 'error'
+    ? '<p role="alert">서버 권한 정보를 불러오지 못했습니다. 업무 접근은 허용되지 않습니다. 다시 로그인하거나 계정 담당자에게 확인해 주세요.</p>'
+    : !capsReady
+    ? '<p role="status">서버 권한 정보가 아직 확인되지 않았습니다. 아래 내용은 역할별 업무 안내이며 현재 접근 허용을 보장하지 않습니다. 계속되면 다시 로그인하거나 계정 담당자에게 확인해 주세요.</p>'
+    : capsEmpty
+      ? '<p role="status">현재 허용된 업무가 없습니다. 역할·담당 배정 및 계정 상태를 계정 담당자에게 확인해 주세요.</p>'
+      : '<p>서버 권한 정보를 확인했습니다. 아래는 역할별 업무 안내이며, 개별 자료의 작성자·담당 범위·결재 상태에 따라 실행이 제한됩니다.</p>';
+  container.innerHTML = `
+    <section aria-label="내 역할 안내" style="color:var(--text);line-height:1.7;">
+      <h3>내 역할과 담당 범위</h3>
+      <dl>
+        <dt>업무 역할</dt><dd>${escAttr(guide ? role : technicalOnly ? '업무 역할 없음' : '업무 역할 미지정')}</dd>
+        <dt>시스템 관리자</dt><dd>${identity.isAdmin === true ? '지정됨' : '지정되지 않음'}</dd>
+        <dt>역할의 업무 범위</dt><dd>${escAttr(guide?.scope || (technicalOnly ? '시스템 관리 업무만 가능' : '업무 역할과 담당 배정을 먼저 확인해 주세요.'))}</dd>
+        <dt>현재 배정 정보</dt><dd>${capsReady ? (technicalOnly ? '금융 업무 담당 범위 없음' : role === '센터장' ? '시설 전체 입주자' : ids.length ? `입주자 ${ids.length}명 배정` : '개별 담당 배정 없음') : '확인 대기'}</dd>
+      </dl>
+      <p>시스템 관리자 자격만으로 금융 자료 수정이나 결재 권한이 부여되지 않습니다.</p>
+      ${status}
+      <h3>역할별 허용 업무 안내</h3>
+      ${guide ? `<ul>${guide.tasks.map(task => `<li>${escAttr(task)}</li>`).join('')}</ul>` : technicalOnly ? '<p>업무 역할 없이 시스템 관리자 자격만 부여된 계정입니다.</p>' : '<p role="alert">알 수 없는 업무 역할입니다. 업무 권한을 추정하지 않습니다. 계정 담당자에게 역할 지정을 요청해 주세요.</p>'}
+      ${identity.isAdmin === true && (guide || technicalOnly) ? '<h3>시스템 관리 업무 안내</h3><ul><li>직원 계정 운영과 승인된 역할 변경 실행</li><li>AI 설정·백업·보안 감사 확인</li><li>역할·관리자 변경은 별도 승인자가 필요하며, 다른 승인자가 없으면 보류</li></ul>' : ''}
+      <p style="color:var(--muted);">이 화면에서는 권한을 변경할 수 없습니다. 역할과 담당 변경은 직원·담당 배정 절차로 요청합니다. 마감 자료는 직접 수정하지 않고 확정 취소·수정·재결재 절차를 따릅니다.</p>
+    </section>`;
 }

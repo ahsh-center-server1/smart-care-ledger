@@ -112,6 +112,7 @@ before(async () => {
       await setDoc(doc(db, 'authz/' + a.uid), {
         uid: a.uid, role, isAdmin: false, enabled: true,
         accessibleClientIds: [MY_CLIENT],
+        leaderClientIds: role === '팀장' ? [MY_CLIENT] : [],
         caps: computeCaps(rankOf({ role, isAdmin: false }), {}),
         capSchemaVersion: CAP_SCHEMA_VERSION,
       });
@@ -152,8 +153,9 @@ describe('영수증 — 담당 범위', () => {
     await assertFails(getBytes(ref(as(ACTORS.담당자), `receipts/${OTHER_CLIENT}/other.jpg`)));
   });
 
-  it('팀장은 담당 밖도 읽는다 (clientViewAll)', async () => {
-    await assertSucceeds(getBytes(ref(as(ACTORS.팀장), `receipts/${OTHER_CLIENT}/other.jpg`)));
+  it('팀장은 명시적으로 배정된 입주자의 영수증만 읽는다', async () => {
+    await assertSucceeds(getBytes(ref(as(ACTORS.팀장), `receipts/${MY_CLIENT}/mine.jpg`)));
+    await assertFails(getBytes(ref(as(ACTORS.팀장), `receipts/${OTHER_CLIENT}/other.jpg`)));
   });
 
   it('최종 경로는 팀장도 쓸 수 없다 — 서버 최종화만', async () => {
@@ -250,8 +252,8 @@ describe('통장 사진', () => {
     await assertFails(getBytes(ref(as(ACTORS.담당자), `bankbooks/${OTHER_CLIENT}/a9/2026-09.jpg`)));
   });
 
-  it('구 경로는 읽기만 남아 있다 — 예전 사진이 안 보이면 안 된다', async () => {
-    await assertSucceeds(getBytes(ref(as(ACTORS.담당자), 'bankbooks/a-legacy/old.jpg')));
+  it('입주자 범위를 증명할 수 없는 구 경로는 마이그레이션 전까지 닫는다', async () => {
+    await assertFails(getBytes(ref(as(ACTORS.담당자), 'bankbooks/a-legacy/old.jpg')));
     await assertFails(uploadBytes(ref(as(ACTORS.담당자), 'bankbooks/a-legacy/new.jpg'), bytes()));
   });
 });

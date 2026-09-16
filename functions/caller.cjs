@@ -25,7 +25,7 @@
  *   할당량에서 의미 있는 몫이 아니다.
  */
 
-const { capName, rankOf } = require('./perm-catalog.cjs');
+const { fixedCan, FIXED_ROLES } = require('./fixed-role-policy.cjs');
 
 const AUTHZ = 'authz';
 
@@ -50,22 +50,22 @@ module.exports = function makeCaller({ db, HttpsError }) {
     const d = snap.data() || {};
     if (d.enabled !== true) throw new HttpsError('permission-denied', '비활성화된 계정입니다.');
 
-    const caps = d.caps || {};
-    const accessible = Array.isArray(d.accessibleClientIds) ? d.accessibleClientIds : [];
+    const scope = d.role === '팀장' ? d.leaderClientIds : d.accessibleClientIds;
+    const accessible = Array.isArray(scope) ? scope : [];
 
-    const can = (key) => caps[capName(key)] === true;
+    const can = (key) => fixedCan(d, key);
 
     return {
       uid: auth.uid,
       role: String(d.role || ''),
       isAdmin: d.isAdmin === true,
       /** 등급. "본인보다 높은 역할은 부여할 수 없다" 같은 비교에만 쓴다. */
-      rank: rankOf({ role: d.role, isAdmin: d.isAdmin }),
+      rank: FIXED_ROLES.indexOf(d.role) + 1,
       can,
 
       /** 담당이거나, 담당과 무관하게 전체를 보는 권한이 있거나. 규칙의 seesClient 와 같다. */
       sees(clientId) {
-        return can('client.view.all') || accessible.includes(String(clientId));
+        return can('client.view.all') || (can('trx.create') || can('trx.view.all')) && accessible.includes(String(clientId));
       },
 
       /** 권한 하나를 요구한다. 메시지는 호출부가 정한다 — 화면까지 가는 문구다. */

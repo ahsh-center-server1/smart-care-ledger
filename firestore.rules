@@ -46,19 +46,49 @@ service cloud.firestore {
       return signedIn() && me().get('enabled', false) == true;
     }
 
-    /**
-     * 권한 하나. caps 는 서버가 등급표(config/permissions)로 계산해 둔 불리언이다.
-     *
-     * 규칙이 등급을 직접 계산하지 않는 이유: 그러면 등급표가 두 벌이 되고,
-     * 관리자가 설정에서 바꾼 값이 규칙에 반영되지 않는다. 실제로 그랬다.
-     */
+    function validRole(role) {
+      return role in ['입력자', '담당자', '팀장', '센터장'];
+    }
+
+    function validPrincipal() {
+      return active() && (validRole(me().get('role', ''))
+        || (me().get('role', '') == '' && me().get('isAdmin', false) == true));
+    }
+
+    /** 고정 역할 정책. 저장된 과거 caps와 config/permissions는 권한 근거가 아니다. */
     function cap(name) {
-      return active() && me().get('caps', {}).get(name, false) == true;
+      let role = me().get('role', '');
+      return validPrincipal() && (
+        (role == '입력자' && name in ['trxCreate', 'trxEdit', 'receiptUpload', 'receiptAttachOwn'])
+        || (role == '담당자' && name in [
+          'navReport', 'navSettings', 'trxViewAll', 'trxCreate', 'trxEdit',
+          'trxCategoryEdit', 'trxReorder', 'trxTransfer', 'trxCsv', 'excelUpload',
+          'bankbookUpload', 'receiptUpload', 'receiptAttachOwn', 'receiptAttachAny',
+          'receiptReplace', 'receiptPrint', 'reportOwn', 'reportDraft', 'reportSubmit',
+          'reportRecall', 'settingsCategory', 'settingsFixed', 'settingsBudget', 'auditView'
+        ])
+        || (role == '팀장' && name in [
+          'navReport', 'navSettings', 'navStaff', 'trxViewAll', 'trxCsv',
+          'receiptPrint', 'reportOwn', 'reportApproveTeam', 'reportReject',
+          'auditView', 'assignmentsManage'
+        ])
+        || (role == '센터장' && name in [
+          'navReport', 'navSettings', 'navStaff', 'clientViewAll', 'trxViewAll',
+          'trxCsv', 'receiptPrint', 'reportOwn', 'reportViewAll',
+          'reportApproveCenter', 'reportReject', 'reportRevert', 'settingsArchive',
+          'auditView', 'assignmentsManage', 'staffRoleApprove'
+        ])
+        || (me().get('isAdmin', false) == true && name in [
+          'navSettings', 'navStaff', 'settingsStaff', 'systemAudit', 'systemAi', 'systemBackup'
+        ])
+      );
     }
 
     /** 담당으로 배정된 입주자인가. */
     function mine(clientId) {
-      return clientId in me().get('accessibleClientIds', []);
+      return me().get('role', '') == '팀장'
+        ? clientId in me().get('leaderClientIds', [])
+        : clientId in me().get('accessibleClientIds', []);
     }
 
     /**
@@ -91,9 +121,9 @@ service cloud.firestore {
         data.get('clientId', '') + '_' + data.get('date', '')[0:7], false) == true;
     }
 
-    /** 잠긴 달의 거래를 건드릴 수 있는가 — 관리자 우회만 허용한다. */
+    /** 잠긴 달은 역할이나 관리자 자격으로 직접 우회하지 않는다. */
     function editableMonth(data) {
-      return cap('lockBypass') || !isLocked(data);
+      return !isLocked(data);
     }
 
     function myUid() { return request.auth.uid; }
@@ -393,10 +423,11 @@ service cloud.firestore {
     //   · 삭제는 관리자만 — 캐시를 지우는 것은 정확성을 해치지 않지만
     //     (다시 계산된다) 읽기량이 튀므로 아무나 하지 않게 한다.
     match /summaryCaches/{id} {
-      allow read: if active();
+      allow read: if seesClient(resource.data.get('clientId', ''));
 
       allow create: if cap('trxViewAll')
                     && request.resource.data.clientId is string
+                    && seesClient(request.resource.data.clientId)
                     && request.resource.data.schemaVersion is int
                     && request.resource.data.computedVersion is int
                     && request.resource.data.get('sourceVersion', -1) == 0
@@ -404,6 +435,8 @@ service cloud.firestore {
 
       allow update: if cap('trxViewAll')
                     && request.resource.data.clientId is string
+                    && request.resource.data.clientId == resource.data.clientId
+                    && seesClient(request.resource.data.clientId)
                     && request.resource.data.schemaVersion is int
                     && request.resource.data.computedVersion is int
                     && request.resource.data.get('sourceVersion', 0)
@@ -413,14 +446,14 @@ service cloud.firestore {
                     && request.resource.data.computedVersion
                        <= resource.data.get('sourceVersion', 0);
 
-      allow delete: if cap('settingsReset');
+      allow delete: if false;
     }
 
     // ── 오래 걸리는 파괴적 작업의 진행 상태 ──
     // 전체 초기화는 관리자만 실행하므로 상태도 관리자만 다룬다.
     // 다른 사람이 실행 중인지 확인하고 중단된 작업을 이어서 진행하기 위한 문서다.
     match /systemOperations/{id} {
-      allow read, write: if cap('settingsReset');
+      allow read, write: if false;
     }
 
     // ── 설정 ──
@@ -443,7 +476,9 @@ service cloud.firestore {
     // Firestore 규칙은 세그먼트 일부 와일드카드(archive_{year})를 지원하지 않으므로
     // 컬렉션명을 변수로 받아 정규식으로 판별한다.
     match /{col}/{id} {
-      allow read:  if col.matches('archive_[0-9]{4}') && cap('trxViewAll');
+      allow read:  if col.matches('archive_[0-9]{4}')
+                   && cap('trxViewAll')
+                   && seesClient(resource.data.get('clientId', ''));
       // 사본 저장→원본 삭제와 generation 갱신을 한 서버 작업으로 묶는다.
       allow write: if false;
     }

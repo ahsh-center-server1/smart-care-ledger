@@ -30,6 +30,7 @@ import {
   PERM_CATALOG, PERM_KEYS, SERVER_ENFORCED_KEYS,
   ENFORCE, capName,
 } from '../../public/domain/perm-catalog.js';
+import { fixedCan, FIXED_ROLES } from '../../public/domain/fixed-role-policy.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -112,10 +113,15 @@ test('[게이트 B] firestore.rules에 atLeast(등급) 리터럴이 없다', () 
   );
 });
 
-test('[게이트 B] Firestore 집행 키의 caps를 규칙이 실제로 읽는다', () => {
+test('[게이트 B] 실제 부여된 Firestore 권한을 규칙이 집행한다', () => {
   const src = stripComments(firestoreRules);
+  const principals = [
+    ...FIXED_ROLES.map(role => ({ enabled: true, role, isAdmin: false })),
+    { enabled: true, role: '', isAdmin: true },
+  ];
   const missing = PERM_KEYS
     .filter(k => PERM_CATALOG[k].enforcement.includes(ENFORCE.FIRESTORE))
+    .filter(k => principals.some(user => fixedCan(user, k)))
     .filter(k => !src.includes(capName(k)));
   assert.deepEqual(
     missing.map(k => `${k} → caps.${capName(k)}`), [],

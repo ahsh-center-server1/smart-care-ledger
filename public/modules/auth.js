@@ -10,7 +10,7 @@ import { COLS } from '../constants.js';
 import { fb, fdb } from '../services/firestore.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fetchBaseData, changeView } from './core.js';
-import { initPermissions, can } from './permissions.js';
+import { initPermissions, can, hasLoadedIdentity } from './permissions.js';
 import { clearAuditCache } from './settings-audit.js';
 import { refreshReceiptIntakeButtons } from './receipt-intake.js';
 import { fnErrorMessage } from '../services/fn-errors.js';
@@ -95,7 +95,7 @@ function applyPermissionVisibility() {
   document.querySelectorAll('.nav-item[data-view="report"],.mobile-nav-item[data-view="report"]')
     .forEach(el => { el.style.display = can('nav.report') ? '' : 'none'; });
   document.querySelectorAll('.nav-item[data-view="settings"],.mobile-nav-item[data-view="settings"]')
-    .forEach(el => { el.style.display = can('nav.settings') ? '' : 'none'; });
+    .forEach(el => { el.style.display = hasLoadedIdentity() ? '' : 'none'; });
 
   show('btn-h-excel',         can('excel.upload'));
   show('btn-h-receipt-print', can('receipt.print'));
@@ -138,6 +138,7 @@ function clearSessionState() {
   S.confirmedMonths=new Set();
   S.reportList=null; S.rptTrxCache=null; S.rptListAllYears=false;
   S.permOverride=null; S.caps=null; S.accessibleClientIds=[];
+  S.authz=null; S.authzStatus='idle'; S.leaderClientIds=[]; S.settingsGuideOnly=false;
   S.monthlyStats={}; S.mandatoryUnpaid={};
   S.fixedItems=[]; S.allFixedItems=[];
   S.excelTemp=[]; S.excelRawRows=[]; S.excelFile=null; S.excelMonth='';
@@ -217,7 +218,7 @@ export function watchAuthState(onReady) {
       S.user = {
         userId: fbUser.uid,
         name: u.name || fbUser.uid,
-        role: u.role || '입력자',
+        role: u.role ?? '',
         isAdmin: u.isAdmin === true,
         team: u.team || '',
       };

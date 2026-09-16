@@ -11,10 +11,14 @@ import { actorContext } from '../public/modules/report.js';
 // 화면 쪽 판정은 permissions.js 의 can 이고, 아래 as() 가 S.user 로 그것을 움직인다.
 import { can } from '../public/modules/permissions.js';
 
-const as = (role, isAdmin = false) => { S.user = { userId: 'u1', name: '홍길동', role, isAdmin }; };
+const as = (role, isAdmin = false) => {
+  S.user = { userId: 'u1', name: '홍길동', role, isAdmin };
+  S.authz = { uid: 'u1', role, isAdmin, enabled: true };
+  S.authzStatus = 'ready';
+};
 const CTX = { can, userId: 'u1', userName: '홍길동', now: '2026-09-04T00:00:00.000Z' };
 
-test.afterEach(() => { S.user = null; S.permOverride = null; });
+test.afterEach(() => { S.user = null; S.authz = null; S.authzStatus = 'idle'; S.permOverride = null; });
 
 // ─────────────────────────────────────────────
 // 전이표 자체의 성질
@@ -34,10 +38,10 @@ test('모든 상태에서 빠져나갈 길이 있다 (막다른 상태 금지)',
   }
 });
 
-test('rejected에는 담당자 경로와 관리 경로가 둘 다 있다', () => {
+test('rejected는 작성·제출 절차로만 다시 진행한다', () => {
   const r = TRANSITIONS.rejected;
   assert.equal(r.submit, 'submitted', '담당자 재제출 경로가 없습니다');
-  assert.equal(r.release, 'draft', '담당자 부재 시 해제 경로가 없습니다');
+  assert.equal(r.release, undefined);
 });
 
 test('confirmed에서 앞으로 더 갈 수 없다', () => {
@@ -113,22 +117,18 @@ test('배정 팀장이 아니면 팀장 결재를 할 수 없다', () => {
   assert.equal(planTransition('approveTeam', 'submitted', { ...CTX, isAssignedLeader: true }).ok, true);
 });
 
-test('배정 팀장이 센터장·관리자여도 팀장 결재 버튼이 나온다', () => {
-  // 예전에는 role==='팀장'으로 묶여 있어 배정 팀장이 센터장이면
-  // 결재 버튼이 아예 나오지 않아 보고서가 멈췄다.
+test('센터장·관리자는 팀장 권한을 상속하지 않는다', () => {
   as('센터장');
-  assert.equal(planTransition('approveTeam', 'submitted', { ...CTX, isAssignedLeader: true }).ok, true);
+  assert.equal(planTransition('approveTeam', 'submitted', { ...CTX, isAssignedLeader: true }).ok, false);
   as('입력자', true);
-  assert.equal(planTransition('approveTeam', 'submitted', { ...CTX, isAssignedLeader: true }).ok, true);
+  assert.equal(planTransition('approveTeam', 'submitted', { ...CTX, isAssignedLeader: true }).ok, false);
 });
 
-test('팀장이 있으면 센터장이 팀장 단계를 대행할 수 없다', () => {
-  // 모바일 앱은 센터장이면 무조건 팀장 결재를 할 수 있어서 순서 강제가 무력화됐다.
+test('공석이어도 정식 대행 지정 없이는 팀장 단계를 대행할 수 없다', () => {
   as('센터장');
   const busy = planTransition('approveTeamProxy', 'submitted', { ...CTX, leaderVacant: false });
   assert.equal(busy.ok, false);
-  assert.match(busy.reason, /팀장이 있어/);
-  assert.equal(planTransition('approveTeamProxy', 'submitted', { ...CTX, leaderVacant: true }).ok, true);
+  assert.equal(planTransition('approveTeamProxy', 'submitted', { ...CTX, leaderVacant: true }).ok, false);
 });
 
 test('팀장은 대행 결재를 할 수 없다 (센터장 이상 전용)', () => {
@@ -166,11 +166,11 @@ test('반려는 지금 결재할 차례인 사람만 할 수 있다', () => {
     '센터장은 팀장 공석 대행 경로에서 반려할 수 있어야 합니다');
 });
 
-test('반려 해제는 팀장 이상만', () => {
+test('반려 해제 우회 동작은 폐기한다', () => {
   as('담당자');
   assert.equal(planTransition('release', 'rejected', CTX).ok, false);
   as('팀장');
-  assert.equal(planTransition('release', 'rejected', CTX).ok, true);
+  assert.equal(planTransition('release', 'rejected', CTX).ok, false);
 });
 
 // ─────────────────────────────────────────────
@@ -257,19 +257,23 @@ test('어떤 전이든 도착 상태보다 뒤 단계의 도장은 남지 않는
   }
 });
 
-test('대행 결재는 결재란에 대행 표시를 남긴다', () => {
+test('정식 대행 지정 없는 대행 결재는 거부한다', () => {
   as('센터장');
   const r = planTransition('approveTeamProxy', 'submitted', { ...CTX, leaderVacant: true });
-  assert.match(r.set.teamApprovedByName, /대행/);
+  assert.equal(r.ok, false);
 });
 
-test('팀장 직접 제출은 제출·팀장결재 도장을 한 번에 찍는다', () => {
+test('팀장 직접 제출로 자기 결재를 건너뛰지 못한다', () => {
   as('팀장');
   const r = planTransition('submitAsLeader', 'draft', { ...CTX, isAssignedLeader: true });
-  assert.equal(r.next, 'team_approved');
-  assert.equal(r.set.submittedBy, 'u1');
-  assert.equal(r.set.teamApprovedBy, 'u1');
-  assert.ok(!/대행/.test(r.set.teamApprovedByName), '직접 제출인데 대행으로 표시됩니다');
+  assert.equal(r.ok, false);
+});
+
+test('작성자는 팀장·센터장 역할이 있어도 자기 보고서를 결재하지 못한다', () => {
+  as('팀장');
+  assert.equal(planTransition('approveTeam', 'submitted', { ...CTX, isAssignedLeader: true, isAuthor: true }).ok, false);
+  as('센터장');
+  assert.equal(planTransition('approveCenter', 'team_approved', { ...CTX, isAuthor: true }).ok, false);
 });
 
 // ─────────────────────────────────────────────

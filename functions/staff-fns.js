@@ -39,22 +39,12 @@ module.exports = function staffFns(ctx) {
   const {
     db, callable, requireCaller, rankOf, HttpsError, logger, FieldValue,
     hashPassword, validUserId, VALID_ROLES, USERS, SECRETS,
-    currentOverride, authzWriteFor,
+    currentOverride, authzWriteFor, randomId,
   } = ctx;
 
-  const CLIENTS = 'clients';
   const AUTHZ = 'authz';
-  const MEMBERS = 'members';
-
-
-  /**
-   * 삭제 한 건이 만들 수 있는 쓰기 수 상한.
-   *
-   * 트랜잭션 한도(500)보다 낮게 잡는다. 유령 멤버 문서가 이만큼 쌓였다면
-   * 투영본이 심하게 어긋난 것이고, 그때는 조용히 절반만 지우는 것보다
-   * 멈추고 백필을 돌리라고 말하는 편이 낫다.
-   */
-  const MAX_DELETE_WRITES = 400;
+  const PRIVILEGE_REQUESTS = 'staffPrivilegeRequests';
+  const { fixedCan } = require('./fixed-role-policy.cjs');
 
   /**
    * 직원 관리 권한. 등급 리터럴이 아니라 카탈로그 키로 판정한다 —
@@ -102,7 +92,12 @@ module.exports = function staffFns(ctx) {
   // ───────────────────────────────────────────────────────────
   const approveStaff = callable('approveStaff', async (request) => {
     const auth = request.auth;
-    const me = await requireStaffAdmin(auth, '직원 승인');
+    const me = await requireCaller(auth);
+    const canApprove = me.can('staff.role.approve');
+    const canExecute = me.can('settings.staff');
+    if (!canApprove && !canExecute) {
+      throw new HttpsError('permission-denied', '직원 역할 승인 또는 실행 권한이 없습니다.');
+    }
 
     const d = request.data || {};
     const targetId = String(d.userId || '').trim();
@@ -112,28 +107,103 @@ module.exports = function staffFns(ctx) {
     if (!validUserId(targetId)) throw new HttpsError('invalid-argument', '대상 아이디가 올바르지 않습니다.');
     if (!VALID_ROLES.includes(role)) throw new HttpsError('invalid-argument', '역할이 올바르지 않습니다.');
 
-    // 자기 등급을 넘는 역할은 부여 불가. 관리자 플래그는 관리자만 줄 수 있다.
-    if (rankOf(role) > me.rank) {
-      throw new HttpsError('permission-denied', '본인보다 높은 등급은 부여할 수 없습니다.');
-    }
-    if (isAdmin && !me.isAdmin) {
-      throw new HttpsError('permission-denied', '관리자 권한은 관리자만 부여할 수 있습니다.');
-    }
-
-    // 등급표는 트랜잭션 **밖에서** 읽는다 — config 문서를 잠그면 직원 변경이
-    // 서로 직렬화되고, 트랜잭션의 "읽기가 쓰기보다 먼저" 규칙도 지키기 어렵다.
     const override = await currentOverride();
     const ref = db.collection(USERS).doc(targetId);
-    const patch = { approved: true, role, isAdmin, active: true };
+    const nextRequestId = randomId();
 
-    await db.runTransaction(async (tx) => {
+    const result = await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists) throw new HttpsError('not-found', '해당 직원을 찾을 수 없습니다.');
-      tx.update(ref, patch);
-      writeAuthz(tx, targetId, { ...(snap.data() || {}), ...patch }, override);
+      const currentChange = (snap.data() || {}).privilegeChange || {};
+      const requestId = String(currentChange.requestId || nextRequestId);
+      const requestRef = db.collection(PRIVILEGE_REQUESTS).doc(requestId);
+      const actorSnap = await tx.get(db.collection(AUTHZ).doc(me.uid));
+      const pendingSnap = await tx.get(requestRef);
+      const actor = actorSnap.exists ? actorSnap.data() || {} : {};
+      const approverNow = fixedCan(actor, 'staff.role.approve');
+      const executorNow = fixedCan(actor, 'settings.staff');
+      const pending = pendingSnap.exists ? pendingSnap.data() || {} : null;
+      const sameChange = pending && pending.role === role && pending.isAdmin === isAdmin;
+
+      if (pending && pending.state === 'pending' && sameChange && approverNow) {
+        if (pending.requestedBy === me.uid || targetId === me.uid) {
+          throw new HttpsError('failed-precondition', '본인이 요청했거나 본인에게 적용되는 역할 변경은 승인할 수 없습니다.');
+        }
+        tx.update(requestRef, {
+          state: 'approved', approvedBy: me.uid, approvedAt: FieldValue.serverTimestamp(),
+        });
+        tx.update(ref, {
+          privilegeChange: {
+            requestId, role, isAdmin, state: 'approved', requestedBy: pending.requestedBy,
+            approvedBy: me.uid,
+          },
+        });
+        return { state: 'approved', waitingFor: 'executor' };
+      }
+
+      if (pending && pending.state === 'approved' && sameChange && executorNow) {
+        if (!pending.approvedBy || pending.approvedBy === me.uid) {
+          throw new HttpsError('failed-precondition', '승인자와 실행자는 서로 달라야 합니다. 다른 실행자를 기다립니다.');
+        }
+        const patch = {
+          approved: true, role, isAdmin, active: true,
+          privilegeChange: FieldValue.delete(),
+        };
+        tx.update(ref, patch);
+        writeAuthz(tx, targetId, { ...(snap.data() || {}), ...patch }, override);
+        tx.update(requestRef, {
+          state: 'executed', executedBy: me.uid, executedAt: FieldValue.serverTimestamp(),
+        });
+        return { state: 'executed', waitingFor: null };
+      }
+
+      if (!executorNow) {
+        throw new HttpsError('failed-precondition', '시스템 관리자가 먼저 역할 변경을 요청해야 합니다.');
+      }
+      tx.set(requestRef, {
+        requestId, targetId, role, isAdmin, state: 'pending', requestedBy: me.uid,
+        requestedAt: FieldValue.serverTimestamp(), approvedBy: null, executedBy: null,
+      });
+      tx.update(ref, {
+        privilegeChange: { requestId, role, isAdmin, state: 'pending', requestedBy: me.uid },
+      });
+      return { state: 'pending', waitingFor: 'approver' };
     });
 
-    return { ok: true };
+    return { ok: result.state === 'executed', ...result };
+  });
+
+  const cancelStaffPrivilegeChange = callable('cancelStaffPrivilegeChange', async (request) => {
+    const auth = request.auth;
+    const me = await requireCaller(auth);
+    if (!me.can('staff.role.approve') && !me.can('settings.staff')) {
+      throw new HttpsError('permission-denied', '역할 변경 취소 권한이 없습니다.');
+    }
+    const targetId = String((request.data || {}).userId || '').trim();
+    if (!validUserId(targetId)) throw new HttpsError('invalid-argument', '대상 아이디가 올바르지 않습니다.');
+    const userRef = db.collection(USERS).doc(targetId);
+
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) throw new HttpsError('not-found', '해당 직원을 찾을 수 없습니다.');
+      const change = (userSnap.data() || {}).privilegeChange || {};
+      if (!change.requestId) throw new HttpsError('failed-precondition', '취소할 역할 변경이 없습니다.');
+      const requestRef = db.collection(PRIVILEGE_REQUESTS).doc(String(change.requestId));
+      const requestSnap = await tx.get(requestRef);
+      const actorSnap = await tx.get(db.collection(AUTHZ).doc(me.uid));
+      const actor = actorSnap.exists ? actorSnap.data() || {} : {};
+      const pending = requestSnap.exists ? requestSnap.data() || {} : {};
+      const stillAllowed = fixedCan(actor, 'staff.role.approve') || fixedCan(actor, 'settings.staff');
+      const participated = pending.requestedBy === me.uid || pending.approvedBy === me.uid;
+      if (!stillAllowed || !participated || !['pending', 'approved'].includes(pending.state)) {
+        throw new HttpsError('permission-denied', '본인이 요청하거나 승인한 대기 작업만 취소할 수 있습니다.');
+      }
+      tx.update(requestRef, {
+        state: 'cancelled', cancelledBy: me.uid, cancelledAt: FieldValue.serverTimestamp(),
+      });
+      tx.update(userRef, { privilegeChange: FieldValue.delete() });
+    });
+    return { ok: true, state: 'cancelled' };
   });
 
   // ───────────────────────────────────────────────────────────
@@ -209,12 +279,25 @@ module.exports = function staffFns(ctx) {
 
           // 신규 등록은 비밀번호가 반드시 필요하다 (없으면 로그인할 수 없다)
           if (created && !record) throw new Rejected('신규 등록에는 비밀번호가 필요합니다.');
+          if (!created && record) {
+            throw new Rejected('기존 직원의 비밀번호는 직원 정보 화면에서 변경할 수 없습니다.');
+          }
 
           // merge — approved·active 등 기존 필드를 보존한다
+          const old = existing.data() || {};
+          if (!created && old.active === false
+              && (name !== String(old.name || '') || team !== String(old.team || ''))) {
+            throw new Rejected(
+              '퇴사 계정의 신원 정보는 바꿀 수 없습니다. UID를 다른 사람에게 재사용하지 마세요.',
+            );
+          }
+          if (!created && (role !== String(old.role || '') || wantAdmin !== (old.isAdmin === true))) {
+            throw new Rejected('역할·관리자 자격 변경은 별도 승인 절차를 이용하세요.');
+          }
           const patch = {
-            userId, name, role, team,
-            isAdmin: wantAdmin,
-            ...(created ? { approved: true, active: true } : {}),
+            userId, name, role: created ? '입력자' : old.role, team,
+            isAdmin: created ? false : old.isAdmin === true,
+            ...(created ? { approved: false, active: true } : {}),
             updatedAt: FieldValue.serverTimestamp(),
           };
           tx.set(userRef, patch, { merge: true });
@@ -260,6 +343,9 @@ module.exports = function staffFns(ctx) {
     if (userId === auth.uid && !active) {
       throw new HttpsError('failed-precondition', '본인 계정은 비활성화할 수 없습니다.');
     }
+    if (active && d.confirmAssignments !== true) {
+      throw new HttpsError('failed-precondition', '재활성화 전에 기존 담당 관계를 확인해야 합니다.');
+    }
 
     const override = await currentOverride();
     const ref = db.collection(USERS).doc(userId);
@@ -295,64 +381,13 @@ module.exports = function staffFns(ctx) {
   //   배정이 들어와 유령 참조가 남는다.
   // ───────────────────────────────────────────────────────────
   const deleteStaff = callable('deleteStaff', async (request) => {
-    const auth = request.auth;
-    await requireStaffAdmin(auth, '직원 관리');
+    await requireStaffAdmin(request.auth, '직원 관리');
 
-    const userId = String((request.data && request.data.userId) || '').trim();
-    if (!validUserId(userId)) throw new HttpsError('invalid-argument', '대상 아이디가 올바르지 않습니다.');
-    if (userId === auth.uid) {
-      throw new HttpsError('failed-precondition', '본인 계정은 삭제할 수 없습니다.');
-    }
-
-    const ref = db.collection(USERS).doc(userId);
-
-    const staleMembers = await db.runTransaction(async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists) throw new HttpsError('not-found', '해당 직원을 찾을 수 없습니다.');
-      await assertNotLastAdmin(tx, userId, snap.data() || {}, '삭제할');
-
-      // 담당 배정이 남아 있으면 거부한다.
-      const clients = await tx.get(db.collection(CLIENTS));
-      const assigned = clients.docs.filter((c) => {
-        const cd = c.data() || {};
-        const staff = String(cd.userIds || '').split(',').map((x) => x.trim());
-        return staff.includes(userId) || String(cd.teamLeader || '').trim() === userId;
-      });
-      if (assigned.length) {
-        const names = assigned.slice(0, 5).map((c) => (c.data().name || c.id));
-        throw new HttpsError(
-          'failed-precondition',
-          `담당으로 배정된 입주자가 있습니다 (${names.join(', ')}${assigned.length > 5 ? ' 외' : ''}). `
-          + '먼저 담당을 다른 직원에게 옮기세요.',
-        );
-      }
-
-      // 남은 멤버 문서. 위에서 담당이 없음을 확인했으므로 보통 비어 있지만,
-      // 투영본이 어긋나 있었다면 여기서 함께 정리된다.
-      const stale = await tx.get(db.collectionGroup(MEMBERS).where('uid', '==', userId));
-      if (stale.size + 3 > MAX_DELETE_WRITES) {
-        throw new HttpsError(
-          'failed-precondition',
-          '정리할 권한 문서가 너무 많습니다. 권한 백필을 먼저 실행하세요.',
-        );
-      }
-
-      // 여기서부터 쓰기. 접근 근거(authz)와 명부(users)와 비밀번호가 한꺼번에
-      // 사라진다 — 셋 중 하나만 남는 상태가 없다.
-      tx.delete(db.collection(AUTHZ).doc(userId));
-      tx.delete(ref);
-      tx.delete(db.collection(SECRETS).doc(userId));
-      for (const m of stale.docs) tx.delete(m.ref);
-
-      return stale.size;
-    });
-
-    logger.info('[deleteStaff] 완료', { userId, staleMembers });
-    return { ok: true, staleMembers };
+    throw new HttpsError(
+      'failed-precondition',
+      '직원 계정은 삭제하지 않습니다. UID와 이력을 보존한 채 퇴사(비활성) 처리하세요.',
+    );
   });
 
-  return { approveStaff, upsertStaff, setStaffActive, deleteStaff };
+  return { approveStaff, cancelStaffPrivilegeChange, upsertStaff, setStaffActive, deleteStaff };
 };
-
-// 상수는 index.js 와 공유한다 — 컬렉션 이름이 갈라지면 조용히 다른 곳을 쓴다.
-module.exports.CLIENT_ACCESS_MEMBERS = 'members';

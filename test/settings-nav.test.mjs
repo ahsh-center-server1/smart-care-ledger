@@ -13,7 +13,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   SETTINGS_TABS, SETTINGS_GROUPS, SETTINGS_TAB_BY_KEY, isKnownSettingsTab,
+  visibleSettingsTabs, initialSettingsTab,
 } from '../public/modules/settings-nav.js';
+import { S } from '../public/state.js';
 import { DEFAULT_MIN_RANK, PERM_SECTIONS } from '../public/modules/permissions.js';
 
 const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
@@ -97,21 +99,29 @@ test('개요가 첫 탭이다 — 설정을 열면 무엇을 손봐야 하는지
   assert.equal(SETTINGS_TAB_BY_KEY.overview.perm, undefined);
 });
 
-test('되돌릴 수 없는 작업은 관리자 전용이며 정상 업무와 다른 탭에 있다', () => {
-  // 연도 마감(정상적인 연간 업무)과 전체 초기화가 같은 화면에 있으면
-  // 실수로 누를 수 있다. 실제로 그런 배치였다.
-  assert.equal(SETTINGS_TAB_BY_KEY.danger.perm, 'settings.reset');
-  assert.notEqual(SETTINGS_TAB_BY_KEY.danger.key, SETTINGS_TAB_BY_KEY.archive.key);
-  assert.ok(html.includes('id="danger-tab-content"'));
-  // 초기화 버튼이 마감 탭에 남아 있지 않은지 확인한다.
-  const archiveStart = html.indexOf('id="archive-tab-content"');
-  const dangerStart = html.indexOf('id="danger-tab-content"');
-  const resetBtn = html.indexOf('id="btn-firebase-reset"');
-  assert.ok(resetBtn > -1, '초기화 버튼을 찾을 수 없습니다');
-  assert.ok(
-    Math.abs(resetBtn - dangerStart) < Math.abs(resetBtn - archiveStart),
-    '초기화 버튼이 마감 탭 쪽에 있습니다',
-  );
+test('전체 초기화는 일반 설정 탐색과 HTML에서 제거된다', () => {
+  assert.equal(SETTINGS_TAB_BY_KEY.danger, undefined);
+  assert.ok(!html.includes('id="danger-tab-content"'));
+  assert.ok(!html.includes('id="btn-firebase-reset"'));
+  assert.ok(SETTINGS_TAB_BY_KEY.archive);
+});
+
+test('내 역할 안내는 권한표 편집 권한을 요구하지 않는다', () => {
+  assert.equal(SETTINGS_TAB_BY_KEY.permissions.label, '내 역할 안내');
+  assert.equal(SETTINGS_TAB_BY_KEY.permissions.perm, undefined);
+});
+
+test('설정 권한 없는 입력자와 모바일 안내 모드는 역할 안내만 연다', () => {
+  const saved = { user: S.user, authz: S.authz, authzStatus: S.authzStatus, settingsGuideOnly: S.settingsGuideOnly };
+  try {
+    Object.assign(S, { user: { userId: 'viewer' }, authz: { uid: 'viewer', role: '입력자', enabled: true }, authzStatus: 'ready', settingsGuideOnly: false });
+    assert.deepEqual(visibleSettingsTabs().map(tab => tab.key), ['permissions']);
+    assert.equal(initialSettingsTab('list'), 'permissions');
+    S.authz = { uid: 'viewer', role: '센터장', enabled: true };
+    S.settingsGuideOnly = true;
+    assert.deepEqual(visibleSettingsTabs().map(tab => tab.key), ['permissions']);
+    assert.equal(initialSettingsTab('archive'), 'permissions');
+  } finally { Object.assign(S, saved); }
 });
 
 test('가로 탭 버튼 잔재가 남아 있지 않다', () => {

@@ -38,6 +38,7 @@ function build(seed = {}, objects = {}) {
     'authz/입력자': authz('입력자', '입력자', [MY]),
     'authz/담당자': authz('담당자', '담당자', [MY]),
     'authz/팀장': authz('팀장', '팀장', [MY]),
+    'accounts/a1': { clientId: MY, label: '생활비' },
     ...seed,
   });
   const bucket = makeBucket();
@@ -143,10 +144,29 @@ test('본인이 입력한 거래에 증빙을 붙인다', async () => {
   assert.equal(trx.receiptPath, jobs.finalPath(MY, 'up000001'));
   assert.equal(trx.receiptMissing, false);
   assert.ok(trx.receiptGeneration, 'generation 을 기록하지 않았습니다');
-  assert.match(trx.receiptUrl, /firebasestorage\.googleapis\.com/);
+  assert.equal(trx.receiptUrl, undefined, '권한을 우회하는 영구 다운로드 URL을 저장했습니다');
   // 스테이징은 치웠다
   assert.equal(bucket.objects.has(jobs.stagingPath('담당자', 'up000001')), false);
   assert.equal(db.docs.get(jobs.jobPath('담당자', 'up000001')).state, jobs.STATES.COMPLETED);
+});
+
+test('증빙 열람 URL은 현재 담당 범위를 확인한 뒤 짧게 발급한다', async () => {
+  const path = jobs.finalPath(MY, 'up000001');
+  const { db, bucket, fns } = build({
+    'authz/입력자': authz('입력자', '입력자', []),
+    'transactions/t1': {
+      clientId: MY, receiptPath: path, receiptGeneration: '1001',
+    },
+  }, { [path]: 'receipt' });
+  db.docs.get('transactions/t1').receiptGeneration = bucket.objects.get(path).generation;
+
+  const out = await fns.getReceiptAccessUrl({ ...as('담당자'), data: { trxId: 't1' } });
+  assert.match(out.url, /^https:\/\/signed\.example\//);
+  assert.equal(out.expiresInSeconds, 300);
+  await assert.rejects(
+    () => fns.getReceiptAccessUrl({ ...as('입력자'), data: { trxId: 't1' } }),
+    (e) => e.code === 'permission-denied',
+  );
 });
 
 test('입력자는 남이 입력한 거래에 붙일 수 없다', async () => {
@@ -250,6 +270,34 @@ test('거래가 없으면 초안으로 새로 만든다', async () => {
   assert.equal(trx.receiptMissing, false);
 });
 
+test('다른 입주자의 계좌로는 영수증 거래를 만들 수 없다', async () => {
+  const { db, bucket, fns } = build({ 'accounts/a9': { clientId: OTHER } });
+  staged(db, bucket, '담당자', 'up000001');
+  const out = await fns.finalizeReceipts({
+    ...as('담당자'), data: { items: [{ uploadId: 'up000001', draft: {
+      date: '2026-09-01', amount: 12000, accountId: 'a9',
+    } }] },
+  });
+  assert.equal(out.okCount, 0);
+  assert.match(out.results[0].error, /해당 입주자 소속/);
+  assert.equal([...db.docs.keys()].some(k=>k.startsWith('transactions/')), false);
+});
+
+test('비활성 계좌로는 영수증 거래를 만들 수 없다', async () => {
+  const { db, bucket, fns } = build({
+    'accounts/a1': { clientId: MY, label: '종료 계좌', active: false },
+  });
+  staged(db, bucket, '담당자', 'up000001');
+  const out = await fns.finalizeReceipts({
+    ...as('담당자'), data: { items: [{
+      uploadId: 'up000001',
+      draft: { accountId: 'a1', date: '2026-09-01', amount: 1000 },
+    }] },
+  });
+  assert.equal(out.okCount, 0);
+  assert.match(out.results[0].error, /계좌/);
+});
+
 test('날짜·금액이 이상하면 만들지 않는다', async () => {
   for (const draft of [{ date: '', amount: 1 }, { date: '2026-09-01', amount: 0 }, { date: '어제', amount: 5 }]) {
     const { db, bucket, fns } = build();
@@ -274,7 +322,6 @@ test('최종 객체가 이미 있으면 출처 metadata가 일치할 때만 이�
   staged(db, bucket, '담당자', 'up000001');
   const job = db.docs.get(jobs.jobPath('담당자', 'up000001'));
   bucket.objects.get(finalP).metadata = {
-    firebaseStorageDownloadTokens: 'existing-token',
     uploadId: 'up000001',
     jobId: jobs.jobPath('담당자', 'up000001'),
     sourceGeneration: job.sourceGeneration,
@@ -297,7 +344,7 @@ test('412 목적지의 출처 metadata가 다르면 충돌로 중단한다', asy
   }, { [finalP]: '다른 업로드' });
   staged(db, bucket, '담당자', 'up000001');
   bucket.objects.get(finalP).metadata = {
-    firebaseStorageDownloadTokens: 'other-token', uploadId: 'different',
+    uploadId: 'different',
     jobId: 'receiptJobs/other/items/different', sourceGeneration: '999',
   };
 
@@ -327,7 +374,7 @@ test('교체는 예상 경로와 generation이 모두 일치해야 한다', asyn
   assert.equal(db.docs.get('transactions/t1').receiptGeneration, '7');
 });
 
-test('이미 최종화된 업로드는 다시 처리하지 않는다', async () => {
+test('이미 최종화된 업로드는 같은 결과를 돌려주고 거래를 중복 생성하지 않는다', async () => {
   const { db, bucket, fns } = build({
     'transactions/t1': { clientId: MY, date: '2026-09-01', createdBy: '담당자' },
   });
@@ -338,8 +385,33 @@ test('이미 최종화된 업로드는 다시 처리하지 않는다', async () 
     ...as('담당자'), data: { items: [{ uploadId: 'up000001', trxId: 't1' }] },
   });
 
-  assert.equal(again.okCount, 0);
-  assert.match(again.results[0].error, /이미 처리 중이거나 완료/);
+  assert.equal(again.okCount, 1);
+  assert.equal(again.results[0].replayed, true);
+  assert.equal(again.results[0].trxId, 't1');
+});
+
+test('첨부 성공 뒤 staging 정리 기록이 실패해도 성공을 반환하고 재호출은 같은 결과를 준다', async () => {
+  const { db, bucket, fns } = build({
+    'transactions/t1': { clientId: MY, date: '2026-09-01', createdBy: '담당자' },
+  });
+  staged(db, bucket, '담당자', 'up000001');
+  const jp = jobs.jobPath('담당자', 'up000001');
+  db.failWrite = (path, op) => path === jp && op.op === 'update'
+    && op.data.state === jobs.STATES.CLEANUP_PENDING;
+
+  const first = await fns.finalizeReceipts({
+    ...as('담당자'), data: { items: [{ uploadId: 'up000001', trxId: 't1' }] },
+  });
+  assert.equal(first.okCount, 1);
+  assert.equal(db.docs.get(jp).state, jobs.STATES.ATTACHED);
+
+  db.failWrite = null;
+  const second = await fns.finalizeReceipts({
+    ...as('담당자'), data: { items: [{ uploadId: 'up000001', trxId: 't1' }] },
+  });
+  assert.equal(second.okCount, 1);
+  assert.equal(second.results[0].replayed, true);
+  assert.equal(second.results[0].trxId, 't1');
 });
 
 test('lease 가 만료된 finalizing 은 다시 집을 수 있다', async () => {
@@ -496,6 +568,22 @@ test('만료된 미첨부 job은 검증된 final → staging → job 순서로 �
   assert.equal(bucket.objects.has(final), false);
   assert.equal(bucket.objects.has(jobs.stagingPath('담당자', 'up000001')), false);
   assert.equal(db.docs.has(jp), false);
+});
+
+test('최종화 lease가 살아 있으면 TTL 정리가 선점하지 않는다', async () => {
+  const { db, bucket, fns } = build();
+  staged(db, bucket, '담당자', 'up000001', MY, jobs.STATES.FINALIZING);
+  const jp = jobs.jobPath('담당자', 'up000001');
+  db.docs.set(jp, {
+    ...db.docs.get(jp),
+    leaseToken: 'worker',
+    leaseUntil: new Date(Date.now() + 60_000),
+    expireAt: new Date(Date.now() - 1),
+  });
+
+  await fns.cleanupReceiptJobs();
+  assert.equal(db.docs.has(jp), true);
+  assert.equal(bucket.objects.has(jobs.stagingPath('담당자', 'up000001')), true);
 });
 
 test('job TTL 정리는 거래에 첨부된 최종 영수증을 삭제하지 않는다', async () => {

@@ -22,12 +22,16 @@ export const DELETE_FIELD = Symbol('deleteField');
 
 /** 증가 센티넬. 이전 값에 더한다 — 나눠 도는 작업의 진행 수를 세는 데 쓴다. */
 class Increment { constructor(by) { this.by = by; } }
+class ArrayUnion { constructor(values) { this.values = values; } }
+class ArrayRemove { constructor(values) { this.values = values; } }
 
 /** admin SDK 의 FieldValue 자리. 값은 센티넬이고 _apply 가 해석한다. */
 export const FieldValue = {
   serverTimestamp: () => SERVER_TIMESTAMP,
   delete: () => DELETE_FIELD,
   increment: (n) => new Increment(n),
+  arrayUnion: (...values) => new ArrayUnion(values),
+  arrayRemove: (...values) => new ArrayRemove(values),
 };
 
 const isDoc = (path) => path.split('/').length % 2 === 0;
@@ -131,6 +135,7 @@ class FakeDb {
   _newId() { this._autoId += 1; return `auto${String(this._autoId).padStart(4, '0')}`; }
 
   collection(path) { return new CollectionRef(this, path); }
+  async getAll(...refs) { return refs.map(ref => this._snapshot(ref.path)); }
   /** `db.doc('a/b/c/d')` — 문서 경로를 통째로 받는 형태. */
   doc(path) {
     if (isDoc(path)) return new DocRef(this, path);
@@ -214,6 +219,8 @@ function applyIncrements(prev, doc) {
   const out = { ...doc };
   for (const [k, v] of Object.entries(doc)) {
     if (v instanceof Increment) out[k] = Number((prev || {})[k] || 0) + v.by;
+    if (v instanceof ArrayUnion) out[k] = [...new Set([...((prev || {})[k] || []), ...v.values])];
+    if (v instanceof ArrayRemove) out[k] = [...((prev || {})[k] || [])].filter(x => !v.values.includes(x));
   }
   return out;
 }
@@ -295,6 +302,11 @@ class FakeFile {
     const o = this.bucket.objects.get(this.name);
     if (!o) { const e = new Error('없습니다'); e.code = 404; throw e; }
     return [Buffer.isBuffer(o.data) ? o.data : Buffer.from(String(o.data))];
+  }
+
+  async getSignedUrl() {
+    if (!this.bucket.objects.has(this.name)) { const e = new Error('없습니다'); e.code = 404; throw e; }
+    return [`https://signed.example/${encodeURIComponent(this.name)}`];
   }
 
   /**

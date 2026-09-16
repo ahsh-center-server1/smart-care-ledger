@@ -22,6 +22,7 @@ const {
 const summarize = (plan) => ({
   members: plan.memberOps.map(o => `${o.uid}:${o.op}${o.op === 'set' ? `(staff=${o.isStaff},leader=${o.isLeader})` : ''}`).sort(),
   access: plan.accessOps.map(o => `${o.uid}:${o.op}`).sort(),
+  leaders: plan.leaderOps.map(o => `${o.uid}:${o.op}`).sort(),
   writes: plan.writeCount,
 });
 
@@ -84,7 +85,7 @@ test('담당자를 추가하면 멤버 생성 + 접근 부여', () => {
   const p = plan({ staff: [], leader: '' }, { staff: ['u1'], leader: '' });
   assert.deepEqual(summarize(p), {
     members: ['u1:set(staff=true,leader=false)'],
-    access: ['u1:add'],
+    access: ['u1:add'], leaders: [],
     writes: 3,   // clients 1 + 멤버 1 + 접근 1
   });
 });
@@ -93,19 +94,19 @@ test('담당자를 제거하면 멤버 삭제 + 접근 회수', () => {
   const p = plan({ staff: ['u1'], leader: '' }, { staff: [], leader: '' });
   assert.deepEqual(summarize(p), {
     members: ['u1:delete'],
-    access: ['u1:remove'],
+    access: ['u1:remove'], leaders: [],
     writes: 3,
   });
 });
 
 test('변경이 없으면 원본 쓰기 1건뿐', () => {
   const p = plan({ staff: ['u1', 'u2'], leader: 'u3' }, { staff: ['u1', 'u2'], leader: 'u3' });
-  assert.deepEqual(summarize(p), { members: [], access: [], writes: 1 });
+  assert.deepEqual(summarize(p), { members: [], access: [], leaders: [], writes: 1 });
 });
 
 test('순서만 다르면 변경이 아니다', () => {
   const p = plan({ staff: ['u1', 'u2'] }, { staff: ['u2', 'u1'] });
-  assert.deepEqual(summarize(p), { members: [], access: [], writes: 1 });
+  assert.deepEqual(summarize(p), { members: [], access: [], leaders: [], writes: 1 });
 });
 
 // ─────────────────────────────────────────────
@@ -121,7 +122,7 @@ test('담당자에서 빠져도 결재 책임자로 남으면 접근을 유지�
   );
   assert.deepEqual(summarize(p), {
     members: ['u1:set(staff=false,leader=true)'],
-    access: [],            // ← 접근은 그대로
+    access: [], leaders: [],            // ← 접근은 그대로
     writes: 2,
   });
 });
@@ -144,7 +145,8 @@ test('담당자이면서 결재 책임자일 수 있다', () => {
   assert.deepEqual(summarize(p), {
     members: ['u1:set(staff=true,leader=true)'],
     access: ['u1:add'],
-    writes: 3,
+    leaders: ['u1:add'],
+    writes: 4,
   });
 });
 
@@ -153,7 +155,8 @@ test('두 역할을 동시에 잃으면 접근을 회수한다', () => {
   assert.deepEqual(summarize(p), {
     members: ['u1:delete'],
     access: ['u1:remove'],
-    writes: 3,
+    leaders: ['u1:remove'],
+    writes: 4,
   });
 });
 
@@ -167,7 +170,7 @@ test('결재 책임자만 교체하면 이전 사람은 접근을 잃는다', ()
 test('결재 책임자를 공석으로 두면 접근을 잃는다', () => {
   const p = plan({ staff: [], leader: 'u1' }, { staff: [], leader: '' });
   assert.deepEqual(summarize(p), {
-    members: ['u1:delete'], access: ['u1:remove'], writes: 3,
+    members: ['u1:delete'], access: ['u1:remove'], leaders: ['u1:remove'], writes: 4,
   });
 });
 
@@ -175,7 +178,7 @@ test('결재 책임자를 공석으로 두면 접근을 잃는다', () => {
 // 쓰기 수
 // ─────────────────────────────────────────────
 
-test('쓰기 수는 원본 1 + 멤버 + 접근이다', () => {
+test('쓰기 수는 원본 1 + 멤버 + 접근 + 팀장 범위다', () => {
   const p = plan({ staff: [] }, { staff: ['u1', 'u2', 'u3'] });
   assert.equal(p.memberOps.length, 3);
   assert.equal(p.accessOps.length, 3);
@@ -186,7 +189,7 @@ test('역할만 바뀐 사람은 접근 쓰기를 만들지 않는다', () => {
   // `1 + 2 × 인원`은 상한이다. 실제로는 그보다 적을 수 있다.
   const p = plan({ staff: ['u1'], leader: 'u1' }, { staff: ['u1'], leader: '' });
   assert.equal(p.affectedUids.length, 1);
-  assert.equal(p.writeCount, 2);          // 1 + 2×1 = 3 이 아니다
+  assert.equal(p.writeCount, 3);          // 원본 + 멤버 + 팀장 범위 회수
 });
 
 test('중복 입력이 쓰기 수를 부풀리지 않는다', () => {
@@ -239,8 +242,8 @@ test('새 authz 문서의 담당 목록에서 중복을 없앤다', () => {
   assert.deepEqual(doc.accessibleClientIds, ['c1', 'c2']);
 });
 
-test('역할이 없으면 가장 낮은 등급으로 둔다', () => {
-  assert.equal(newAuthzDoc({ uid: 'u1' }).role, '입력자');
+test('역할이 없으면 업무 역할을 임의 부여하지 않는다', () => {
+  assert.equal(newAuthzDoc({ uid: 'u1' }).role, '');
   assert.equal(newAuthzDoc({ uid: 'u1' }).isAdmin, false);
 });
 

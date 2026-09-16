@@ -40,6 +40,10 @@ export const S = {
   // 권한 스냅샷(authz/{uid}.caps). 보안 규칙이 읽는 값과 같은 것이라,
   // can() 이 이것을 보면 화면과 집행이 어긋나지 않는다. 백필 전이면 null.
   caps: null,
+  authz: null,
+  authzStatus: 'idle',
+  settingsGuideOnly: false,
+  leaderClientIds: [],
   // 담당 입주자 id 목록(authz/{uid}.accessibleClientIds). 보안 규칙이 범위를
   // 이것으로 판정하므로 조회도 같은 목록으로 좁힌다.
   accessibleClientIds: [],

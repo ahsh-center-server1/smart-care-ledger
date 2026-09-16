@@ -37,11 +37,6 @@ module.exports = function transferFns(ctx) {
     return String((accSnap.data() || {}).clientId || '');
   }
 
-  async function lockedMonths() {
-    const snap = await db.collection(CONFIG).doc(LOCKED_MONTHS_DOC).get();
-    return (snap.exists ? (snap.data() || {}).months : null) || {};
-  }
-
   function assertOpenMonth(months, me, clientId, date) {
     if (me.can('lock.bypass')) return;
     if (months[`${clientId}_${String(date).slice(0, 7)}`] === true) {
@@ -72,7 +67,6 @@ module.exports = function transferFns(ctx) {
     }
     if (!amount) throw new HttpsError('invalid-argument', '금액이 올바르지 않습니다.');
 
-    const months = await lockedMonths();
     const base = {
       date,
       time: String(d.time || ''),
@@ -86,7 +80,11 @@ module.exports = function transferFns(ctx) {
       // ── 읽기 (트랜잭션은 모든 읽기가 모든 쓰기보다 앞서야 한다) ──
       const fromRef = db.collection(ACCOUNTS).doc(fromAccountId);
       const toRef = db.collection(ACCOUNTS).doc(toAccountId);
-      const [fromSnap, toSnap] = await Promise.all([tx.get(fromRef), tx.get(toRef)]);
+      const lockRef = db.collection(CONFIG).doc(LOCKED_MONTHS_DOC);
+      const [fromSnap, toSnap, lockSnap] = await Promise.all([
+        tx.get(fromRef), tx.get(toRef), tx.get(lockRef),
+      ]);
+      const months = (lockSnap.exists ? (lockSnap.data() || {}).months : null) || {};
       const fromClient = assertAccountOf(fromSnap, fromAccountId, '출금');
       const toClient = assertAccountOf(toSnap, toAccountId, '입금');
 

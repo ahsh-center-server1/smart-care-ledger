@@ -37,7 +37,7 @@ export function dayDiff(a, b) {
 /** 거래가 영수증을 받을 수 있는 상태인가. */
 function eligible(trx, draft) {
   // 이미 증빙이 붙어 있으면 후보가 아니다 — 덮어쓰면 원래 증빙이 사라진다.
-  if (trx.receiptUrl) return false;
+  if (trx.receiptUrl || trx.receiptPath) return false;
   // 취소 거래에는 영수증을 붙이지 않는다(잔액에도 무관하다).
   if (trx.type === '취소') return false;
   // 환불 영수증(음수)은 수입/환불 거래에, 일반 영수증은 지출에 붙는다.

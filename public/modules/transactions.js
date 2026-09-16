@@ -1,8 +1,3 @@
-/**
- * modules/transactions.js — Smart Care Ledger v2
- * 거래내역: 필터, 정렬, 테이블 렌더링, CRUD, 드래그 정렬
- */
-
 'use strict';
 
 import { S } from '../state.js';
@@ -15,6 +10,7 @@ import { deleteFromStorage } from '../services/storage.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
 import { openModal, getUnpaidMandatoryItems, openReceiptModal, openReceiptUpload } from './modals.js';
 import { can } from './permissions.js';
+import { hasReceipt, receiptAccessUrl } from '../services/receipt-access.js';
 
 // 필수 고정항목 미납 배너 렌더 (당월 기준)
 function renderTrxMandatoryBanner(){
@@ -115,7 +111,7 @@ export function applyFilters(opts) {
     return desc.includes(kw)
       &&(!sd||t.date>=sd)&&(!ed||t.date<=ed)
       &&(tf==='all'||t.type===tf)
-      &&(rf==='all'||(rf==='yes'?!!t.receiptUrl:!t.receiptUrl))
+      &&(rf==='all'||(rf==='yes'?hasReceipt(t):!hasReceipt(t)))
       &&(!af||t.accountId===af);   // ① 계좌 필터 조건
   });
   const key=S.sortKey, dir=S.sortDir;
@@ -203,8 +199,8 @@ export function renderHistoryTable() {
         (t.amountOut>0?'-'+t.amountOut.toLocaleString()+'원':'')
       }</td>
       <td data-label="증빙" style="text-align:center;">
-        ${t.receiptUrl
-          ?`<button class="icon-btn receipt-view" data-url="${t.receiptUrl}" title="증빙 보기">📎</button>`
+        ${hasReceipt(t)
+          ?`<button class="icon-btn receipt-view" data-id="${t.id}" title="증빙 보기">📎</button>`
           :`<span style="display:inline-flex;align-items:center;gap:3px;justify-content:center;">${
               can('receipt.upload')?`<button class="icon-btn receipt-add" data-id="${t.id}" title="증빙 추가" style="color:#94a3b8;">＋</button>`:''
             }${
@@ -237,7 +233,8 @@ export function renderHistoryTable() {
     tr.addEventListener('dragleave', ()=>tr.style.background='');
     tr.addEventListener('drop', e=>{e.preventDefault();tr.style.background='';const fromId=e.dataTransfer.getData('text/plain');if(fromId!==t.id)reorderTrx(fromId,t.id);});
     const rvBtn=tr.querySelector('.receipt-view');
-    if(rvBtn)rvBtn.addEventListener('click',()=>openReceiptModal(rvBtn.dataset.url,t.id));
+    if(rvBtn)rvBtn.addEventListener('click',async()=>{try{openReceiptModal(await receiptAccessUrl(t),t.id);}
+      catch(e){toast('증빙을 열지 못했습니다: '+(e.message||e),'error');}});
     const raBtn=tr.querySelector('.receipt-add');
     if(raBtn)raBtn.addEventListener('click',()=>openReceiptUpload(t.id));  // ★ 버그1 수정
     const rmBtn=tr.querySelector('.receipt-miss-toggle');
@@ -598,7 +595,7 @@ export function exportFilteredCSV(){
   const header=['날짜','시간','계좌','구분','분류','내용','수입','지출','증빙'];
   const rows=S.filteredTrx.map(t=>{
     const acc=S.accounts.find(a=>a.id===t.accountId)?.label||'';
-    return [t.date||'',t.time||'',acc,t.type||'',t.category||'',t.description||'',t.amountIn||0,t.amountOut||0,t.receiptUrl?'O':''].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',');
+    return [t.date||'',t.time||'',acc,t.type||'',t.category||'',t.description||'',t.amountIn||0,t.amountOut||0,hasReceipt(t)?'O':''].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',');
   });
   const csv='\uFEFF'+[header.join(','),...rows].join('\r\n');
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});

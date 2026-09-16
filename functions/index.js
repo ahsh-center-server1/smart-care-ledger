@@ -279,6 +279,7 @@ exports.backfillAuthz = authzFns.backfillAuthz;
 // 입주자 관리 — clients 원본과 두 투영본을 한 트랜잭션에서 쓴다.
 Object.assign(exports, require('./client-fns')({
   db, callable, HttpsError, logger, FieldValue,
+  randomId: () => randomBytes(16).toString('base64url'),
 }));
 
 // 권한 등급표 — 저장이 곧 집행이 되도록 config 와 전 사용자 caps 를 함께 쓴다.
@@ -324,10 +325,11 @@ Object.assign(exports, require('./staff-fns')({
   hashPassword, validUserId, VALID_ROLES, USERS, SECRETS,
   currentOverride: authzFns.currentOverride,
   authzWriteFor: authzFns.authzWriteFor,
+  randomId: () => randomBytes(16).toString('base64url'),
 }));
 
 // ─────────────────────────────────────────────────────────────
-// changePassword — 본인 또는 관리자가 변경
+// changePassword — 본인만 변경
 // ─────────────────────────────────────────────────────────────
 exports.changePassword = callable('changePassword', async (request) => {
   const auth = request.auth;
@@ -345,21 +347,17 @@ exports.changePassword = callable('changePassword', async (request) => {
 
   const isSelf = targetId === auth.uid;
   if (!isSelf) {
-    // 남의 비밀번호를 바꾸는 것은 직원 관리 행위다 — 그 권한으로 판정한다.
-    // 본인 변경은 authz 를 읽지 않는다: 백필 전이거나 권한이 없어도
-    // 자기 비밀번호는 바꿀 수 있어야 한다.
-    const me = await requireCaller(auth);
-    me.require('settings.staff', '다른 직원의 비밀번호 변경');
+    throw new HttpsError(
+      'permission-denied',
+      '다른 직원의 비밀번호는 변경할 수 없습니다. 본인이 재설정 절차를 진행해야 합니다.'
+    );
   }
 
   const secretRef = db.collection(SECRETS).doc(targetId);
 
-  // 본인 변경은 현재 비밀번호를 확인한다. 관리자 재설정은 생략.
-  if (isSelf) {
-    const snap = await secretRef.get();
-    if (!snap.exists || !(await verifyPassword(currentPassword, snap.data()))) {
-      throw new HttpsError('unauthenticated', '현재 비밀번호가 올바르지 않습니다.');
-    }
+  const snap = await secretRef.get();
+  if (!snap.exists || !(await verifyPassword(currentPassword, snap.data()))) {
+    throw new HttpsError('unauthenticated', '현재 비밀번호가 올바르지 않습니다.');
   }
 
   const record = await hashPassword(newPassword);

@@ -33,9 +33,10 @@ const {
   STATES, canClaim, claimPatch, holdsLease,
   finalPath, stagingPath, jobPath, newJob,
 } = require('./receipt-jobs.cjs');
-const { capName } = require('./perm-catalog.cjs');
+const { fixedCan } = require('./fixed-role-policy.cjs');
 
 const AUTHZ = 'authz';
+const ACCOUNTS = 'accounts';
 const TRANSACTIONS = 'transactions';
 const CONFIG = 'config';
 const LOCKED_MONTHS_DOC = 'lockedMonths';
@@ -79,12 +80,12 @@ module.exports = function receiptFns(ctx) {
     return d;
   }
 
-  const has = (authz, key) => (authz.caps || {})[capName(key)] === true;
+  const has = (authz, key) => fixedCan(authz, key);
 
   /** 담당이거나, 담당과 무관하게 전체를 보는 권한이 있거나. 규칙의 seesClient 와 같다. */
   function sees(authz, clientId) {
     if (has(authz, 'client.view.all')) return true;
-    const ids = authz.accessibleClientIds;
+    const ids = authz.role === '팀장' ? authz.leaderClientIds : authz.accessibleClientIds;
     return Array.isArray(ids) && ids.includes(String(clientId));
   }
 
@@ -197,12 +198,16 @@ module.exports = function receiptFns(ctx) {
       const snap = await tx.get(ref);
       if (!snap.exists) throw new HttpsError('not-found', '업로드 기록을 찾을 수 없습니다.');
       const job = snap.data() || {};
+      if ([STATES.ATTACHED, STATES.CLEANUP_PENDING, STATES.COMPLETED].includes(job.state)
+          && job.result && job.result.trxId) {
+        return { job, replay: job.result };
+      }
       const now = Date.now();
       if (!canClaim(job, now)) {
         throw new HttpsError('failed-precondition', '이미 처리 중이거나 완료된 업로드입니다.');
       }
       tx.update(ref, claimPatch({ token, now }));
-      return job;
+      return { job, replay: null };
     });
   }
 
@@ -221,7 +226,6 @@ module.exports = function receiptFns(ctx) {
     const bucket = getBucket();
     const src = bucket.file(stagingPath(uid, uploadId));
     const dest = bucket.file(finalPath(job.clientId, uploadId));
-    const token = randomId();
     const [sourceMeta] = await src.getMetadata();
     if (!job.sourceGeneration
         || String(sourceMeta.generation) !== String(job.sourceGeneration)) {
@@ -236,7 +240,7 @@ module.exports = function receiptFns(ctx) {
     try {
       await src.copy(dest, {
         preconditionOpts: { ifGenerationMatch: 0 },
-        metadata: { metadata: { firebaseStorageDownloadTokens: token, ...expected } },
+        metadata: { metadata: expected },
       });
     } catch (err) {
       if (Number(err && err.code) !== 412) throw err;
@@ -244,11 +248,8 @@ module.exports = function receiptFns(ctx) {
     }
 
     const [meta] = await dest.getMetadata();
-    const savedToken = String((meta.metadata || {}).firebaseStorageDownloadTokens || '')
-      .split(',')[0];
     const actual = meta.metadata || {};
-    if (!savedToken
-        || actual.uploadId !== expected.uploadId
+    if (actual.uploadId !== expected.uploadId
         || actual.jobId !== expected.jobId
         || actual.sourceGeneration !== expected.sourceGeneration) {
       throw new HttpsError('failed-precondition', '최종 증빙 경로가 다른 업로드와 충돌했습니다.');
@@ -256,7 +257,7 @@ module.exports = function receiptFns(ctx) {
     return {
       path: dest.name,
       generation: String(meta.generation),
-      url: downloadUrl(bucket.name, dest.name, savedToken),
+      url: '',
     };
   }
 
@@ -274,10 +275,24 @@ module.exports = function receiptFns(ctx) {
     });
   }
 
-  function downloadUrl(bucketName, path, token) {
-    const encoded = encodeURIComponent(path);
-    return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}`
-      + `?alt=media&token=${token}`;
+  async function releaseClaim(jobRef, token) {
+    try {
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(jobRef);
+        const job = snap.exists ? (snap.data() || {}) : {};
+        if (job.state === STATES.FINALIZING && job.leaseToken === token) {
+          tx.update(jobRef, {
+            state: STATES.ANALYZED,
+            leaseToken: '',
+            leaseUntil: new Date(0),
+          });
+        }
+      });
+    } catch (releaseError) {
+      logger.warn('[finalizeReceipts] 실패한 선점 해제 실패', {
+        message: releaseError && releaseError.message,
+      });
+    }
   }
 
   /**
@@ -289,7 +304,7 @@ module.exports = function receiptFns(ctx) {
     const patch = {
       receiptPath: copied.path,
       receiptGeneration: copied.generation,
-      receiptUrl: copied.url,
+      receiptUrl: FieldValue.delete(),
       receiptMissing: false,
     };
 
@@ -351,6 +366,14 @@ module.exports = function receiptFns(ctx) {
           throw new HttpsError('permission-denied', '거래 입력 권한이 없습니다.');
         }
         const draft = item.draft || {};
+        const accountId = String(draft.accountId || '').trim();
+        if (!accountId) throw new HttpsError('invalid-argument', '계좌를 선택하세요.');
+        const accountSnap = await tx.get(db.collection(ACCOUNTS).doc(accountId));
+        if (!accountSnap.exists
+            || String((accountSnap.data() || {}).clientId || '') !== clientId
+            || (accountSnap.data() || {}).active === false) {
+          throw new HttpsError('failed-precondition', '선택한 계좌가 해당 입주자 소속이 아닙니다.');
+        }
         const date = String(draft.date || '');
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
           throw new HttpsError('invalid-argument', '날짜가 올바르지 않습니다.');
@@ -363,7 +386,7 @@ module.exports = function receiptFns(ctx) {
         trxId = ref.id;
         tx.set(ref, {
           clientId,
-          accountId: String(draft.accountId || ''),
+          accountId,
           date,
           type: draft.isCancellation ? '수입' : '지출',
           category: String(draft.category || '확인필요'),
@@ -379,11 +402,16 @@ module.exports = function receiptFns(ctx) {
         });
       }
 
+      const result = {
+        trxId, created: !item.trxId, url: copied.url,
+        path: copied.path, generation: copied.generation,
+      };
       tx.update(jobRef, {
         state: STATES.ATTACHED,
         trxId,
         finalPath: copied.path,
         finalGeneration: copied.generation,
+        result,
       });
       const auditRef = db.collection(AUDIT_LOGS).doc();
       tx.set(auditRef, {
@@ -395,10 +423,7 @@ module.exports = function receiptFns(ctx) {
         timestamp: FieldValue.serverTimestamp(),
         expireAt: new Date(Date.now() + AUDIT_TTL_MS),
       });
-      return {
-        trxId, created: !item.trxId, url: copied.url,
-        path: copied.path, generation: copied.generation,
-      };
+      return result;
     });
   }
 
@@ -424,7 +449,12 @@ module.exports = function receiptFns(ctx) {
       const jobRef = db.doc(jobPath(auth.uid, uploadId));
       const token = randomId();
       try {
-        const job = await claim(jobRef, token);
+        const claimed = await claim(jobRef, token);
+        if (claimed.replay) {
+          results.push({ uploadId, ok: true, ...claimed.replay, replayed: true });
+          continue;
+        }
+        const job = claimed.job;
         requireSees(authz, job.clientId);
 
         const copied = await copyToFinal(job, auth.uid, uploadId);
@@ -433,8 +463,8 @@ module.exports = function receiptFns(ctx) {
 
         // 첨부가 끝났다. 스테이징 정리는 실패해도 되돌리지 않는다 —
         // 예약 정리 함수가 job을 근거로 다시 치우며 최종 증빙은 보존한다.
-        await jobRef.update({ state: STATES.CLEANUP_PENDING });
         try {
+          await jobRef.update({ state: STATES.CLEANUP_PENDING });
           await getBucket().file(stagingPath(auth.uid, uploadId)).delete({ ignoreNotFound: true });
           await jobRef.update({ state: STATES.COMPLETED });
         } catch (err) {
@@ -445,6 +475,7 @@ module.exports = function receiptFns(ctx) {
 
         results.push({ uploadId, ok: true, ...out });
       } catch (err) {
+        await releaseClaim(jobRef, token);
         if (err instanceof HttpsError) {
           results.push({ uploadId, ok: false, error: err.message });
         } else {
@@ -456,6 +487,10 @@ module.exports = function receiptFns(ctx) {
 
     const okCount = results.filter((r) => r.ok).length;
     return { okCount, failCount: results.length - okCount, results };
+  });
+
+  const { getReceiptAccessUrl } = require('./receipt-access-fns')({
+    db, getBucket, callable, HttpsError, requireAuthz, requireSees, fixedCan,
   });
 
   /** 기존 증빙 연결을 해제한다. 최종 객체 삭제는 generation이 있을 때만 조건부로 한다. */
@@ -530,11 +565,11 @@ module.exports = function receiptFns(ctx) {
   });
 
   const { cleanupReceiptJobs } = require('./receipt-cleanup')({
-    db, getBucket, onSchedule, logger, FieldValue,
+    db, getBucket, onSchedule, logger, FieldValue, randomId,
   });
 
   return {
-    startReceiptUpload, completeReceiptUpload, finalizeReceipts, removeReceipt,
+    startReceiptUpload, completeReceiptUpload, finalizeReceipts, getReceiptAccessUrl, removeReceipt,
     cleanupReceiptJobs,
   };
 };

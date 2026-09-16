@@ -29,6 +29,10 @@ test('analyzed 상태는 선점할 수 있다', () => {
   assert.equal(canClaim({ state: STATES.ANALYZED }, NOW), true);
 });
 
+test('수명이 끝난 analyzed 상태는 최종화하지 않는다', () => {
+  assert.equal(canClaim({ state: STATES.ANALYZED, expireAt: new Date(NOW) }, NOW), false);
+});
+
 test('lease가 살아 있는 finalizing은 선점할 수 없다', () => {
   assert.equal(canClaim({ state: STATES.FINALIZING, leaseUntil: NOW + 1000 }, NOW), false);
 });

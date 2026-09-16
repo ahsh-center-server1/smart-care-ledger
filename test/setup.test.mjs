@@ -7,6 +7,8 @@ import { getSetupState } from '../public/modules/setup.js';
 /** 역할·데이터를 세팅하고 단계 상태를 계산한다 */
 function stateAs(role, { categories = [], clients = [], accounts = [], isAdmin = false } = {}) {
   S.user = { userId: 'tester', name: '테스터', role, isAdmin };
+  S.authz = { uid: 'tester', role, isAdmin, enabled: true };
+  S.authzStatus = 'ready';
   S.categories = categories;
   S.allClients = clients;
   S.clients = clients;
@@ -19,7 +21,7 @@ const cat = { keyword: '', type: '지출', category: '식비' };
 const client = { id: 'c1', name: '입주자 A' };
 const account = { id: 'a1', clientId: 'c1', label: '통장' };
 
-test.afterEach(() => { S.user = null; S.permOverride = null; });
+test.afterEach(() => { S.user = null; S.authz = null; S.authzStatus = 'idle'; S.permOverride = null; });
 
 test('빈 배포 — 세 단계 모두 미완료', () => {
   const { steps, done, total, complete } = stateAs('센터장');
@@ -57,9 +59,9 @@ test('담당자는 분류는 만들 수 있지만 입주자·계좌는 등록할
   assert.equal(steps.find(s => s.key === 'accounts').can, false);
 });
 
-test('팀장은 세 단계를 모두 진행할 수 있다', () => {
+test('팀장은 담당 배정만 관리하고 설정 마법사의 직접 변경 권한을 상속하지 않는다', () => {
   const { steps } = stateAs('팀장');
-  assert.ok(steps.every(s => s.can), '팀장이 진행할 수 없는 단계가 있습니다');
+  assert.deepEqual(steps.map(s => s.can), [false, true, false]);
 });
 
 test('입력자는 어떤 단계도 진행할 수 없다', () => {
@@ -67,17 +69,17 @@ test('입력자는 어떤 단계도 진행할 수 없다', () => {
   assert.ok(steps.every(s => !s.can), '입력자가 진행 가능한 단계가 있습니다');
 });
 
-test('관리자 플래그는 역할과 무관하게 모든 단계를 연다', () => {
-  // 마이그레이션 후 관리자는 role='센터장' + isAdmin. 역할이 입력자여도
-  // 플래그가 있으면 can()이 전부 통과해야 한다.
+test('관리자 플래그는 업무 설정 단계를 열지 않는다', () => {
   const { steps } = stateAs('입력자', { isAdmin: true });
-  assert.ok(steps.every(s => s.can), '관리자 플래그가 무시되고 있습니다');
+  assert.ok(steps.every(s => !s.can), '관리자가 업무 권한을 상속했습니다');
 });
 
 test('본인 담당 입주자가 없어도 조직에 입주자가 있으면 설정은 완료로 본다', () => {
   // 담당자에게 배정된 입주자가 없는 상황 — 설정 문제가 아니라 배정 문제이므로
   // 마법사가 아니라 "담당 배정을 요청하세요" 안내가 나가야 한다.
   S.user = { userId: 'tester', role: '담당자', isAdmin: false };
+  S.authz = { uid: 'tester', role: '담당자', isAdmin: false, enabled: true };
+  S.authzStatus = 'ready';
   S.categories = [cat];
   S.allClients = [client];   // 조직에는 있음
   S.clients = [];            // 본인 담당은 없음

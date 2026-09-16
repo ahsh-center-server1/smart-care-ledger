@@ -1,15 +1,28 @@
 {
-  "phase": "verification-complete",
-  "scope": "security-hardening-v3.4-followup",
+  "phase": "VERIFY",
+  "scope": "fixed-role-policy-and-security-p1",
+  "status": "IN_PROGRESS",
+  "resumedAt": "2026-09-15",
+  "code_progress": {
+    "foundation": "implemented and verified",
+    "roleGuide": "implemented as read-only fixed-role guidance",
+    "current": "fixed role policy, server enforcement, approval workflows, and security P1 fixes implemented",
+    "remaining": "browser smoke and staging round-trip; migration/backfill and deployment remain separately authorized"
+  },
+  "decisions": {
+    "teamLeaderScope": "clients.teamLeader UID only",
+    "sameApproverExecutor": "prohibited; remain pending without another approver"
+  },
+  "context_summary": "고정 역할 정책과 보안 P1 구현 및 로컬 회귀 검증 완료. 운영 데이터·배포는 건드리지 않았으며 스테이징 왕복 검증은 별도 승인 대기.",
   "source": "claude/pr9-security-permissions-review-8x57vw ZIP snapshot",
   "deploymentAuthorized": false,
   "productionDataAuthorized": false,
   "checks": {
-    "check": "passed (708 tests)",
+    "check": "passed (724 tests)",
     "contract": "passed (21 tests)",
     "contractRatchet": "passed (21 tests)",
     "rules": "passed (255 tests)",
-    "browserSmoke": "not-run (deployment/emulator QA not authorized)"
+    "browserSmoke": "not-run (requires seeded local emulators and a compatible Chromium runtime)"
   },
   "deployment": "not-run",
   "productionDataAccess": "not-run"

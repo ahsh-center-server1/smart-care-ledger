@@ -398,11 +398,10 @@
       #history-table tbody td.col-out:empty{display:none!important;}
     }
 
-    /* 좁은 화면에서는 보고서·설정을 감춘다 — PC에서 보도록 안내한다.
-       (사용자 결정: 휴대폰에서는 조회와 수기입력만) */
+    /* 좁은 화면에서는 보고서만 감춘다. 설정은 내 역할 안내 전용으로 열린다. */
     @media(max-width:768px){
-      .nav-item[data-view="report"],.nav-item[data-view="settings"],
-      .mobile-nav-item[data-view="report"],.mobile-nav-item[data-view="settings"]{display:none!important;}
+      .nav-item[data-view="report"],
+      .mobile-nav-item[data-view="report"]{display:none!important;}
     }
     /* Screen reader only */
     .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
@@ -973,33 +972,6 @@
 
               <!-- 변경 이력 -->
               <div id="audit-tab-content" class="tab-content"></div>
-
-              <!-- 전체 초기화 — 되돌릴 수 없는 작업이라 별도 탭으로 분리했다.
-                   연도 마감(정상적인 연간 업무)과 같은 화면에 두면 실수로 누를 수 있다. -->
-              <div id="danger-tab-content" class="tab-content">
-                <div class="ui-card" style="border-color:var(--destructive);border-width:2px;">
-                  <div style="display:flex;align-items:center;gap:.625rem;margin-bottom:.5rem;">
-                    <span style="font-size:1.25rem;" aria-hidden="true">🗑️</span>
-                    <h3 class="ui-card__title" style="color:var(--destructive);margin:0;">전체 초기화</h3>
-                    <span class="ui-badge ui-badge--danger" style="margin-left:auto;">관리자 전용</span>
-                  </div>
-                  <p class="ui-card__desc" style="margin-bottom:.75rem;">
-                    거래·계좌·입주자·보고서·증빙 파일을 모두 삭제합니다.
-                    <strong style="color:var(--destructive);">되돌릴 수 없습니다.</strong>
-                  </p>
-                  <p class="ui-hint" style="margin-bottom:1rem;">
-                    지울 대상과 진행 상황은 실행할 때 확인 창에서 보여 드립니다.
-                    중단되어도 이어서 진행할 수 있습니다.
-                  </p>
-                  <button id="btn-firebase-reset" type="button" class="ui-btn ui-btn--danger">
-                    🗑️ 전체 초기화
-                  </button>
-                  <div id="reset-progress" style="display:none;margin-top:1rem;">
-                    <div class="ui-progress"><div id="reset-progress-bar" class="ui-progress__bar" style="width:0%;"></div></div>
-                    <div id="reset-progress-label" class="ui-progress__label"></div>
-                  </div>
-                </div>
-              </div>
 
               <!-- 목록 탭 (3열 그리드) -->
               <div id="list-tab-content" class="tab-content">

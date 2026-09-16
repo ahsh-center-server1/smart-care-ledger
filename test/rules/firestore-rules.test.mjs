@@ -41,7 +41,7 @@ const ACTORS = {
   담당자: { uid: 'staff-owner', role: '담당자', isAdmin: false },
   팀장:   { uid: 'staff-leader', role: '팀장',  isAdmin: false },
   센터장: { uid: 'staff-center', role: '센터장', isAdmin: false },
-  관리자: { uid: 'staff-admin',  role: '관리자', isAdmin: true },
+  관리자: { uid: 'staff-admin',  role: '', isAdmin: true },
 };
 
 /** authz 문서가 아예 없는 사용자 → 모든 판정이 실패해 거부돼야 한다(fail-closed). */
@@ -67,6 +67,7 @@ function authzDoc(uid, role, isAdmin, clientIds) {
     isAdmin: isAdmin === true,
     enabled: true,
     accessibleClientIds: clientIds,
+    leaderClientIds: role === '팀장' ? clientIds : [],
     caps: computeCaps(rankOf({ role, isAdmin }), {}),
     capSchemaVersion: CAP_SCHEMA_VERSION,
   };
@@ -111,7 +112,7 @@ before(async () => {
     const db = ctx.firestore();
     const mine = [MY_CLIENT];
     for (const [role, a] of Object.entries(ACTORS)) {
-      await setDoc(doc(db, 'authz/' + a.uid), authzDoc(a.uid, role === '관리자' ? '센터장' : role, a.isAdmin, mine));
+      await setDoc(doc(db, 'authz/' + a.uid), authzDoc(a.uid, role, a.isAdmin, mine));
     }
     // 퇴사자 — authz 는 있지만 enabled:false
     await setDoc(doc(db, 'authz/' + NO_ROLE_CLAIM.uid), {
@@ -245,8 +246,9 @@ describe('clients · accounts', () => {
       await assertFails(getDoc(doc(as(ACTORS.담당자), `${col}/${otherId}`)));
     });
 
-    it(`${col}: 팀장은 담당 밖도 읽을 수 있다 (clientViewAll)`, async () => {
-      await assertSucceeds(getDoc(doc(as(ACTORS.팀장), `${col}/${otherId}`)));
+    it(`${col}: 팀장은 명시적으로 배정된 입주자만 읽는다`, async () => {
+      await assertSucceeds(getDoc(doc(as(ACTORS.팀장), `${col}/${mineId}`)));
+      await assertFails(getDoc(doc(as(ACTORS.팀장), `${col}/${otherId}`)));
     });
 
     it(`${col}: 담당자는 변경할 수 없다`, async () => {
@@ -260,16 +262,16 @@ describe('clients · accounts', () => {
     await assertFails(updateDoc(doc(as(ACTORS.관리자), `clients/${MY_CLIENT}`), { memo: 'ok' }));
   });
 
-  it('accounts: 팀장은 변경할 수 있다', async () => {
-    await assertSucceeds(updateDoc(doc(as(ACTORS.팀장), 'accounts/a1'), { memo: 'ok' }));
+  it('accounts: 팀장도 직접 변경할 수 없다', async () => {
+    await assertFails(updateDoc(doc(as(ACTORS.팀장), 'accounts/a1'), { memo: 'ok' }));
   });
 
-  it('accounts: 센터장은 변경할 수 있다', async () => {
-    await assertSucceeds(updateDoc(doc(as(ACTORS.센터장), 'accounts/a1'), { memo: 'ok2' }));
+  it('accounts: 센터장도 직접 변경할 수 없다', async () => {
+    await assertFails(updateDoc(doc(as(ACTORS.센터장), 'accounts/a1'), { memo: 'ok2' }));
   });
 
-  it('accounts: 담당 밖 계좌도 팀장은 변경할 수 있다 (계좌 신설은 관리 행위)', async () => {
-    await assertSucceeds(updateDoc(doc(as(ACTORS.팀장), 'accounts/a9'), { memo: 'ok3' }));
+  it('accounts: 담당 밖 계좌도 팀장은 변경할 수 없다', async () => {
+    await assertFails(updateDoc(doc(as(ACTORS.팀장), 'accounts/a9'), { memo: 'ok3' }));
   });
 });
 
@@ -346,8 +348,8 @@ describe('transactions', () => {
     await assertFails(getDocs(collection(as(ACTORS.담당자), 'transactions')));
   });
 
-  it('팀장은 제약 없이도 조회할 수 있다 (clientViewAll)', async () => {
-    await assertSucceeds(getDocs(collection(as(ACTORS.팀장), 'transactions')));
+  it('팀장도 배정 입주자 조건 없이 전체를 조회할 수 없다', async () => {
+    await assertFails(getDocs(collection(as(ACTORS.팀장), 'transactions')));
   });
 
   it('거래 생성 시 createdBy는 본인이어야 한다', async () => {
@@ -381,13 +383,13 @@ describe('transactions', () => {
     }));
   });
 
-  it('순서 변경 권한만 있으면 금액을 함께 바꿀 수 없다', async () => {
+  it('저장된 과거 caps로 입력자에게 순서 변경 권한을 추가할 수 없다', async () => {
     const a = ACTORS.입력자;
     await seed(`authz/${a.uid}`, {
       ...authzDoc(a.uid, a.role, a.isAdmin, [MY_CLIENT]),
       caps: { trxReorder: true },
     });
-    await assertSucceeds(updateDoc(doc(as(a), 'transactions/t-mine'), { sortOrder: 3 }));
+    await assertFails(updateDoc(doc(as(a), 'transactions/t-mine'), { sortOrder: 3 }));
     await assertFails(updateDoc(doc(as(a), 'transactions/t-mine'), { sortOrder: 4, amountOut: 1 }));
     await seed(`authz/${a.uid}`, authzDoc(a.uid, a.role, a.isAdmin, [MY_CLIENT]));
   });
@@ -493,8 +495,8 @@ describe('categories · fixedItems', () => {
     await assertFails(updateDoc(doc(as(ACTORS.담당자), 'categories/cat1'), { x: 1 }));
   });
 
-  it('공통 분류는 팀장이 쓴다 (settingsCategoryCommon)', async () => {
-    await assertSucceeds(updateDoc(doc(as(ACTORS.팀장), 'categories/cat1'), { x: 1 }));
+  it('공통 분류는 팀장도 직접 쓸 수 없다', async () => {
+    await assertFails(updateDoc(doc(as(ACTORS.팀장), 'categories/cat1'), { x: 1 }));
   });
 
   it('입주자 전용 분류는 담당자가 쓸 수 있다', async () => {
@@ -560,9 +562,8 @@ describe('config', () => {
     );
   });
 
-  it('관리자는 그 밖의 config 문서는 쓸 수 있다', async () => {
-    // permissions 만 예외다. 다른 설정까지 막으면 관리 기능이 통째로 멈춘다.
-    await assertSucceeds(
+  it('기술 관리자도 임의 config 문서를 직접 쓸 수 없다', async () => {
+    await assertFails(
       setDoc(doc(as(ACTORS.관리자), 'config/somethingElse'), { x: 1 }),
     );
   });
@@ -668,8 +669,8 @@ describe('마감 잠금 · 불변 필드', () => {
     }));
   });
 
-  it('관리자는 lockBypass 로 고칠 수 있다', async () => {
-    await assertSucceeds(updateDoc(doc(as(ACTORS.관리자), 'transactions/t-locked'), { amountOut: 3 }));
+  it('기술 관리자도 마감 잠금을 우회할 수 없다', async () => {
+    await assertFails(updateDoc(doc(as(ACTORS.관리자), 'transactions/t-locked'), { amountOut: 3 }));
   });
 
   it('마감되지 않은 달은 그대로 고칠 수 있다', async () => {
@@ -727,12 +728,9 @@ describe('reports 범위', () => {
     await assertFails(getDoc(doc(as(ACTORS.담당자), 'reports/rp-other')));
   });
 
-  it('팀장은 결재 대기 목록을 위해 전체를 읽는다 (reportViewAll)', async () => {
-    await assertSucceeds(getDoc(doc(as(ACTORS.팀장), 'reports/rp-other')));
-    await assertSucceeds(getDocs(query(
-      collection(as(ACTORS.팀장), 'reports'),
-      where('status', 'in', ['submitted', 'team_approved']),
-    )));
+  it('팀장은 배정 입주자의 보고서만 읽는다', async () => {
+    await assertSucceeds(getDoc(doc(as(ACTORS.팀장), 'reports/rp-mine')));
+    await assertFails(getDoc(doc(as(ACTORS.팀장), 'reports/rp-other')));
   });
 
   it('담당자의 무제약 목록 조회는 거부된다', async () => {
@@ -783,7 +781,7 @@ describe('fail-closed — 근거는 클레임이 아니라 authz 문서다', () 
     // 반대 방향. 클레임은 이제 아무 역할도 하지 않으므로 없어도 된다.
     const noClaims = { uid: ACTORS.팀장.uid };
     await assertSucceeds(getDoc(doc(as(noClaims), `clients/${MY_CLIENT}`)));
-    await assertSucceeds(updateDoc(doc(as(noClaims), 'accounts/a1'), { memo: 'ok' }));
+    await assertFails(updateDoc(doc(as(noClaims), 'accounts/a1'), { memo: 'ok' }));
   });
 });
 
@@ -862,8 +860,8 @@ describe('auditLogs — 추가 전용', () => {
     });
   }
 
-  it('담당자는 조회할 수 없다 — 다른 직원의 활동 기록이다', async () => {
-    await assertFails(getDoc(doc(as(ACTORS.담당자), 'auditLogs/existing')));
+  it('담당자는 업무 감사 기록을 조회할 수 있다', async () => {
+    await assertSucceeds(getDoc(doc(as(ACTORS.담당자), 'auditLogs/existing')));
   });
 
   it('팀장 이상은 조회할 수 있다', async () => {
@@ -890,9 +888,9 @@ describe('systemOperations', () => {
     );
   });
 
-  it('관리자는 읽고 쓸 수 있다', async () => {
-    await assertSucceeds(getDoc(doc(as(ACTORS.관리자), 'systemOperations/data-reset')));
-    await assertSucceeds(
+  it('기술 관리자도 파괴적 작업 상태를 직접 읽거나 쓸 수 없다', async () => {
+    await assertFails(getDoc(doc(as(ACTORS.관리자), 'systemOperations/data-reset')));
+    await assertFails(
       setDoc(doc(as(ACTORS.관리자), 'systemOperations/data-reset'), { status: 'running' }),
     );
   });
@@ -1011,9 +1009,9 @@ describe('summaryCaches — 요약 캐시', () => {
     await assertFails(deleteDoc(doc(as(ACTORS.담당자), 'summaryCaches/del1_2026-09')));
   });
 
-  it('관리자는 캐시를 지울 수 있다', async () => {
+  it('기술 관리자도 캐시를 직접 지울 수 없다', async () => {
     await seed('summaryCaches/del2_2026-09', { clientId: 'c1', sourceVersion: 4 });
-    await assertSucceeds(deleteDoc(doc(as(ACTORS.관리자), 'summaryCaches/del2_2026-09')));
+    await assertFails(deleteDoc(doc(as(ACTORS.관리자), 'summaryCaches/del2_2026-09')));
   });
 
   it('authz 문서가 없으면 읽지도 쓰지도 못한다', async () => {

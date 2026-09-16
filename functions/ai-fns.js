@@ -22,7 +22,7 @@ module.exports = function aiFns(ctx) {
   const { isAiConfigured } = ctx.aiProvider || require('./ai/anthropic');
   const { extractReceipt, extractBankbook } = ctx.extractors || require('./ai/receipt-extract');
   const { consumeRateLimits } = ctx.rateLimiter || require('./rateLimit');
-  const { capName } = require('./perm-catalog.cjs');
+  const { fixedCan } = require('./fixed-role-policy.cjs');
   const { STATES, jobPath, stagingPath, millis } = require('./receipt-jobs.cjs');
 
   /** 공급자 콘솔의 실제 한도에 맞춰 런타임 환경변수로 더 낮출 수 있다. */
@@ -205,11 +205,10 @@ module.exports = function aiFns(ctx) {
         const authzSnap = await tx.get(authzRef);
         const current = jobSnap.exists ? (jobSnap.data() || {}) : {};
         const authz = authzSnap.exists ? (authzSnap.data() || {}) : {};
-        const caps = authz.caps || {};
-        const sees = caps[capName('client.view.all')] === true
-          || (Array.isArray(authz.accessibleClientIds)
-            && authz.accessibleClientIds.includes(String(job.clientId)));
-        if (authz.enabled !== true || caps[capName('receipt.upload')] !== true || !sees) {
+        const scopedIds = authz.role === '팀장' ? authz.leaderClientIds : authz.accessibleClientIds;
+        const sees = fixedCan(authz, 'client.view.all')
+          || (Array.isArray(scopedIds) && scopedIds.includes(String(job.clientId)));
+        if (!fixedCan(authz, 'receipt.upload') || !sees) {
           throw new HttpsError('permission-denied', '현재 계정 권한으로 판독을 완료할 수 없습니다.');
         }
         if (current.state !== STATES.UPLOADED

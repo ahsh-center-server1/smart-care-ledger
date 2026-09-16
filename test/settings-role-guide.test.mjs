@@ -1,0 +1,86 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { S } from '../public/state.js';
+import { renderPermissionPanel } from '../public/modules/settings-permissions.js';
+
+function render(user, caps, ids = [], extra = {}) {
+  const keys = ['user', 'caps', 'accessibleClientIds', 'leaderClientIds', 'authz', 'authzStatus'];
+  const saved = Object.fromEntries(keys.map(key => [key, S[key]]));
+  const doc = globalThis.document;
+  const panel = { innerHTML: '' };
+  try {
+    Object.assign(S, { user, caps, accessibleClientIds: ids, leaderClientIds: [], authz: user ? { ...user, enabled: true } : null, authzStatus: caps === null ? 'loading' : 'ready' }, extra);
+    globalThis.document = { getElementById: () => panel };
+    renderPermissionPanel();
+    return panel.innerHTML;
+  } finally {
+    Object.assign(S, saved);
+    if (doc === undefined) delete globalThis.document;
+    else globalThis.document = doc;
+  }
+}
+
+test('역할 안내는 입력자도 읽을 수 있고 편집 제어를 만들지 않는다', () => {
+  const html = render({ role: '입력자' }, { trxCreate: true }, ['a', 'a', 'b']);
+  assert.match(html, /입력자/);
+  assert.match(html, /입주자 2명 배정/);
+  assert.match(html, /본인 미제출/);
+  assert.doesNotMatch(html, /<(?:button|select|input)\b|btn-perm-save|btn-perm-reset/);
+});
+
+test('업무 역할과 관리자 자격을 별개로 안내한다', () => {
+  const html = render({ role: '입력자', isAdmin: true }, { trxCreate: true });
+  assert.match(html, /업무 역할<\/dt><dd>입력자/);
+  assert.match(html, /시스템 관리자<\/dt><dd>지정됨/);
+  assert.match(html, /관리자 자격만으로 금융 자료 수정이나 결재 권한이 부여되지 않습니다/);
+  assert.doesNotMatch(html, /시설 전체 자료 검토와 최종 결재/);
+});
+
+test('미로그인·권한 미확인·빈 권한·비활성 상태를 안내한다', () => {
+  assert.match(render(null, null), /정보를 확인하고 있습니다/);
+  assert.match(render({ role: '담당자' }, null), /현재 접근 허용을 보장하지 않습니다/);
+  assert.match(render({ role: '담당자' }, {}), /현재 허용된 업무가 없습니다/);
+  assert.match(render({ role: '담당자', active: false }, {}), /비활성 계정/);
+});
+
+test('알 수 없는 역할을 권한으로 해석하거나 HTML로 삽입하지 않는다', () => {
+  const html = render({ role: '<img src=x onerror=alert(1)>', isAdmin: true }, {});
+  assert.match(html, /업무 역할 미지정/);
+  assert.match(html, /업무 권한을 추정하지 않습니다/);
+  assert.doesNotMatch(html, /<img|onerror/);
+});
+
+test('팀장과 센터장 범위를 구별한다', () => {
+  const leader = render({ role: '팀장' }, { reportApproveTeam: true }, ['staff-only', 'leader-client'], { leaderClientIds: ['leader-client'] });
+  assert.match(leader, /담당 팀장으로 지정된 입주자/);
+  assert.match(leader, /입주자 1명 배정/);
+  assert.doesNotMatch(leader, /입주자 2명 배정/);
+  assert.match(render({ role: '센터장' }, { reportApproveCenter: true }), /시설 전체 입주자/);
+});
+
+test('기술 전용 관리자는 오류가 아니라 기술 업무만 안내한다', () => {
+  const html = render({ role: '', isAdmin: true }, { systemAi: true }, ['old-client']);
+  assert.match(html, /업무 역할 없음/);
+  assert.match(html, /시스템 관리 업무만 가능/);
+  assert.match(html, /AI 설정·백업·보안 감사/);
+  assert.match(html, /다른 승인자가 없으면 보류/);
+  assert.doesNotMatch(html, /알 수 없는 업무 역할|입주자 1명 배정|최종 결재/);
+});
+
+test('오래된 caps가 있어도 오류·로딩 상태에 접근 확인을 표시하지 않는다', () => {
+  const error = render({ role: '담당자' }, { trxCreate: true }, ['a'], { authzStatus: 'error' });
+  assert.match(error, /불러오지 못했습니다/);
+  assert.match(error, /확인 대기/);
+  assert.doesNotMatch(error, /서버 권한 정보를 확인했습니다|입주자 1명 배정/);
+  assert.match(render({ role: '담당자' }, { trxCreate: true }, [], { authzStatus: 'loading' }), /현재 접근 허용을 보장하지 않습니다/);
+});
+
+test('확인된 authz 역할·활성 상태와 팀장 전용 배정을 우선한다', () => {
+  const html = render({ role: '센터장', isAdmin: true }, { reportApproveTeam: true }, ['a', 'b'], {
+    authz: { role: '팀장', isAdmin: false, enabled: true, leaderClientIds: ['b'] }, leaderClientIds: ['a', 'b'],
+  });
+  assert.match(html, /업무 역할<\/dt><dd>팀장/);
+  assert.match(html, /입주자 1명 배정/);
+  assert.doesNotMatch(html, /시설 전체 입주자|시스템 관리 업무 안내/);
+  assert.match(render({ role: '담당자' }, {}, [], { authz: { enabled: false } }), /비활성 계정/);
+});

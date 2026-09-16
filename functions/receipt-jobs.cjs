@@ -51,6 +51,8 @@ const STATES = {
   CLEANUP_PENDING: 'cleanup_pending',
   /** 정리까지 끝났다. */
   COMPLETED: 'completed',
+  /** 만료 정리 작업이 선점했다. 최종화와 동시에 진행하지 않는다. */
+  CLEANING: 'cleaning',
 };
 
 const ALL_STATES = Object.values(STATES);
@@ -84,6 +86,8 @@ function millis(value) {
  */
 function canClaim(job, now) {
   if (!job) return false;
+  const expires = millis(job.expireAt);
+  if (Number.isFinite(expires) && expires <= now) return false;
   if (job.state === STATES.ANALYZED) return true;
   if (job.state !== STATES.FINALIZING) return false;
   // 읽을 수 없는 leaseUntil 은 **만료로 본다.** NaN 을 "선점 불가"로 처리하면

@@ -23,6 +23,7 @@
 'use strict';
 
 import { can } from './permissions.js';
+import { S } from '../state.js';
 
 /**
  * 설정 탭 정의.
@@ -67,14 +68,8 @@ export const SETTINGS_TABS = [
     desc: '연도를 마감해 거래를 보관하고, 다음 해 기초잔액을 넘깁니다.',
   },
   {
-    key: 'permissions', label: '권한 설정', icon: '🔐',
-    perm: 'settings.permissions',
-    desc: '역할별로 어떤 기능을 쓸 수 있는지 정합니다.',
-  },
-  {
-    key: 'danger', label: '전체 초기화', icon: '⚠️',
-    perm: 'settings.reset',
-    desc: '되돌릴 수 없는 작업입니다. 실수로 누르지 않도록 따로 두었습니다.',
+    key: 'permissions', label: '내 역할 안내', icon: '🔐',
+    desc: '내 업무 역할과 담당 범위, 역할별 업무를 확인합니다. 권한은 이 화면에서 변경하지 않습니다.',
   },
 ];
 
@@ -86,7 +81,7 @@ export const SETTINGS_GROUPS = [
   { label: '현황',   items: ['overview'] },
   { label: '운영',   items: ['list', 'category'] },
   { label: '정산',   items: ['fixed', 'budget'] },
-  { label: '시스템', items: ['audit', 'archive', 'permissions', 'danger'] },
+  { label: '시스템', items: ['audit', 'archive', 'permissions'] },
 ];
 
 /** key → 탭 정의 (파생) */
@@ -102,6 +97,7 @@ export function isKnownSettingsTab(key) {
 export function canSeeSettingsTab(key) {
   const tab = SETTINGS_TAB_BY_KEY[key];
   if (!tab) return false;
+  if (key !== 'permissions' && (S.settingsGuideOnly || !can('nav.settings'))) return false;
   return !tab.perm || can(tab.perm);
 }
 

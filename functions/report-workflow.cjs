@@ -64,16 +64,15 @@ const STAGE_STAMPS = {
  *     └──release/submit───────────────────┘          ◀───────────revert──────────────┘
  */
 const TRANSITIONS = {
-  draft:         { save: 'draft', submit: 'submitted', submitAsLeader: 'team_approved' },
-  submitted:     { approveTeam: 'team_approved', approveTeamProxy: 'team_approved',
+  draft:         { save: 'draft', submit: 'submitted' },
+  submitted:     { approveTeam: 'team_approved',
                    reject: 'rejected', recall: 'draft', revert: 'draft' },
   team_approved: { approveCenter: 'confirmed', reject: 'rejected',
                    recall: 'draft', revert: 'submitted' },
   confirmed:     { revert: 'team_approved' },
   // 반려된 보고서가 영구 정지되지 않도록 탈출 경로를 둘 이상 보장한다.
   // 담당자가 퇴사·부재여도 팀장 이상이 release로 초안으로 되돌릴 수 있다.
-  rejected:      { save: 'draft', submit: 'submitted', submitAsLeader: 'team_approved',
-                   release: 'draft' },
+  rejected:      { save: 'draft', submit: 'submitted' },
 };
 
 /** 저장되지 않았거나 상태가 비어 있는 보고서는 draft로 본다. */
@@ -118,6 +117,7 @@ function permissionError(action, from, ctx) {
     case 'approveTeam':
       if (!can('report.approve.team')) return '팀장 결재 권한이 없습니다.';
       if (!isAssignedLeader) return '이 입주자의 담당 팀장이 아닙니다.';
+      if (isAuthor) return '본인이 작성한 보고서는 직접 결재할 수 없습니다.';
       return null;
 
     // 팀장 공석 대행 — 배정 팀장이 없거나 퇴사/결재불가일 때만.
@@ -128,7 +128,8 @@ function permissionError(action, from, ctx) {
       return null;
 
     case 'approveCenter':
-      return can('report.approve.center') ? null : '최종 결재 권한이 없습니다.';
+      if (!can('report.approve.center')) return '최종 결재 권한이 없습니다.';
+      return isAuthor ? '본인이 작성한 보고서는 직접 결재할 수 없습니다.' : null;
 
     // 반려는 "지금 결재해야 할 사람"만 할 수 있다.
     // 아무 팀장이나 반려할 수 있게 두면, 배정 팀장이 아닌 사람에게는

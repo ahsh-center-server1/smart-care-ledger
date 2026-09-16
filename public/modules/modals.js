@@ -27,6 +27,7 @@ import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButt
 import { bankbookRowsToParsed } from '../domain/receipt.js';
 import { classifyMerchant } from '../domain/receipt-match.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
+import { hasReceipt, receiptAccessUrl } from '../services/receipt-access.js';
 
 // ─────────────────────────────────────────────
 // 모달
@@ -72,6 +73,7 @@ export function closeModal(){
 // ─────────────────────────────────────────────
 export function renderTrxForm(t){
   const isEdit=!!t;
+  const hasCurrentReceipt=isEdit&&hasReceipt(t);
   // 취소는 amountIn/amountOut에 따라 수입/지출 취소로 구분
   const editTypeUI=isEdit&&t.type==='취소'
     ?(Number(t.amountIn||0)>0?'취소-수입':'취소-지출')
@@ -108,8 +110,9 @@ export function renderTrxForm(t){
       <div>
         <label class="label">영수증 첨부 <span style="font-size:10px;color:var(--muted);">(선택)</span></label>
         ${isEdit&&t.receiptUrl?`<div id="trx-receipt-current" style="margin-bottom:6px;"><a href="${escAttr(t.receiptUrl)}" target="_blank" style="font-size:12px;color:var(--blue);">📎 현재 첨부파일 보기</a>${can('receipt.replace')?` <button onclick="document.getElementById('trx-receipt-current').innerHTML='<span style=\\'font-size:12px;color:#dc2626;\\'>삭제됨</span>';window._trxReceiptClear=true;" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button>`:''}</div>`:''}
-        ${isEdit&&t.receiptUrl&&!can('receipt.replace')?'<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">기존 증빙을 교체하려면 담당자 권한이 필요합니다.</div>':''}
-        <div id="trx-receipt-drop" style="border:2px dashed var(--border);border-radius:8px;background:var(--bg);padding:12px;text-align:center;cursor:pointer;font-size:13px;color:var(--muted);${isEdit&&t.receiptUrl&&!can('receipt.replace')?'display:none;':''}" onclick="document.getElementById('trx-receipt-file').click()">
+        ${isEdit&&t.receiptPath?`<div id="trx-receipt-current" style="margin-bottom:6px;"><button type="button" id="f-receipt-view" style="font-size:12px;color:var(--blue);background:none;border:none;cursor:pointer;">📎 현재 첨부파일 보기</button>${can('receipt.replace')?` <button id="f-receipt-clear" type="button" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button>`:''}</div>`:''}
+        ${hasCurrentReceipt&&!can('receipt.replace')?'<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">기존 증빙을 교체하려면 담당자 권한이 필요합니다.</div>':''}
+        <div id="trx-receipt-drop" style="border:2px dashed var(--border);border-radius:8px;background:var(--bg);padding:12px;text-align:center;cursor:pointer;font-size:13px;color:var(--muted);${hasCurrentReceipt&&!can('receipt.replace')?'display:none;':''}" onclick="document.getElementById('trx-receipt-file').click()">
           📎 영수증 클릭 또는 드래그
           <input type="file" id="trx-receipt-file" accept="image/*" style="display:none;">
         </div>
@@ -121,6 +124,15 @@ export function renderTrxForm(t){
       </div>
     </div>`;
   window._trxReceiptClear=false;
+  document.getElementById('f-receipt-view')?.addEventListener('click',async()=>{
+    try{openReceiptModal(await receiptAccessUrl(t),t.id);}
+    catch(e){toast('증빙을 열지 못했습니다: '+(e.message||e),'error');}
+  });
+  document.getElementById('f-receipt-clear')?.addEventListener('click',()=>{
+    const current=document.getElementById('trx-receipt-current');
+    if(current)current.textContent='삭제됨';
+    window._trxReceiptClear=true;
+  });
   const accSel=document.getElementById('f-acc');
   const toAccSel=document.getElementById('f-to-acc');
   const allAccs=S.activeClient?S.accounts.filter(a=>a.clientId===S.activeClient):S.accounts;
@@ -197,7 +209,7 @@ export function renderTrxForm(t){
             expectedReceiptUrl:t?.receiptUrl||'',
           });
           [S.transactions,S.filteredTrx].forEach(arr=>{const x=arr.find(y=>y.id===savedId);
-            if(x){x.receiptUrl=r.url;x.receiptPath=r.path;x.receiptGeneration=r.generation;x.receiptMissing=false;}});
+            if(x){delete x.receiptUrl;x.receiptPath=r.path;x.receiptGeneration=r.generation;x.receiptMissing=false;}});
         }catch(e){toast('영수증 첨부 실패: '+(e.message||e),'error',6000);}
       }
       if(window._trxReceiptClear&&!receiptFile&&savedId&&isEdit){
@@ -822,7 +834,7 @@ export async function doReceiptUpload(trxId){
       expectedReceiptUrl:target?.receiptUrl||'',
     });
     [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);
-      if(t){t.receiptUrl=r.url;t.receiptPath=r.path;t.receiptGeneration=r.generation;t.receiptMissing=false;}});
+      if(t){delete t.receiptUrl;t.receiptPath=r.path;t.receiptGeneration=r.generation;t.receiptMissing=false;}});
     toast('업로드 완료!','success'); _receiptSelectedFile=null; closeModal(); renderHistoryTable();
   }catch(e){btn.disabled=false;btn.textContent='📤 업로드';if(status)status.style.display='none';toast('업로드 실패: '+e.message,'error');}
 }
@@ -901,13 +913,16 @@ export function closeReceiptModal(){
 export async function printReceiptSheet(){
   const clientId=S.activeClient;
   if(!clientId){toast('입주자를 선택하세요.','error');return;}
-  const trxWithReceipt=S.filteredTrx.filter(t=>t.receiptUrl);
+  const trxWithReceipt=S.filteredTrx.filter(hasReceipt);
   if(!trxWithReceipt.length){toast('증빙이 있는 거래가 없습니다.','info');return;}
   const client=S.clients.find(c=>c.id===clientId)||{name:''};
   const win=window.open('','_blank');
   let cells='';
-  trxWithReceipt.forEach((t,i)=>{
-    const imgSrc=getImageUrl(t.receiptUrl,'w400');
+  const resolved=await Promise.all(trxWithReceipt.map(async t=>({
+    t,url:await receiptAccessUrl(t).catch(()=>''),
+  })));
+  resolved.forEach(({t,url},i)=>{
+    const imgSrc=getImageUrl(url,'w400');
     cells+='<div class="cell"><div class="cell-info">'+t.date+' · '+(t.description||'')+' · '+(t.amountOut>0?t.amountOut.toLocaleString()+'원':t.amountIn.toLocaleString()+'원')+'</div><div class="cell-img"><img src="'+imgSrc+'" onerror="this.src=\'\';this.parentElement.innerHTML=\'이미지 없음\'"></div></div>';
     if((i+1)%8===0&&i+1<trxWithReceipt.length)cells+='<div style="grid-column:1/-1;page-break-after:always;height:0;margin:0;padding:0;border:none;"></div>';
   });
@@ -1067,19 +1082,19 @@ export async function uploadBankStatements(files,accRef,existing,renderGallery){
 // 입주자 폼
 // ─────────────────────────────────────────────
 export function renderClientForm(c){
-  const isEdit=!!c, isAdmin=can('nav.staff');
+  const isEdit=!!c, canAssign=can('assignments.manage'), canEditDetails=can('settings.client');
   const teamLeaders=S.users.filter(u=>u.role==='팀장'&&u.active!==false);
   document.getElementById('modal-body').innerHTML=`
     <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">${isEdit?'입주자 수정':'입주자 등록'}</h3>
     <input type="hidden" id="fc-id" value="${isEdit?c.id:'cli_'+Date.now()}">
     <div style="display:flex;flex-direction:column;gap:12px;">
-      <div><label class="label">성명</label><input type="text" id="fc-name" class="input" value="${isEdit?c.name:''}"></div>
-      ${isAdmin?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div><div><label class="label">담당 직원</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:140px;overflow-y:auto;padding:4px;">${S.users.filter(u=>u.active!==false).map(u=>{const ex=isEdit?String(c.userIds||'').split(',').map(s=>s.trim()):[];const ch=ex.includes(String(u.userId));return`<label style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${ch?'#eff6ff':'#f8fafc'};border:1px solid ${ch?'#bfdbfe':'var(--border)'};border-radius:8px;cursor:pointer;font-size:13px;"><input type="checkbox" name="fc-staff" value="${u.userId}" ${ch?'checked':''} style="accent-color:var(--blue);"> ${u.name}</label>`;}).join('')}</div></div>`:''}
-      <div><label class="label">메모</label><textarea id="fc-memo" class="input" style="height:64px;resize:none;">${isEdit?c.memo||'':''}</textarea></div>
+      <div><label class="label">성명</label><input type="text" id="fc-name" class="input" value="${isEdit?c.name:''}" ${canEditDetails?'':'disabled'}></div>
+      ${canAssign?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div><div><label class="label">담당 직원</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:140px;overflow-y:auto;padding:4px;">${S.users.filter(u=>u.active!==false).map(u=>{const ex=isEdit?String(c.userIds||'').split(',').map(s=>s.trim()):[];const ch=ex.includes(String(u.userId));return`<label style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${ch?'#eff6ff':'#f8fafc'};border:1px solid ${ch?'#bfdbfe':'var(--border)'};border-radius:8px;cursor:pointer;font-size:13px;"><input type="checkbox" name="fc-staff" value="${u.userId}" ${ch?'checked':''} style="accent-color:var(--blue);"> ${u.name}</label>`;}).join('')}</div></div>`:''}
+      <div><label class="label">메모</label><textarea id="fc-memo" class="input" style="height:64px;resize:none;" ${canEditDetails?'':'disabled'}>${isEdit?c.memo||'':''}</textarea></div>
       <button id="fc-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
     </div>`;
   document.getElementById('fc-save').addEventListener('click',async()=>{
-    const isAdm=can('nav.staff');
+    const isAdm=can('assignments.manage');
     // 담당 직원·팀장은 관리 권한자만 편집한다(체크박스가 그들에게만 보인다).
     // 권한이 없는 사용자가 빈 값으로 덮어쓰면 동료의 접근권이 사라지고 팀장이
     // 공석 처리되므로, 그 필드를 **아예 보내지 않는다** — 서버는 주지 않은
@@ -1094,7 +1109,8 @@ export function renderClientForm(c){
     }
     if(isAdm)data.teamLeader=leaderId;
 
-    const p={clientId:id,fields:{name:data.name,contact:data.contact,memo:data.memo}};
+    const p={clientId:id};
+    if(canEditDetails)p.fields={name:data.name,contact:data.contact,memo:data.memo};
     if(data.userIds!==undefined)p.staffUids=String(data.userIds).split(',');
     if(data.teamLeader!==undefined)p.leaderUid=data.teamLeader;
     await window._fbFn.call('saveClient')(p);
@@ -1153,7 +1169,7 @@ export function renderStaffForm(u){
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div><label class="label">이름</label><input type="text" id="fs-name" class="input" value="${isEdit?u.name||'':''}"></div>
       <div><label class="label">아이디</label><input type="text" id="fs-uid" class="input" value="${isEdit?u.userId||'':''}" ${isEdit?'readonly':''}></div>
-      <div><label class="label">비밀번호</label><input type="password" id="fs-pw" class="input" placeholder="${isEdit?'변경 시만 입력':''}"></div>
+      ${isEdit?'<div style="font-size:12px;color:var(--muted);">비밀번호는 직원 정보와 분리되어 있으며 이 화면에서 변경할 수 없습니다.</div>':'<div><label class="label">비밀번호</label><input type="password" id="fs-pw" class="input"></div>'}
       <div><label class="label">역할</label><select id="fs-role" class="input" style="padding:8px 12px;"><option value="입력자"${isEdit&&u.role==='입력자'?' selected':''}>입력자 (수기입력 전용)</option><option value="담당자"${isEdit&&u.role==='담당자'?' selected':''}>담당자</option><option value="팀장"${isEdit&&u.role==='팀장'?' selected':''}>팀장</option><option value="센터장"${isEdit&&u.role==='센터장'?' selected':''}>센터장</option></select></div>
       <div><label class="label">팀</label><input type="text" id="fs-team" class="input" value="${escAttr(isEdit?u.team||'':'')}"></div>
       <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;padding:8px 0;">
@@ -1164,14 +1180,16 @@ export function renderStaffForm(u){
     </div>`;
   document.getElementById('fs-save').addEventListener('click',async()=>{
     const btn=document.getElementById('fs-save');
-    const pw=document.getElementById('fs-pw').value;
+    const pw=document.getElementById('fs-pw')?.value||'';
     const payload={
       userId: (document.getElementById('fs-uid').value||'').trim(),
       name:   (document.getElementById('fs-name').value||'').trim(),
-      role:   document.getElementById('fs-role').value,
+      role:   isEdit?(u.role||'입력자'):'입력자',
       team:   (document.getElementById('fs-team').value||'').trim(),
-      isAdmin: document.getElementById('fs-admin')?.checked===true,
+      isAdmin: isEdit&&u.isAdmin===true,
     };
+    const desiredRole=document.getElementById('fs-role').value;
+    const desiredAdmin=document.getElementById('fs-admin')?.checked===true;
     if(pw)payload.password=pw;
     btn.disabled=true; btn.textContent='저장 중...';
     try{
@@ -1180,7 +1198,15 @@ export function renderStaffForm(u){
       const res=await window._fbFn.call('upsertStaff')(payload);
       const fail=res.data?.results?.find(r=>!r.ok);
       if(fail){toast('저장 실패: '+fail.error,'error');return;}
-      toast('저장됨','success'); closeModal(); await refetchUsers(); renderManagement();
+      const needsPrivilege=!isEdit||desiredRole!==(u.role||'입력자')||desiredAdmin!==(u.isAdmin===true);
+      if(needsPrivilege){
+        const approval=await window._fbFn.call('approveStaff')({
+          userId:payload.userId,role:desiredRole,isAdmin:desiredAdmin,
+        });
+        const state=approval.data?.state;
+        toast(state==='executed'?'저장과 역할 변경이 완료됐습니다.':'일반 정보를 저장하고 역할 변경 승인을 요청했습니다.','success',5000);
+      }else toast('저장됨','success');
+      closeModal(); await refetchUsers(); renderManagement();
     }catch(e){ toast('저장 오류: '+(e.message||'다시 시도하세요.'),'error'); }
     finally{ btn.disabled=false; btn.textContent='💾 저장 완료'; }
   });
@@ -1344,12 +1370,21 @@ async function saveBulkStaff(parsed){
       staff: valid.map(v=>({userId:v.userId,name:v.name,password:v.password,role:v.role,team:v.team||''}))
     });
     const {okCount=0,failCount=0,results=[]}=res.data||{};
+    const succeeded=new Set(results.filter(r=>r.ok).map(r=>r.userId));
+    let requestedCount=0;
+    for(const row of valid){
+      if(!succeeded.has(row.userId))continue;
+      await window._fbFn.call('approveStaff')({
+        userId:row.userId,role:row.role||'입력자',isAdmin:false,
+      });
+      requestedCount++;
+    }
     if(failCount){
       const lines=results.filter(r=>!r.ok).map(r=>`${r.userId}: ${r.error}`).join('\n');
       toast(`${okCount}명 등록, ${failCount}명 실패`,'error',6000);
       console.warn('직원 일괄 등록 실패 내역:\n'+lines);
     } else {
-      toast(`직원 ${okCount}명 등록 완료`,'success',4000);
+      toast(`직원 ${okCount}명 등록 · ${requestedCount}명 역할 승인 요청`,'success',4000);
     }
     closeModal(); await refetchUsers(); renderManagement();
   }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}

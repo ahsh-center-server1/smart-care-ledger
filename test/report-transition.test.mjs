@@ -25,6 +25,7 @@ const OTHER = 'c9';
 function authzOf(uid, role) {
   return {
     uid, role, enabled: true, accessibleClientIds: [MY],
+    leaderClientIds: role === '팀장' ? [MY] : [],
     caps: computeCaps(rankOf({ role, isAdmin: false }), {}),
   };
 }
@@ -114,7 +115,7 @@ test('최종 결재와 월 잠금 중 하나가 실패하면 둘 다 반영되�
 
 test('배정 팀장이 아니면 팀장 결재를 할 수 없다', async () => {
   const { db, fns } = build({
-    'authz/다른팀장': authzOf('다른팀장', '팀장'),
+    'authz/다른팀장': { ...authzOf('다른팀장', '팀장'), leaderClientIds: [] },
   });
   report(db, { status: 'submitted' });
   await assert.rejects(
@@ -129,30 +130,34 @@ test('배정 팀장이 있으면 센터장이 대행할 수 없다', async () =>
   report(db, { status: 'submitted' });
   await assert.rejects(
     () => fns.applyReportTransition({ ...as('센터장'), data: at({ action: 'approveTeamProxy' }) }),
-    (e) => /배정된 팀장이 있어/.test(e.message),
+    (e) => e.code === 'failed-precondition',
   );
 });
 
-test('배정 팀장이 없으면 센터장이 대행할 수 있고 대행 표시가 남는다', async () => {
+test('배정 팀장이 없어도 정식 대행 지정 없이는 대행할 수 없다', async () => {
   const { db, fns } = build();
   db.docs.delete('clientAccess/c1/members/팀장');
   report(db, { status: 'submitted' });
 
-  await fns.applyReportTransition({
-    ...as('센터장'), data: at({ action: 'approveTeamProxy', userName: '박센터' }),
-  });
-  const r = db.docs.get('reports/r1');
-  assert.equal(r.status, 'team_approved');
-  assert.match(r.teamApprovedByName, /대행/);
+  await assert.rejects(
+    () => fns.applyReportTransition({
+      ...as('센터장'), data: at({ action: 'approveTeamProxy', userName: '박센터' }),
+    }),
+    (e) => e.code === 'failed-precondition',
+  );
+  assert.equal(db.docs.get('reports/r1').status, 'submitted');
 });
 
-test('배정 팀장이 퇴사했으면 공석으로 본다', async () => {
+test('배정 팀장이 퇴사해도 암묵적 대행을 허용하지 않는다', async () => {
   const { db, fns } = build();
   db.docs.set('authz/팀장', { ...authzOf('팀장', '팀장'), enabled: false });
   report(db, { status: 'submitted' });
 
-  await fns.applyReportTransition({ ...as('센터장'), data: at({ action: 'approveTeamProxy' }) });
-  assert.equal(db.docs.get('reports/r1').status, 'team_approved');
+  await assert.rejects(
+    () => fns.applyReportTransition({ ...as('센터장'), data: at({ action: 'approveTeamProxy' }) }),
+    (e) => e.code === 'failed-precondition',
+  );
+  assert.equal(db.docs.get('reports/r1').status, 'submitted');
 });
 
 // ─────────────────────────────────────────────
@@ -256,6 +261,24 @@ test('읽은 뒤 상태가 바뀌었으면 중단한다', async () => {
   assert.equal(db.docs.get('reports/r1').status, 'team_approved');
 });
 
+test('전이 직전에 담당 권한이 회수되면 낡은 사전 조회로 결재하지 않는다', async () => {
+  const { db, fns } = build();
+  report(db, { status: 'submitted' });
+  const original = db.runTransaction.bind(db);
+  db.runTransaction = async (fn) => {
+    db.docs.set('authz/팀장', {
+      ...db.docs.get('authz/팀장'), leaderClientIds: [], accessibleClientIds: [],
+    });
+    return original(fn);
+  };
+
+  await assert.rejects(
+    () => fns.applyReportTransition({ ...as('팀장'), data: at({ action: 'approveTeam' }) }),
+    (e) => e.code === 'permission-denied',
+  );
+  assert.equal(db.docs.get('reports/r1').status, 'submitted');
+});
+
 // ─────────────────────────────────────────────
 // 의견 · 삭제
 // ─────────────────────────────────────────────
@@ -273,14 +296,73 @@ test('의견은 정해진 항목만 저장한다', async () => {
   assert.equal(db.docs.get('reports/r1').staffComment, '메모');
 });
 
-test('의견 저장이 보고서를 처음 만들면 초안이다', async () => {
+test('담당자 의견 저장이 보고서를 처음 만들면 초안이다', async () => {
   const { db, fns } = build();
   const out = await fns.saveReportComment({
-    ...as('담당자'), data: at({ key: 'leaderComment', value: '확인' }),
+    ...as('담당자'), data: at({ key: 'staffComment', value: '확인' }),
   });
   const r = db.docs.get('reports/' + out.reportId);
   assert.equal(r.status, 'draft');
   assert.equal(r.createdBy, '담당자');
+});
+
+test('역할별 의견란을 서로 바꿀 수 없고 팀장 의견은 지정 팀장만 쓴다', async () => {
+  const { db, fns } = build({
+    'authz/다른팀장': { ...authzOf('다른팀장', '팀장'), leaderClientIds: [] },
+  });
+  report(db, { status: 'submitted' });
+  await assert.rejects(
+    () => fns.saveReportComment({ ...as('담당자'), data: at({ key: 'leaderComment', value: '위조' }) }),
+    (e) => e.code === 'permission-denied',
+  );
+  await assert.rejects(
+    () => fns.saveReportComment({ ...as('다른팀장'), data: at({ key: 'leaderComment', value: '월권' }) }),
+    (e) => e.code === 'permission-denied',
+  );
+  await fns.saveReportComment({
+    ...as('팀장'), data: at({ key: 'leaderComment', value: '검토함' }),
+  });
+  assert.equal(db.docs.get('reports/r1').leaderComment, '검토함');
+  assert.equal(db.docs.get('reports/r1').staffComment, undefined);
+});
+
+test('제출된 뒤에는 담당자 의견을 몰래 바꿀 수 없다', async () => {
+  const { db, fns } = build();
+  report(db, { status: 'submitted', staffComment: '제출 당시 의견' });
+  await assert.rejects(
+    () => fns.saveReportComment({ ...as('담당자'), data: at({ key: 'staffComment', value: '사후 수정' }) }),
+    (e) => e.code === 'permission-denied',
+  );
+  assert.equal(db.docs.get('reports/r1').staffComment, '제출 당시 의견');
+});
+
+test('결재가 지나간 뒤에는 상위 결재 의견도 바꿀 수 없다', async () => {
+  const { db, fns } = build();
+  report(db, {
+    status: 'confirmed',
+    leaderComment: '팀장 결재 당시 의견',
+    centerComment: '최종 결재 당시 의견',
+  });
+
+  await assert.rejects(
+    () => fns.saveReportComment({ ...as('팀장'), data: at({ key: 'leaderComment', value: '사후 수정' }) }),
+    (e) => e.code === 'permission-denied',
+  );
+  await assert.rejects(
+    () => fns.saveReportComment({ ...as('센터장'), data: at({ key: 'centerComment', value: '사후 수정' }) }),
+    (e) => e.code === 'permission-denied',
+  );
+  assert.equal(db.docs.get('reports/r1').leaderComment, '팀장 결재 당시 의견');
+  assert.equal(db.docs.get('reports/r1').centerComment, '최종 결재 당시 의견');
+});
+
+test('센터장 의견은 최종 결재 직전 단계에서만 저장한다', async () => {
+  const { db, fns } = build();
+  report(db, { status: 'team_approved' });
+  await fns.saveReportComment({
+    ...as('센터장'), data: at({ key: 'centerComment', value: '최종 확인' }),
+  });
+  assert.equal(db.docs.get('reports/r1').centerComment, '최종 확인');
 });
 
 test('삭제 권한이 없으면 지울 수 없다', async () => {
@@ -292,8 +374,11 @@ test('삭제 권한이 없으면 지울 수 없다', async () => {
   );
   assert.equal(db.docs.has('reports/r1'), true);
 
-  await fns.deleteReport({ ...as('팀장'), data: at() });
-  assert.equal(db.docs.has('reports/r1'), false);
+  await assert.rejects(
+    () => fns.deleteReport({ ...as('팀장'), data: at() }),
+    (e) => e.code === 'permission-denied',
+  );
+  assert.equal(db.docs.has('reports/r1'), true);
 });
 
 test('로그인하지 않으면 아무것도 못 한다', async () => {

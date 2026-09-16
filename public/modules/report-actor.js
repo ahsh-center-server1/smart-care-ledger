@@ -16,7 +16,7 @@
 'use strict';
 
 import { S } from '../state.js';
-import { can, requiredRank, ROLE_RANK, ADMIN_RANK } from './permissions.js';
+import { can } from './permissions.js';
 
 /**
  * 화면에서 신원 정보를 만든다 — S.user 기준.
@@ -51,12 +51,10 @@ export function reportActorContext(){
   // 예전에는 role==='팀장' 하나로 묶여 있어 배정 팀장이 센터장이거나 관리자면
   // 결재 버튼이 아예 나오지 않았다.
   const isAssignedLeader=!!teamLeaderId&&(teamLeaderId===userId||(!!me&&teamLeaderId===String(me.id)));
-  // 배정 팀장이 공석/삭제/결재불가/퇴사(비활성)면 vacant → 상위 등급이 대행
+  // 배정 팀장의 재직 여부만 신원 정보로 유지한다. 공석이어도 상위 역할이
+  // 암묵적으로 대행하지 않으며, 별도 승인자가 없으면 결재는 보류된다.
   const leaderUser=users.find(u=>String(u.id)===teamLeaderId||String(u.userId)===teamLeaderId);
-  const leaderRank=leaderUser?(leaderUser.isAdmin?ADMIN_RANK:(ROLE_RANK[leaderUser.role]||0)):0;
-  const leaderVacant=!teamLeaderId||!leaderUser
-    ||leaderRank<requiredRank('report.approve.team')
-    ||leaderUser.active===false;
+  const leaderVacant=!teamLeaderId||!leaderUser||leaderUser.active===false;
   const staffIds=String(client?.userIds||'').split(',').map(x=>x.trim());
   return {
     ...actorContext({report,isAssignedLeader,leaderVacant}),
@@ -67,14 +65,11 @@ export function reportActorContext(){
 export const TRANSITION_TOAST={
   save:'임시저장되었습니다.',
   submit:'제출되었습니다.',
-  submitAsLeader:'팀장 직접 제출 완료! 센터장 결재 대기 중.',
   approveTeam:'팀장 결재 완료.',
-  approveTeamProxy:'팀장 결재를 대행 처리했습니다. 센터장 최종 결재 대기 중.',
   approveCenter:'최종 결재 완료.',
   reject:'보고서가 반려되었습니다.',
   recall:'보고서가 초안으로 회수되었습니다.',
   revert:'결재가 취소되었습니다.',
-  release:'반려를 해제하고 초안으로 되돌렸습니다.',
 };
 
 /**
@@ -86,14 +81,11 @@ export const TRANSITION_TOAST={
 export const TRANSITION_AUDIT={
   save:'report.save',
   submit:'report.submit',
-  submitAsLeader:'report.submit',
   approveTeam:'report.approveTeam',
-  approveTeamProxy:'report.approveTeam',
   approveCenter:'report.approveCenter',
   reject:'report.reject',
   recall:'report.recall',
   revert:'report.revert',
-  release:'report.release',
 };
 
 // 결재 취소 버튼은 되돌아가는 단계에 따라 문구가 달라야 한다

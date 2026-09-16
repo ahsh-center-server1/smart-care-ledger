@@ -2,7 +2,9 @@
 
 /** 만료된 임시 영수증 job과 Storage 객체의 보상 정리. */
 
-const { STATES, finalPath, stagingPath, jobPath } = require('./receipt-jobs.cjs');
+const {
+  STATES, ATTACHED_STATES, LEASE_MS, millis, finalPath, stagingPath, jobPath,
+} = require('./receipt-jobs.cjs');
 
 const TRANSACTIONS = 'transactions';
 const AUDIT_LOGS = 'auditLogs';
@@ -11,11 +13,34 @@ const CLEANUP_BATCH = 100;
 const UPLOAD_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
 module.exports = function receiptCleanup(ctx) {
-  const { db, getBucket, onSchedule, logger, FieldValue } = ctx;
+  const { db, getBucket, onSchedule, logger, FieldValue, randomId } = ctx;
+
+  async function claimCleanup(ref) {
+    const token = randomId();
+    return db.runTransaction(async (tx) => {
+      const currentSnap = await tx.get(ref);
+      if (!currentSnap.exists) return null;
+      const current = currentSnap.data() || {};
+      const now = Date.now();
+      if (millis(current.expireAt) > now) return null;
+      if (current.state === STATES.FINALIZING && millis(current.leaseUntil) > now) return null;
+      if (current.state === STATES.CLEANING && millis(current.cleanupLeaseUntil) > now) return null;
+      const preserveFinal = current.cleanupPreserveFinal === true
+        || ATTACHED_STATES.includes(current.state);
+      tx.update(ref, {
+        state: STATES.CLEANING,
+        cleanupToken: token,
+        cleanupLeaseUntil: new Date(now + LEASE_MS),
+        cleanupPreserveFinal: preserveFinal,
+      });
+      return { ...current, state: STATES.CLEANING, cleanupToken: token, cleanupPreserveFinal: preserveFinal };
+    });
+  }
 
   /** `final → staging → job`. 확인할 수 없는 최종 객체는 삭제하지 않는다. */
   async function cleanupExpiredJob(snap) {
-    const job = snap.data() || {};
+    const job = await claimCleanup(snap.ref);
+    if (!job) return { kept: true, reason: 'not-claimable' };
     const uid = String(job.uid || '');
     const uploadId = String(job.uploadId || '');
     if (!uid || !UPLOAD_ID.test(uploadId) || !job.clientId) {
@@ -25,8 +50,7 @@ module.exports = function receiptCleanup(ctx) {
 
     const bucket = getBucket();
     const final = job.finalPath || finalPath(job.clientId, uploadId);
-    const attached = [STATES.ATTACHED, STATES.CLEANUP_PENDING, STATES.COMPLETED]
-      .includes(job.state);
+    const attached = job.cleanupPreserveFinal === true;
     let orphanReason = '';
 
     try {
@@ -68,7 +92,15 @@ module.exports = function receiptCleanup(ctx) {
       }
 
       await bucket.file(stagingPath(uid, uploadId)).delete({ ignoreNotFound: true });
-      await snap.ref.delete();
+      await db.runTransaction(async (tx) => {
+        const current = await tx.get(snap.ref);
+        const data = current.exists ? (current.data() || {}) : {};
+        if (!current.exists || data.state !== STATES.CLEANING
+            || data.cleanupToken !== job.cleanupToken) {
+          throw new Error('cleanup lease를 잃었습니다');
+        }
+        tx.delete(snap.ref);
+      });
       return { removed: true, orphan: !!orphanReason, finalPreserved: attached || !!orphanReason };
     } catch (err) {
       logger.warn('[cleanupReceiptJobs] 정리 실패 — job을 남겨 재시도합니다', {

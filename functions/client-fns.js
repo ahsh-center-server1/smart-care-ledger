@@ -28,15 +28,17 @@ const {
   AUTHZ, CLIENT_ACCESS, MEMBERS,
   parseStaffIds, planAssignmentChange, assertWritable,
 } = require('./authz.cjs');
+const { fixedCan } = require('./fixed-role-policy.cjs');
 
 const CLIENTS = 'clients';
 const USERS = 'users';
+const ASSIGNMENT_CHANGES = 'assignmentChanges';
 
 /** 화면이 바꿀 수 있는 입주자 필드. 여기 없는 것은 무시한다. */
 const CLIENT_FIELDS = ['name', 'contact', 'memo'];
 
 module.exports = function clientFns(ctx) {
-  const { db, callable, HttpsError, logger, FieldValue } = ctx;
+  const { db, callable, HttpsError, logger, FieldValue, randomId } = ctx;
 
   /**
    * 입주자 관리 권한. caps 스냅샷만 본다 — 등급 계산은 서버가 미리 끝내
@@ -58,17 +60,14 @@ module.exports = function clientFns(ctx) {
     }
     const d = snap.data() || {};
     if (d.enabled !== true) throw new HttpsError('permission-denied', '비활성화된 계정입니다.');
-    if (!d.caps || d.caps.settingsClient !== true) {
+    if (!fixedCan(d, 'assignments.manage')) {
       throw new HttpsError('permission-denied', '입주자 관리 권한이 없습니다.');
     }
     return d;
   }
 
   /** 지정된 담당자가 실재하고 활성인지. 없는 uid 는 투영본에 유령을 만든다. */
-  async function assertUsersExist(uids) {
-    const list = [...new Set(uids)].filter(Boolean);
-    if (!list.length) return;
-    const snaps = await db.getAll(...list.map((uid) => db.collection(USERS).doc(uid)));
+  function assertUserSnapshots(list, snaps) {
     const bad = snaps
       .map((s, i) => ({ uid: list[i], ok: s.exists && s.data().active !== false }))
       .filter((x) => !x.ok)
@@ -110,6 +109,14 @@ module.exports = function clientFns(ctx) {
           : FieldValue.arrayRemove(clientId),
       }, { merge: true });
     }
+    for (const op of plan.leaderOps || []) {
+      tx.set(db.collection(AUTHZ).doc(op.uid), {
+        uid: op.uid,
+        leaderClientIds: op.op === 'add'
+          ? FieldValue.arrayUnion(clientId)
+          : FieldValue.arrayRemove(clientId),
+      }, { merge: true });
+    }
   }
 
   // ───────────────────────────────────────────────────────────
@@ -117,13 +124,16 @@ module.exports = function clientFns(ctx) {
   // ───────────────────────────────────────────────────────────
   const saveClient = callable('saveClient', async (request) => {
     const auth = request.auth;
-    await requireClientAdmin(auth);
+    const caller = await requireClientAdmin(auth);
 
     const d = request.data || {};
     const clientId = String(d.clientId || '').trim();
     if (!clientId) throw new HttpsError('invalid-argument', '입주자 아이디가 필요합니다.');
 
     const fields = pickFields(d.fields);
+    if (Object.keys(fields).length && !fixedCan(caller, 'settings.client')) {
+      throw new HttpsError('permission-denied', '입주자 기본정보는 이 화면에서 변경할 수 없습니다.');
+    }
     if (d.fields && d.fields.name !== undefined && !fields.name) {
       throw new HttpsError('invalid-argument', '이름이 비어 있습니다.');
     }
@@ -134,47 +144,92 @@ module.exports = function clientFns(ctx) {
     const nextStaff = changeStaff ? parseStaffIds(d.staffUids) : null;
     const nextLeader = changeLeader ? String(d.leaderUid || '').trim() : null;
 
-    if (changeStaff || changeLeader) {
-      await assertUsersExist([...(nextStaff || []), ...(nextLeader ? [nextLeader] : [])]);
-    }
+    const assignedUids = [...new Set([
+      ...(nextStaff || []), ...(nextLeader ? [nextLeader] : []),
+    ])].filter(Boolean);
 
     const clientRef = db.collection(CLIENTS).doc(clientId);
+    const assignmentChangeId = randomId();
 
     const result = await db.runTransaction(async (tx) => {
       // 규약상 읽기를 먼저 전부 끝내고 그 다음에 쓴다.
       const snap = await tx.get(clientRef);
       const cur = snap.exists ? (snap.data() || {}) : null;
       const created = !snap.exists;
+      const actorSnap = await tx.get(db.collection(AUTHZ).doc(auth.uid));
+      const assignedSnaps = await Promise.all(
+        assignedUids.map((uid) => tx.get(db.collection(USERS).doc(uid))),
+      );
+      const actor = actorSnap.exists ? actorSnap.data() || {} : {};
+      assertUserSnapshots(assignedUids, assignedSnaps);
+      if (!fixedCan(actor, 'assignments.manage')) {
+        throw new HttpsError('permission-denied', '담당 배정 권한이 더 이상 유효하지 않습니다.');
+      }
+      if (created) {
+        throw new HttpsError('failed-precondition', '입주자 신규 등록 절차는 아직 열려 있지 않습니다.');
+      }
+      if (actor.role === '팀장'
+          && String(cur.teamLeader || '').trim() !== String(auth.uid)) {
+        throw new HttpsError('permission-denied', '본인이 지정 팀장인 입주자의 담당만 변경할 수 있습니다.');
+      }
+      if (actor.role === '팀장' && changeLeader
+          && nextLeader !== String(cur.teamLeader || '').trim()) {
+        throw new HttpsError('permission-denied', '담당 팀장 지정은 센터장만 변경할 수 있습니다.');
+      }
 
       // 신규 등록인데 담당을 주지 않았으면 만든 사람을 담당으로 넣는다.
       // 담당이 없는 입주자는 만든 사람 화면에도 보이지 않아 막다른 길이 된다.
-      const staff = changeStaff ? nextStaff
-        : (created ? [auth.uid] : parseStaffIds(cur.userIds));
+      const staff = changeStaff ? nextStaff : parseStaffIds(cur.userIds);
       const leader = changeLeader ? nextLeader
-        : (created ? '' : String((cur && cur.teamLeader) || '').trim());
+        : String((cur && cur.teamLeader) || '').trim();
 
-      const plan = assertWritableOrThrow(planAssignmentChange({
+      const rawPlan = planAssignmentChange({
         clientId,
         prev: {
-          staff: created ? [] : parseStaffIds(cur.userIds),
-          leader: created ? '' : String((cur && cur.teamLeader) || '').trim(),
+          staff: parseStaffIds(cur.userIds),
+          leader: String((cur && cur.teamLeader) || '').trim(),
         },
         next: { staff, leader },
-      }));
+      });
+      const assignmentChanged = rawPlan.memberOps.length > 0
+        || rawPlan.accessOps.length > 0
+        || rawPlan.leaderOps.length > 0;
+      const plan = assertWritableOrThrow({
+        ...rawPlan,
+        writeCount: rawPlan.writeCount + (assignmentChanged ? 1 : 0),
+      });
 
       // ── 여기서부터 쓰기 ──
       tx.set(clientRef, {
         ...fields,
         userIds: staff.join(','),
         teamLeader: leader,
-        ...(created ? { active: true, createdAt: FieldValue.serverTimestamp() } : {}),
         // revision 은 정합성 복구 작업의 낙관적 락이다.
         revision: FieldValue.increment(1),
       }, { merge: true });
 
       writeProjection(tx, clientId, plan);
 
-      return { created, writeCount: plan.writeCount, affected: plan.affectedUids.length };
+      if (assignmentChanged) {
+        tx.set(db.collection(ASSIGNMENT_CHANGES).doc(assignmentChangeId), {
+          changeId: assignmentChangeId,
+          clientId,
+          before: {
+            staffUids: parseStaffIds(cur.userIds),
+            leaderUid: String(cur.teamLeader || '').trim(),
+          },
+          after: { staffUids: staff, leaderUid: leader },
+          changedBy: auth.uid,
+          changedAt: FieldValue.serverTimestamp(),
+        });
+      }
+
+      return {
+        created,
+        writeCount: plan.writeCount,
+        affected: plan.affectedUids.length,
+        assignmentChangeId: assignmentChanged ? assignmentChangeId : null,
+      };
     });
 
     logger.info('[saveClient] 완료', { clientId, ...result });
@@ -189,18 +244,10 @@ module.exports = function clientFns(ctx) {
   // ───────────────────────────────────────────────────────────
   const setClientActive = callable('setClientActive', async (request) => {
     await requireClientAdmin(request.auth);
-
-    const d = request.data || {};
-    const clientId = String(d.clientId || '').trim();
-    const active = d.active === true;
-    if (!clientId) throw new HttpsError('invalid-argument', '입주자 아이디가 필요합니다.');
-
-    const ref = db.collection(CLIENTS).doc(clientId);
-    const snap = await ref.get();
-    if (!snap.exists) throw new HttpsError('not-found', '입주자를 찾을 수 없습니다.');
-
-    await ref.update({ active, revision: FieldValue.increment(1) });
-    return { ok: true, active };
+    throw new HttpsError(
+      'failed-precondition',
+      '입주자 활성 상태 변경 절차는 아직 열려 있지 않습니다.',
+    );
   });
 
   // ───────────────────────────────────────────────────────────
@@ -212,33 +259,10 @@ module.exports = function clientFns(ctx) {
   // ───────────────────────────────────────────────────────────
   const deleteClient = callable('deleteClient', async (request) => {
     await requireClientAdmin(request.auth);
-
-    const clientId = String((request.data && request.data.clientId) || '').trim();
-    if (!clientId) throw new HttpsError('invalid-argument', '입주자 아이디가 필요합니다.');
-
-    const ref = db.collection(CLIENTS).doc(clientId);
-    const snap = await ref.get();
-    if (!snap.exists) throw new HttpsError('not-found', '입주자를 찾을 수 없습니다.');
-
-    const cur = snap.data() || {};
-    const touched = new Set(parseStaffIds(cur.userIds));
-    const leader = String(cur.teamLeader || '').trim();
-    if (leader) touched.add(leader);
-
-    // 접근 근거를 **먼저** 끊는다. 원본보다 앞서는 이유는 규칙이 보는 것이
-    // authz 이기 때문이다 — 중간에 실패해도 접근은 막힌 상태로 남는다.
-    const batch = db.batch();
-    for (const uid of touched) {
-      batch.set(db.collection(AUTHZ).doc(uid), {
-        accessibleClientIds: FieldValue.arrayRemove(clientId),
-      }, { merge: true });
-      batch.delete(db.collection(CLIENT_ACCESS).doc(clientId).collection(MEMBERS).doc(uid));
-    }
-    batch.delete(ref);
-    await batch.commit();
-
-    logger.info('[deleteClient] 완료', { clientId, revoked: touched.size });
-    return { ok: true, revoked: touched.size };
+    throw new HttpsError(
+      'failed-precondition',
+      '입주자와 금융 기록은 삭제하지 않습니다. 별도 보존 절차가 마련될 때까지 비활성·삭제를 할 수 없습니다.',
+    );
   });
 
   /** assertWritable 의 오류를 사용자에게 보이는 형태로. */

@@ -7,6 +7,7 @@ import {
 
 const require = createRequire(import.meta.url);
 const archiveFns = require('../functions/archive-fns.js');
+const { calcAccountBalance } = require('../functions/balance.cjs');
 const { computeCaps, rankOf } = require('../functions/perm-catalog.cjs');
 
 // sharp 는 functions/ 의 의존이다. 대역 이미지 대신 **진짜 JPEG** 을 만들어
@@ -37,11 +38,11 @@ const BIG_JPEG = await sharp({
 function build(seed = {}, objects = {}) {
   const db = makeDb({
     'authz/센터장': {
-      uid: '센터장', enabled: true, accessibleClientIds: ['c1'],
+      uid: '센터장', role: '센터장', isAdmin: false, enabled: true, accessibleClientIds: ['c1'],
       caps: computeCaps(rankOf({ role: '센터장' }), {}),
     },
     'authz/담당자': {
-      uid: '담당자', enabled: true, accessibleClientIds: ['c1'],
+      uid: '담당자', role: '담당자', isAdmin: false, enabled: true, accessibleClientIds: ['c1'],
       caps: computeCaps(rankOf({ role: '담당자' }), {}),
     },
     ...seed,
@@ -124,8 +125,38 @@ test('기초잔액이 다음 해로 전진한다', async () => {
   await runToCompletion(runArchive);
   const acc = db.docs.get('accounts/a1');
   assert.equal(acc.initialBalance, 700);
-  assert.equal(acc.initialBalanceDate, '2026-01-01');
+  assert.equal(acc.initialBalanceDate, '2025-12-31');
   assert.equal(acc.currentBalance, 700);
+});
+
+test('마감 뒤 다음 해 1월 1일 거래가 잔액에 포함된다', async () => {
+  const { db, runArchive } = build({
+    'accounts/a1': { clientId: 'c1', initialBalance: 1000, initialBalanceDate: '2025-01-01' },
+    'transactions/old': {
+      clientId: 'c1', accountId: 'a1', date: '2025-06-01', amountOut: 100, type: '지출',
+    },
+  });
+  await runToCompletion(runArchive);
+  const account = { id: 'a1', ...db.docs.get('accounts/a1') };
+  const jan1 = { accountId: 'a1', date: '2026-01-01', amountOut: 50, type: '지출' };
+  assert.equal(calcAccountBalance(account, [jan1]), 850);
+});
+
+test('기초잔액 기준일 당일 거래는 연초 잔액에 두 번 더하지 않는다', async () => {
+  const { db, runArchive } = build({
+    'accounts/a1': { clientId: 'c1', initialBalance: 1000, initialBalanceDate: '2025-01-01' },
+    'transactions/base-day': {
+      clientId: 'c1', accountId: 'a1', date: '2025-01-01', amountIn: 500, type: '수입',
+    },
+    'transactions/after-base': {
+      clientId: 'c1', accountId: 'a1', date: '2025-01-02', amountOut: 100, type: '지출',
+    },
+  });
+
+  await runToCompletion(runArchive);
+  const acc = db.docs.get('accounts/a1');
+  assert.equal(acc.initialBalance, 900);
+  assert.equal(acc.initialBalanceDate, '2025-12-31');
 });
 
 test('취소 거래는 잔액에서 빠진다', async () => {
@@ -208,7 +239,7 @@ test('비활성 계좌도 전진시킨다', async () => {
 
   await runToCompletion(runArchive);
   const acc = db.docs.get('accounts/a1');
-  assert.equal(acc.initialBalanceDate, '2026-01-01', '비활성 계좌가 전진하지 않았습니다');
+  assert.equal(acc.initialBalanceDate, '2025-12-31', '비활성 계좌가 전진하지 않았습니다');
   assert.equal(acc.initialBalance, 800);
 });
 

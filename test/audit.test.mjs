@@ -176,7 +176,11 @@ test('전이표의 모든 동작에 이력 액션 코드가 매핑돼 있다', a
   for (const byAction of Object.values(TRANSITIONS)) {
     for (const a of Object.keys(byAction)) actions.add(a);
   }
-  assert.ok(actions.size >= 8, `전이 동작이 너무 적습니다 (${actions.size}개)`);
+  assert.deepEqual(
+    [...actions].sort(),
+    ['approveCenter', 'approveTeam', 'recall', 'reject', 'revert', 'save', 'submit'].sort(),
+    `허용하지 않은 결재 전이가 추가되거나 필수 전이가 사라졌습니다 (${actions.size}개)`,
+  );
 
   const missing = [...actions].filter(a => !(a in TRANSITION_AUDIT));
   assert.deepEqual(

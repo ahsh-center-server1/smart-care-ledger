@@ -1,26 +1,3 @@
-// public/modules/receipt-intake.js
-//
-// 영수증 사진 → 거래 자동입력.
-//
-// 흐름
-//   사진 여러 장 드롭
-//     → HEIC 변환 · 압축 (기존 services/image.js 재사용)
-//     → 서버 판독 (analyzeReceipt — 모델은 인쇄된 글자만 옮겨 적는다)
-//     → 정규화 (domain/receipt.js — 날짜·금액은 코드가 해석한다)
-//     → 카테고리 추정 (사용자가 관리하는 자동분류 규칙)
-//     → 거래 매칭 (domain/receipt-match.js — 결정적 점수)
-//     → **검토 표** — 사람이 확인하고 고친다
-//     → 확인 → 한 번의 배치로 저장 (첨부 + 신규 거래 + 변경 이력)
-//
-// 왜 검토 표를 반드시 거치는가
-//   판독은 틀릴 수 있다. 사진이 흐리거나 잘리면 금액을 잘못 읽고, 그것이
-//   그대로 저장되면 잔액이 어긋난다. 그리고 그 오류는 통장과 맞춰볼 때까지
-//   발견되지 않는다. 그래서 **자동입력은 입력을 대신하는 것이 아니라
-//   타이핑을 줄이는 것**이다 — 확인은 사람이 한다.
-//
-//   다만 확인 비용을 최소화한다: 확신이 높고 매칭이 명확한 행은 이미 채워진
-//   상태로 보여주고, 애매한 행만 눈에 띄게 표시한다.
-
 'use strict';
 
 import { S } from '../state.js';
@@ -33,7 +10,10 @@ import { auditOp } from '../services/audit.js';
 import { can } from './permissions.js';
 import { isConfirmedLocked, loadTransactions } from './core.js';
 import { toReceiptDraft } from '../domain/receipt.js';
-import { matchReceipt, classifyMerchant } from '../domain/receipt-match.js';
+import { classifyMerchant } from '../domain/receipt-match.js';
+import {
+  getAiAvailability, rematchReceiptRow, friendlyReceiptError,
+} from '../services/receipt-intake-support.js';
 // 상호명 정규화에 쓰는 노이즈 단어 — 엑셀 파서와 **같은 목록**을 쓴다.
 // (window 전역으로 꺼내려 했다가 그 이름이 없어 조용히 빈 배열이 됐다)
 import { NOISE_WORDS } from '../parser-config.js';
@@ -48,30 +28,20 @@ const LOW_CONFIDENCE = 0.7;
 let rows = [];
 let busy = false;
 
-/** AI 기능이 서버에 설정돼 있는지 — 한 번만 물어보고 기억한다. */
-let aiConfigured = null;
-
-/**
- * 서버에 AI가 설정돼 있는가.
- * 미설정이면 화면이 이 기능을 아예 보여주지 않는다 — 눌러서 실패하게 두지 않는다.
- */
 export async function checkAiConfigured() {
-  if (aiConfigured !== null) return aiConfigured;
-  try {
-    const res = await window._fbFn.call('getAiStatus')({});
-    aiConfigured = !!(res && res.data && res.data.configured);
-  } catch (e) {
-    // 물어보는 것조차 실패하면 없는 것으로 본다(기능을 숨긴다).
-    aiConfigured = false;
-  }
-  return aiConfigured;
+  return (await getAiAvailability()).state === 'ready';
 }
 
 /** 진입점 버튼 표시를 갱신한다. */
 export async function refreshReceiptIntakeButtons() {
-  const ok = can('receipt.upload') && await checkAiConfigured();
+  const allowed = can('receipt.upload');
+  const status = allowed ? await getAiAvailability() : { state: 'hidden', message: '' };
+  const adminCanDiagnose = can('system.ai');
   document.querySelectorAll('[data-receipt-intake]').forEach(el => {
-    el.style.display = ok ? '' : 'none';
+    const visible = allowed && (status.state === 'ready' || adminCanDiagnose);
+    el.style.display = visible ? '' : 'none';
+    el.disabled = status.state !== 'ready';
+    if (status.message) el.title = status.message;
   });
 }
 
@@ -94,6 +64,8 @@ async function analyzeOne(file, ctx) {
     target: 'new',
     category: '',
     error: '',
+    saveError: '',
+    clientId: ctx.clientId,
   };
 
   try {
@@ -119,27 +91,17 @@ async function analyzeOne(file, ctx) {
     const hit = classifyMerchant(draft.merchant, rules, ctx.clientId);
     row.category = hit ? hit.category : '';
 
-    // 매칭 — 결정적 점수. 이미 로드된 거래만 본다(추가 조회 없음).
-    const candidates = S.transactions.filter(t => t.clientId === ctx.clientId);
-    const m = matchReceipt(draft, candidates, { noiseWords: NOISE_WORDS });
-    row.matches = m.matches;
-    row.decision = m.decision;
-    row.target = m.decision === 'auto' ? m.autoMatch.trx.id
-      : m.decision === 'choose' ? m.matches[0].trx.id
-      : 'new';
+    await rematchRow(row);
   } catch (e) {
     // 한 장이 실패해도 나머지는 계속 처리한다 — 10장 중 1장 때문에
     // 전부 다시 올리게 하면 쓸 수 없다.
-    row.error = friendlyError(e);
+    row.error = friendlyReceiptError(e);
   }
   return row;
 }
 
-function friendlyError(e) {
-  const msg = String((e && e.message) || e || '');
-  // 서버가 이미 사용자용 문장으로 바꿔 보낸다(끝이 "직접 입력할 수 있습니다").
-  if (msg) return msg;
-  return '판독에 실패했습니다. 직접 입력할 수 있습니다.';
+async function rematchRow(row) {
+  return rematchReceiptRow(row, S.transactions, NOISE_WORDS);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -283,11 +245,6 @@ async function handleFiles(fileList) {
     toast(`한 번에 ${MAX_FILES}장까지 처리합니다.`, 'info', 4000);
   }
 
-  // 이 입주자의 거래가 로드돼 있지 않으면 매칭할 대상이 없다.
-  if (S.activeClient !== clientId) {
-    await loadTransactions(clientId);
-  }
-
   busy = true;
   showLoading(true);
   const review = document.getElementById('ri-review');
@@ -379,6 +336,13 @@ function rowCard(row) {
   grid.appendChild(categoryField(row));
   mid.appendChild(grid);
 
+  if (row.saveError) {
+    const err = document.createElement('p');
+    err.className = 'ui-error';
+    err.textContent = `저장 실패: ${row.saveError}`;
+    mid.appendChild(err);
+  }
+
   if (lowConf) {
     const warn = document.createElement('p');
     warn.className = 'ui-hint';
@@ -418,6 +382,17 @@ function field(row, key, label, type) {
     if (row.draft[key]) i.removeAttribute('aria-invalid');
     else i.setAttribute('aria-invalid', 'true');
   });
+  if (['date', 'amount', 'merchant'].includes(key)) {
+    i.addEventListener('change', async () => {
+      try {
+        await rematchRow(row);
+        paintReview();
+      } catch (e) {
+        row.saveError = `거래 후보를 다시 찾지 못했습니다: ${friendlyReceiptError(e)}`;
+        paintReview();
+      }
+    });
+  }
   d.append(l, i);
   return d;
 }
@@ -429,6 +404,10 @@ function categoryField(row) {
   l.textContent = '분류';
   const s = document.createElement('select');
   s.className = 'ui-select';
+
+  if (row.decision === 'choose') {
+    s.appendChild(new Option('후보를 선택하세요', ''));
+  }
   const cats = [...new Set(S.categories
     .filter(c => !c.keyword && c.type === '지출')
     .map(c => c.category))];
@@ -506,6 +485,12 @@ async function saveAll() {
   const usable = rows.filter(r => !r.error && r.draft && r.target !== 'skip');
   if (!usable.length) { toast('저장할 항목이 없습니다.', 'info'); return; }
 
+  const undecided = usable.filter(r => !r.target);
+  if (undecided.length) {
+    toast(`비슷한 거래 중 선택하지 않은 항목이 ${undecided.length}건 있습니다.`, 'error', 5000);
+    return;
+  }
+
   // 날짜가 없으면 저장할 수 없다 — 거래는 날짜가 있어야 잔액에 들어간다.
   const noDate = usable.filter(r => !r.draft.date);
   if (noDate.length) {
@@ -574,9 +559,27 @@ async function saveAll() {
     });
     if (logOp) await batchMixedOps({ adds: [{ col: logOp.col, data: logOp.data }] });
 
-    toast(`저장 완료 — 기존 거래에 ${attached}건 첨부, 새 거래 ${created}건 생성.`, 'success', 6000);
-    cleanup();
-    window.closeModal();
+    const byUpload = new Map(out.results.map(result => [result.uploadId, result]));
+    const remaining = [];
+    for (const row of rows) {
+      const result = byUpload.get(row.uploadId);
+      if (result && result.ok) {
+        if (row.thumb) URL.revokeObjectURL(row.thumb);
+      } else {
+        if (result && !result.ok) row.saveError = result.error || '알 수 없는 오류';
+        remaining.push(row);
+      }
+    }
+    rows = remaining;
+
+    if (out.failCount) {
+      toast(`일부 저장 완료 — 성공 ${out.okCount}건, 다시 확인할 항목 ${out.failCount}건.`, 'info', 7000);
+      paintReview();
+    } else {
+      toast(`저장 완료 — 기존 거래에 ${attached}건 첨부, 새 거래 ${created}건 생성.`, 'success', 6000);
+      cleanup();
+      window.closeModal();
+    }
     await loadTransactions(clientId, { range: S.trxRange });
   } catch (e) {
     toast('저장 실패: ' + (e.message || e), 'error', 6000);

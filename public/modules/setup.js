@@ -33,7 +33,7 @@ export function getSetupState() {
       title: '기본 분류 만들기',
       desc: '식비·교통비 같은 지출 분류입니다. 나중에 설정에서 바꿀 수 있어요.',
       done: (S.categories || []).length > 0,
-      can: can('nav.settings'),          // 카테고리 쓰기는 담당자 이상 (보안 규칙과 동일)
+      can: can('settings.category'),
       actionLabel: '기본 분류 만들기',
       action: seedDefaultCategories,
     },
@@ -42,7 +42,7 @@ export function getSetupState() {
       title: '입주자 등록',
       desc: '금전을 관리할 입주자를 등록합니다.',
       done: (S.allClients || S.clients || []).length > 0,
-      can: can('settings.client') || can('nav.staff'),
+      can: can('assignments.manage'),
       actionLabel: '입주자 등록하기',
       action: () => openModal('client'),
     },
@@ -51,7 +51,7 @@ export function getSetupState() {
       title: '계좌와 기초잔액 등록',
       desc: '통장별로 등록하고, 기준일과 그 시점 잔액을 입력합니다.',
       done: (S.allAccounts || S.accounts || []).length > 0,
-      can: can('settings.account') || can('nav.staff'),
+      can: can('settings.account'),
       actionLabel: '계좌 등록하기',
       action: () => openModal('account'),
       // 입주자가 없으면 계좌를 만들 수 없다 (계좌 폼이 입주자를 고르게 되어 있음)

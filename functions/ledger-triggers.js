@@ -16,7 +16,7 @@ const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { calcAccountBalance, affectsBalance } = require('./balance.cjs');
 
 module.exports = function ledgerTriggers(ctx) {
-  const { db, callable, requireCaller, logger, FieldValue } = ctx;
+  const { db, callable, requireCaller } = ctx;
 
   // ─────────────────────────────────────────────────────────────
   // syncAccountBalance — 거래가 바뀌면 계좌 currentBalance를 서버에서 재계산
@@ -149,38 +149,11 @@ module.exports = function ledgerTriggers(ctx) {
   // ─────────────────────────────────────────────────────────────
   const {
   LOCKED_MONTHS_DOC,
-  lockIndexChange,
   buildLockIndex,
   } = require('./locked-months.cjs');
 
   const CONFIG = 'config';
   const REPORTS = 'reports';
-
-  const syncLockedMonths = onDocumentWritten(
-  { document: 'reports/{reportId}' },
-  async (event) => {
-    const before = event.data && event.data.before && event.data.before.data();
-    const after = event.data && event.data.after && event.data.after.data();
-
-    const change = lockIndexChange(before, after);
-    if (!change) return;                        // 마감 여부가 안 바뀌면 할 일 없음
-
-    const ref = db.collection(CONFIG).doc(LOCKED_MONTHS_DOC);
-    try {
-      await ref.set({
-        months: {
-          [change.key]: change.locked ? true : FieldValue.delete(),
-        },
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-    } catch (err) {
-      // 색인 갱신 실패가 결재 자체를 되돌리지는 않는다. rebuildLockedMonths로 복구한다.
-      logger.error('[syncLockedMonths] 색인 갱신 실패', {
-        key: change.key, locked: change.locked, message: err && err.message,
-      });
-    }
-  }
-  );
 
   /**
    * rebuildLockedMonths — 색인을 reports 전체에서 다시 만든다.
@@ -212,6 +185,6 @@ module.exports = function ledgerTriggers(ctx) {
 
   return {
     syncAccountBalance, syncAccountOnSettingsChange,
-    syncLockedMonths, rebuildLockedMonths,
+    rebuildLockedMonths,
   };
 };

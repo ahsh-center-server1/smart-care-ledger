@@ -34,13 +34,28 @@ service firebase.storage {
       return signedIn() && me().get('enabled', false) == true;
     }
 
-    /** 서버가 등급표로 계산해 둔 권한 불리언. 규칙은 등급을 계산하지 않는다. */
+    function validRole(role) {
+      return role in ['입력자', '담당자', '팀장', '센터장'];
+    }
+
+    /** 고정 역할 정책. 저장된 과거 caps는 권한 근거가 아니다. */
     function cap(name) {
-      return active() && me().get('caps', {}).get(name, false) == true;
+      let role = me().get('role', '');
+      return active()
+        && (validRole(role) || (role == '' && me().get('isAdmin', false) == true))
+        && ((role == '입력자' && name in ['receiptUpload', 'receiptAttachOwn'])
+          || (role == '담당자' && name in [
+            'trxViewAll', 'excelUpload', 'bankbookUpload', 'receiptUpload',
+            'receiptAttachOwn', 'receiptAttachAny', 'receiptReplace', 'receiptPrint'
+          ])
+          || (role == '팀장' && name in ['trxViewAll', 'receiptPrint'])
+          || (role == '센터장' && name in ['clientViewAll', 'trxViewAll', 'receiptPrint']));
     }
 
     function mine(clientId) {
-      return clientId in me().get('accessibleClientIds', []);
+      return me().get('role', '') == '팀장'
+        ? clientId in me().get('leaderClientIds', [])
+        : clientId in me().get('accessibleClientIds', []);
     }
 
     /** 담당이거나, 담당과 무관하게 전체를 보는 권한이 있거나(팀장 이상). */
@@ -74,7 +89,7 @@ service firebase.storage {
       return signedIn()
         && request.auth.uid == uid
         && authz.get('enabled', false) == true
-        && authz.get('caps', {}).get('receiptUpload', false) == true
+        && (authz.get('role', '') == '입력자' || authz.get('role', '') == '담당자')
         && job.get('uid', '') == uid
         && job.get('uploadId', '') == uploadId
         && job.get('state', '') == 'uploaded'
@@ -149,7 +164,7 @@ service firebase.storage {
     // 경로에 clientId 가 없어 담당 범위를 판정할 근거가 없다는 것이 이
     // 예외의 대가다 — 재직 여부까지만 본다. 신규 업로드는 위 경로로만 간다.
     match /bankbooks/{accountId}/{fileName} {
-      allow get:   if active();
+      allow get:   if false;
       allow list:  if false;
       allow write: if false;
     }

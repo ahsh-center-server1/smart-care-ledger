@@ -43,20 +43,29 @@ export { renderPermissionPanel };
 // (openModal, toggleClientActive, toggleAccountActive 등)
 // window 경유로 해석되므로 import된 심볼명으로 교체하면 런타임 오류 발생
 export function renderManagement(){
-  const isAdmin=can('nav.staff');
+  const canViewStaff=can('nav.staff');
+  const canManageStaff=can('settings.staff');
+  const canApproveStaffRole=can('staff.role.approve');
+  const canManageAssignments=can('assignments.manage');
+  const canManageClients=can('settings.client');
+  const canManageAccounts=can('settings.account');
+  const canViewAllClients=can('client.view.all');
   updateSignupBadge();
   // B005: admin-staff 섹션 및 등록 버튼 역할별 표시/숨김
   const adminStaff=document.getElementById('admin-staff');
-  if(adminStaff)adminStaff.style.display=isAdmin?'block':'none';
+  if(adminStaff)adminStaff.style.display=canViewStaff?'block':'none';
   const btnAddClient=document.getElementById('btn-add-client');
   const btnAddAccount=document.getElementById('btn-add-account');
-  if(btnAddClient)btnAddClient.style.display=isAdmin?'':'none';
-  if(btnAddAccount)btnAddAccount.style.display=isAdmin?'':'none';
+  if(btnAddClient)btnAddClient.style.display=canManageClients?'':'none';
+  if(btnAddAccount)btnAddAccount.style.display=canManageAccounts?'':'none';
   // 일괄 등록 버튼 표시 및 이벤트 바인딩 (관리자 전용)
   ['bulk-staff','bulk-client','bulk-account'].forEach(key=>{
     const btn=document.getElementById('btn-'+key);
     if(btn){
-      btn.style.display=isAdmin?'':'none';
+      const allowed={
+        'bulk-staff':canManageStaff,'bulk-client':canManageClients,'bulk-account':canManageAccounts,
+      }[key];
+      btn.style.display=allowed?'':'none';
       if(!btn.dataset.bound){
         btn.dataset.bound='1';
         btn.addEventListener('click',()=>openModal(key));
@@ -64,7 +73,7 @@ export function renderManagement(){
     }
   });
   const sl=document.getElementById('staff-list'); if(sl)sl.innerHTML='';
-  if(isAdmin&&sl){
+  if(canViewStaff&&sl){
     // 승인 대기 직원 (노란 카드)
     const pendingUsers=S.users.filter(u=>u.approved===false);
     if(pendingUsers.length){
@@ -76,12 +85,30 @@ export function renderManagement(){
         const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fffbeb;border-color:#fde68a;flex-wrap:wrap;';
         const roles=['입력자','담당자','팀장','센터장'];
         const roleOpts=roles.map(r=>`<option value="${r}"${(u.role||'입력자')===r?' selected':''}>${r}</option>`).join('');
-        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${escAttr(u.userId||'')} ${u.team?'· '+escAttr(u.team):''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div><div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="승인할 역할(권한)을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn approve-staff-btn" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">✓ 승인</button></div>`;
-        // 인라인 onclick 대신 직접 바인딩 — 전역 함수 이름에 의존하지 않는다
-        d.querySelector('.approve-staff-btn').addEventListener('click',()=>approveStaff(u.id));
+        const requestControls=canManageStaff?`<div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="요청할 역할을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn approve-staff-btn" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">변경 요청</button></div>`:'<span style="font-size:12px;color:var(--muted);">시스템 관리자 요청 대기</span>';
+        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${escAttr(u.userId||'')} ${u.team?'· '+escAttr(u.team):''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div>${requestControls}`;
+        d.querySelector('.approve-staff-btn')?.addEventListener('click',()=>approveStaff(u.id));
         sl.appendChild(d);
       });
       const divider=document.createElement('div'); divider.style.cssText='height:1px;background:var(--border);margin:8px 0;'; sl.appendChild(divider);
+    }
+    const privilegeChanges=S.users.filter(u=>u.privilegeChange&&['pending','approved'].includes(u.privilegeChange.state));
+    if(privilegeChanges.length){
+      const header=document.createElement('div');
+      header.className='card';
+      header.textContent=`역할·관리자 변경 대기 ${privilegeChanges.length}건`;
+      sl.appendChild(header);
+      privilegeChanges.forEach(u=>{
+        const change=u.privilegeChange;
+        const d=document.createElement('div'); d.className='card';
+        const stateLabel=change.state==='approved'?'센터장 승인 완료 · 실행 대기':'센터장 승인 대기';
+        const canAct=change.state==='approved'?canManageStaff:canApproveStaffRole;
+        const controls=canAct?`<div><button class="btn privilege-change-btn">${change.state==='approved'?'변경 실행':'변경 승인'}</button><button class="btn privilege-cancel-btn">취소</button></div>`:'<span style="font-size:12px;color:var(--muted);">다른 권한 담당자 처리 대기</span>';
+        d.innerHTML=`<div><strong>${escHtml(u.name||u.userId)}</strong><div style="font-size:12px;color:var(--muted);">${escHtml(u.role||'미승인')} → ${escHtml(change.role)}${change.isAdmin?' + 시스템 관리자':''} · ${stateLabel}</div></div>${controls}`;
+        d.querySelector('.privilege-change-btn')?.addEventListener('click',()=>approveStaff(u.id,change));
+        d.querySelector('.privilege-cancel-btn')?.addEventListener('click',()=>cancelStaffPrivilegeChange(u.id));
+        sl.appendChild(d);
+      });
     }
     // 승인된 직원 — 재직(활성)→퇴사(비활성) 순, 비활성 흐리게 + 재직/퇴사 토글
     const approvedUsers=S.users.filter(u=>u.approved!==false);
@@ -90,13 +117,14 @@ export function renderManagement(){
     [...activeUsers,...inactiveUsers].forEach(u=>{
       const isActive=u.active!==false;
       const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:12px 14px;display:flex;justify-content:space-between;align-items:center;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
-      const toggleSwitch=`<div onclick="toggleStaffActive('${escAttr(u.id)}',${!isActive})" title="${isActive?'퇴사 등으로 비활성화(로그인 차단)':'다시 재직 상태로 전환'}" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+      const toggleSwitch=canManageStaff?`<div onclick="toggleStaffActive('${escAttr(u.id)}',${!isActive})" title="${isActive?'퇴사 등으로 비활성화(로그인 차단)':'다시 재직 상태로 전환'}" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
         <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;flex-shrink:0;">
           <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
         </span>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'재직':'퇴사'}</span>
-      </div>`;
-      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      </div>`:'';
+      const editButton=canManageStaff&&isActive?`<button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${escHtml(u.name||u.userId)}</div><div style="font-size:12px;color:var(--muted);">${escHtml(u.role||'')} ${u.team?'· '+escHtml(u.team):''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${editButton}</div>`;
       sl.appendChild(d);
     });
   }
@@ -104,9 +132,12 @@ export function renderManagement(){
   // 관리자: 전체 목록 / 비관리자: 담당 입주자만 (비활성 포함) — 입주자·계좌 공통 기준
   const myUserId=String(S.user?.userId||'');
   const visibleClients=(S.allClients?.length?S.allClients:S.clients).filter(c=>
-    isAdmin||(()=>{
+    canViewAllClients||(()=>{
       const ids=String(c.userIds||'').split(',').map(s=>s.trim());
       const myDocId=String(S.users.find(u=>String(u.userId)===myUserId)?.id||'');
+      if(String(S.authz?.role||S.user?.role||'')==='팀장'){
+        return String(c.teamLeader||'')===myUserId||(myDocId&&String(c.teamLeader||'')===myDocId);
+      }
       return ids.includes(myUserId)||(myDocId&&ids.includes(myDocId));
     })()
   );
@@ -121,13 +152,14 @@ export function renderManagement(){
       const isActive=c.active!==false;
       const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
       const leader=S.users.find(u=>String(u.id)===String(c.teamLeader));
-      const toggleSwitch=isAdmin?`<div onclick="toggleClientActive('${escAttr(c.id)}',${!isActive})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+      const toggleSwitch=canManageClients?`<div onclick="toggleClientActive('${escAttr(c.id)}',${!isActive})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
         <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;flex-shrink:0;">
           <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
         </span>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'활성':'비활성'}</span>
       </div>`:'';
-      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${c.name}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('client',(S.allClients||S.clients).find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      const editButton=(canManageClients||canManageAssignments)?`<button class="icon-btn" onclick="openModal('client',(S.allClients||S.clients).find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">✏️</button>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${c.name}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${editButton}</div>`;
       cl.appendChild(d);
     });
   }
@@ -136,7 +168,7 @@ export function renderManagement(){
   const al=document.getElementById('account-list'); if(al)al.innerHTML='';
   if(al){
     const allA=(S.allAccounts?.length?S.allAccounts:S.accounts).filter(a=>
-      isAdmin||visibleClientIds.has(a.clientId)
+      canViewAllClients||visibleClientIds.has(a.clientId)
     );
     const active=allA.filter(a=>a.active!==false);
     const inactive=allA.filter(a=>a.active===false);
@@ -144,13 +176,14 @@ export function renderManagement(){
       const isActive=a.active!==false;
       const client=(S.allClients||S.clients).find(c=>c.id===a.clientId);
       const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
-      const toggleSwitch=isAdmin?`<div onclick="toggleAccountActive('${escAttr(a.id)}',${!isActive})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+      const toggleSwitch=canManageAccounts?`<div onclick="toggleAccountActive('${escAttr(a.id)}',${!isActive})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
         <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;flex-shrink:0;">
           <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
         </span>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'활성':'비활성'}</span>
       </div>`:'';
-      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${a.label}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:${isActive?'var(--blue)':'#94a3b8'};">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('account',(S.allAccounts||S.accounts).find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      const editButton=canManageAccounts?`<button class="icon-btn" onclick="openModal('account',(S.allAccounts||S.accounts).find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">✏️</button>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${a.label}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:${isActive?'var(--blue)':'#94a3b8'};">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${editButton}</div>`;
       al.appendChild(d);
     });
   }
@@ -778,19 +811,34 @@ export function switchCategorySubtab(subtab){
 // ─────────────────────────────────────────────
 // 회원가입 승인
 // ─────────────────────────────────────────────
-export async function approveStaff(userId) {
+export async function approveStaff(userId, requested=null) {
   const sel = document.getElementById('pending-role-' + userId);
-  const role = sel?.value || '입력자';
+  const role = requested?.role || sel?.value || '입력자';
+  const isAdmin = requested?.isAdmin === true;
   try {
     // users 쓰기는 보안 규칙이 막는다. 서버가 호출자 등급을 확인하고 처리한다
     // (예전에는 팀장이 신규 가입자를 센터장으로 승인할 수 있었다).
-    await window._fbFn.call('approveStaff')({ userId, role, isAdmin: false });
+    const response=await window._fbFn.call('approveStaff')({ userId, role, isAdmin });
+    const state=response.data?.state;
     // 누구를 어떤 권한으로 들였는지가 가장 중요한 기록 중 하나다.
     await auditLog('staff.approve',{resourceId:userId,summary:{
       target:S.users.find(u=>u.id===userId)?.name||userId, role}});
-    toast(`승인 완료 — ${role} 권한으로 로그인할 수 있습니다.`, 'success');
+    const msg={
+      pending:'변경을 요청했습니다. 다른 센터장의 승인이 필요합니다.',
+      approved:'승인했습니다. 다른 시스템 관리자의 실행을 기다립니다.',
+      executed:`변경 완료 — ${role}${isAdmin?' + 시스템 관리자':''}`,
+    }[state]||'처리 상태를 확인해 주세요.';
+    toast(msg, state==='executed'?'success':'info', 5000);
     await refetchUsers(); renderManagement(); updateSignupBadge();
   } catch(e) { toast('승인 오류: '+(e.message||'다시 시도하세요.'), 'error'); }
+}
+
+export async function cancelStaffPrivilegeChange(userId){
+  try{
+    await window._fbFn.call('cancelStaffPrivilegeChange')({userId});
+    toast('역할 변경 요청을 취소했습니다. 이력은 보존됩니다.','info');
+    await refetchUsers(); renderManagement(); updateSignupBadge();
+  }catch(e){toast('취소 오류: '+(e.message||'다시 시도하세요.'),'error');}
 }
 
 // 설정 네비게이션의 회원가입 승인 대기 뱃지 갱신 (관리 권한자에게만 표시)

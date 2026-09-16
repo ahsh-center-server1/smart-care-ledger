@@ -7,7 +7,7 @@
 
 import { S } from '../state.js';
 import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
-import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml, escAttr } from '../utils/ui.js';
+import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { chunkForInQuery } from '../services/in-query.js';
 import { can } from './permissions.js';
@@ -23,6 +23,7 @@ import { auditLog } from '../services/audit.js';
 import { getImageUrl } from '../services/storage.js';
 import { getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
 import { isConfirmedLocked } from './core.js';
+import { hasReceipt, receiptAccessUrl } from '../services/receipt-access.js';
 
 // 보고서 필수 고정항목 미납 배너
 function renderRptMandatoryBanner(clientId,year,month,trxList){
@@ -426,8 +427,8 @@ export function renderRptTrxTable(trxList){
       +`<td style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.description||'')}${typeTag}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#15803d;white-space:nowrap;">${Number(t.amountIn||0)>0?Number(t.amountIn).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#b91c1c;white-space:nowrap;">${Number(t.amountOut||0)>0?Number(t.amountOut).toLocaleString()+'원':''}</td>`
-      +`<td style="padding:7px 4px;text-align:center;${t.type==='지출'&&!t.receiptUrl&&t.receiptMissing?'background:#fee2e2;':''}">${
-        t.receiptUrl?'<button class="icon-btn rpt-rv" data-url="'+escAttr(t.receiptUrl)+'" title="증빙 보기">📎</button>':
+      +`<td style="padding:7px 4px;text-align:center;${t.type==='지출'&&!hasReceipt(t)&&t.receiptMissing?'background:#fee2e2;':''}">${
+        hasReceipt(t)?'<button class="icon-btn rpt-rv" title="증빙 보기">📎</button>':
         (t.receiptMissing?'<span style="font-size:10px;font-weight:700;color:#b91c1c;background:#fecaca;padding:2px 6px;border-radius:4px;">분실</span>':'')
       }</td>`;
     if(!locked){
@@ -438,7 +439,10 @@ export function renderRptTrxTable(trxList){
       tr.addEventListener('drop',e=>{e.preventDefault();tr.style.background='';const fid=e.dataTransfer.getData('text/plain');if(fid!==t.id)reorderRptTrx(fid,t.id);});
     }
     const rvBtn=tr.querySelector('.rpt-rv');
-    if(rvBtn)rvBtn.addEventListener('click',()=>openReceiptModal(rvBtn.dataset.url,t.id));
+    if(rvBtn)rvBtn.addEventListener('click',async()=>{
+      try{openReceiptModal(await receiptAccessUrl(t),t.id);}
+      catch(e){toast('증빙을 열지 못했습니다: '+(e.message||e),'error');}
+    });
     tbody.appendChild(tr);
     });      
   });
@@ -648,8 +652,8 @@ export function renderComments(report,curStatus){
   el.innerHTML='<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">의견</div>';
   const sections=[
     {key:'staffComment',  label:'담당자 의견', editable: canWriteStaff},
-    {key:'leaderComment', label:'팀장 의견',   editable: ctx.isAssignedLeader&&can('report.approve.team')},
-    {key:'centerComment', label:'센터장 의견', editable: can('report.approve.center')},
+    {key:'leaderComment', label:'팀장 의견',   editable: st==='submitted'&&ctx.isAssignedLeader&&can('report.approve.team')},
+    {key:'centerComment', label:'센터장 의견', editable: st==='team_approved'&&can('report.approve.center')},
   ];
   sections.forEach(s=>{
     const val=report?.[s.key]||'';
@@ -657,10 +661,10 @@ export function renderComments(report,curStatus){
     div.style.cssText='margin-bottom:12px;';
     div.innerHTML='<div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:6px;">'+s.label+'</div>';
     if(s.editable){
-      div.innerHTML+='<textarea id="comment-'+s.key+'" style="width:100%;min-height:60px;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font-size:14px;font-family:inherit;resize:vertical;" placeholder="'+s.label+'을 입력하세요...">'+val+'</textarea>'
+      div.innerHTML+='<textarea id="comment-'+s.key+'" style="width:100%;min-height:60px;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font-size:14px;font-family:inherit;resize:vertical;" placeholder="'+s.label+'을 입력하세요...">'+escHtml(val)+'</textarea>'
         +'<button onclick="saveComment(\''+s.key+'\')" style="margin-top:4px;font-size:12px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:4px 12px;border-radius:6px;cursor:pointer;">저장</button>';
     } else {
-      div.innerHTML+='<div style="font-size:14px;color:#374151;min-height:30px;padding:8px 10px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">'+(val||'(없음)')+'</div>';
+      div.innerHTML+='<div style="font-size:14px;color:#374151;min-height:30px;padding:8px 10px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">'+escHtml(val||'(없음)')+'</div>';
     }
     el.appendChild(div);
   });

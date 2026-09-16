@@ -21,11 +21,14 @@ import * as Dash     from './dashboard.js';
 import * as Trx      from './transactions.js';
 import * as Rpt      from './report.js';
 import * as Settings from './settings.js';
-import { can } from './permissions.js';
+import { can, hasLoadedIdentity } from './permissions.js';
 
 /** 지금 로그인한 사람의 조회 범위. 규칙이 보는 것과 같은 근거(authz)를 쓴다. */
 export function myScope(field) {
-  return { all: can('client.view.all'), ids: S.accessibleClientIds || [], field: field || null };
+  const identity = hasLoadedIdentity() ? S.authz : null;
+  const ids = identity?.role === '팀장' ? identity.leaderClientIds
+    : identity?.role ? identity.accessibleClientIds : [];
+  return { all: can('client.view.all'), ids: ids || [], field: field || null };
 }
 
 /**
@@ -39,7 +42,8 @@ export async function fetchBaseData(opts) {
   // 담당 입주자만 볼지 전체를 볼지 — 네비게이션 메뉴 권한이 아니라 전용 키로 판정한다.
   // 예전에는 can('nav.staff')를 썼기 때문에 팀장의 메뉴 표시를 끄면
   // 팀장이 전 입주자를 못 보게 되는 숨은 부작용이 있었다.
-  const db=fdb(), viewAllClients=can('client.view.all');
+  if (!hasLoadedIdentity()) throw new Error('권한 정보를 확인할 수 없습니다. 다시 로그인하세요.');
+  const db=fdb();
   const only = opts && Array.isArray(opts.only) ? new Set(opts.only) : null;
   const need = key => !only || only.has(key);
 
@@ -92,13 +96,8 @@ export async function fetchBaseData(opts) {
     const showInactive=S.settings?.showInactive||false;
     const activeClients=showInactive?S.allClients:S.allClients.filter(c=>c.active!==false);
     const activeAccounts=showInactive?S.allAccounts:S.allAccounts.filter(a=>a.active!==false);
-    S.clients  = viewAllClients ? activeClients : activeClients.filter(c=>{
-      // 마이그레이션 후 userId가 곧 users 문서 ID이므로 키 공간이 하나다.
-      // (예전에는 userIds에 로그인 아이디, teamLeader에 문서 ID가 들어가 있어
-      //  S.users에서 문서 ID를 되찾아 양쪽을 대조해야 했다)
-      const ids=String(c.userIds||'').split(',').map(x=>x.trim());
-      return ids.includes(String(S.user.userId));
-    });
+    const clientScope = myScope();
+    S.clients = activeClients.filter(c => clientScope.all || clientScope.ids.includes(c.id));
     S.accounts = activeAccounts.filter(a=>S.clients.some(c=>c.id===a.clientId));
   }
 
@@ -191,6 +190,10 @@ let trxLoadSeq = 0;
 
 export async function loadTransactions(clientId, opts) {
   if (!clientId) return;
+  const clientScope = myScope();
+  if (!hasLoadedIdentity() || (!clientScope.all && !clientScope.ids.includes(clientId))) {
+    toast('담당 범위 밖의 거래는 조회할 수 없습니다.', 'error'); return;
+  }
   const mySeq = ++trxLoadSeq;
   showLoading(true);
   try {
@@ -274,11 +277,13 @@ export function watchViewportForDesktopOnlyViews() {
   const mq = window.matchMedia('(max-width:768px)');
   const onChange = (e) => {
     if (!e.matches) return;
-    const current = ['report','settings'].find(v => {
+    const current = ['report'].find(v => {
       const el = document.getElementById('view-' + v);
       return el && el.style.display !== 'none';
     });
     if (current) changeView('dashboard');
+    const settings = document.getElementById('view-settings');
+    if (settings && settings.style.display !== 'none') changeView('settings');
   };
   // Safari 13 이하는 addEventListener를 지원하지 않는다
   if (mq.addEventListener) mq.addEventListener('change', onChange);
@@ -290,11 +295,11 @@ export function watchViewportForDesktopOnlyViews() {
  * 보고서·결재는 표와 결재란이 많아 휴대폰에서 읽기 어렵다는 현장 판단에 따라
  * PC 전용으로 두고, 휴대폰에서는 조회와 수기입력만 노출한다.
  */
-const DESKTOP_ONLY_VIEWS = { report: '보고서', settings: '설정' };
+const DESKTOP_ONLY_VIEWS = { report: '보고서' };
 
 export function changeView(view) {
   if(view==='management') view='settings';
-  if((view==='report'&&!can('nav.report'))||(view==='settings'&&!can('nav.settings'))){
+  if((view==='report'&&!can('nav.report'))||(view==='settings'&&!hasLoadedIdentity())){
     toast('접근 권한이 없습니다.','error'); return;
   }
   if(DESKTOP_ONLY_VIEWS[view] && isNarrowScreen()){
@@ -328,7 +333,13 @@ export function changeView(view) {
     // 캐시된 데이터로 즉시 렌더 (CRUD 시 부분 갱신으로 최신 상태 유지).
     // 어떤 패널을 그릴지는 initSettingsTabs가 세운 셸이 정한다 —
     // 여기서 renderManagement를 직접 부르면 열려 있지 않은 탭까지 그린다.
-    Settings.loadSettings();
+    S.settingsGuideOnly = isNarrowScreen() || !can('nav.settings');
+    if (S.settingsGuideOnly) {
+      Settings.initSettingsTabs();
+      Settings.switchSettingsTab('permissions');
+    } else {
+      Settings.loadSettings();
+    }
   }
   if (view==='report')    { Rpt.loadReportList(); switchRptSubtab('monthly'); }
 }

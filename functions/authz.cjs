@@ -112,6 +112,7 @@ function planAssignmentChange({ clientId, prev, next }) {
 
   const memberOps = [];
   const accessOps = [];
+  const leaderOps = [];
 
   for (const uid of touched) {
     const wasStaff = prevStaff.has(uid);
@@ -135,15 +136,18 @@ function planAssignmentChange({ clientId, prev, next }) {
     // 접근 배열 — 합집합이 바뀔 때만. 담당자 → 결재자 전환은 건드리지 않는다.
     if (has && !had) accessOps.push({ uid, op: 'add' });
     else if (!has && had) accessOps.push({ uid, op: 'remove' });
+    if (isLeader && !wasLeader) leaderOps.push({ uid, op: 'add' });
+    else if (!isLeader && wasLeader) leaderOps.push({ uid, op: 'remove' });
   }
 
   // 정확한 쓰기 수. `1 + 2 × 영향받은 인원`은 상한이고, 역할만 바뀐 사람은
   // 접근 배열을 건드리지 않으므로 실제로는 그보다 적다.
-  const writeCount = 1 + memberOps.length + accessOps.length;
+  const writeCount = 1 + memberOps.length + accessOps.length + leaderOps.length;
 
   return {
     memberOps,
     accessOps,
+    leaderOps,
     affectedUids: [...touched],
     writeCount,
   };
@@ -178,13 +182,14 @@ function memberPath(clientId, uid) {
  * caps 백필은 별도 단계이고, 그때까지 caps 가 없는 문서는 **모든 권한이
  * 거부된다**(fail-closed). 새 경로가 준비되기 전에 열리지 않게 하는 것이 목적이다.
  */
-function newAuthzDoc({ uid, role, isAdmin, approved, active, accessibleClientIds }) {
+function newAuthzDoc({ uid, role, isAdmin, approved, active, accessibleClientIds, leaderClientIds }) {
   return {
     uid: String(uid),
-    role: String(role || '입력자'),
+    role: String(role || ''),
     isAdmin: isAdmin === true,
     enabled: isEnabled({ approved, active }),
     accessibleClientIds: dedupe(accessibleClientIds || []),
+    leaderClientIds: dedupe(leaderClientIds || []),
     // caps 와 capSchemaVersion 은 백필이 채운다(withCaps). 없으면 전부 거부다.
   };
 }
@@ -215,7 +220,7 @@ function withCaps(doc, caps, capSchemaVersion) {
 function authzIdentityPatch({ uid, user, caps, capSchemaVersion }) {
   return {
     uid: String(uid),
-    role: String((user && user.role) || '입력자'),
+    role: String((user && user.role) || ''),
     isAdmin: !!(user && user.isAdmin === true),
     enabled: isEnabled(user),
     caps: { ...caps },
@@ -238,6 +243,7 @@ function authzIdentityPatch({ uid, user, caps, capSchemaVersion }) {
  */
 function projectAssignments(clients) {
   const accessByUid = new Map();
+  const leaderByUid = new Map();
   const membersByClient = new Map();
 
   for (const c of clients || []) {
@@ -257,6 +263,10 @@ function projectAssignments(clients) {
       members.push({ uid, isStaff, isLeader });
       if (!accessByUid.has(uid)) accessByUid.set(uid, []);
       accessByUid.get(uid).push(clientId);
+      if (isLeader) {
+        if (!leaderByUid.has(uid)) leaderByUid.set(uid, []);
+        leaderByUid.get(uid).push(clientId);
+      }
     }
     membersByClient.set(clientId, members);
   }
@@ -264,8 +274,9 @@ function projectAssignments(clients) {
   // 담당 목록의 중복·순서를 정리한다 — 같은 입주자가 두 번 들어오면
   // 배열이 부풀고 diff 가 시끄러워진다.
   for (const [uid, ids] of accessByUid) accessByUid.set(uid, dedupe(ids).sort());
+  for (const [uid, ids] of leaderByUid) leaderByUid.set(uid, dedupe(ids).sort());
 
-  return { accessByUid, membersByClient };
+  return { accessByUid, leaderByUid, membersByClient };
 }
 
 module.exports = {

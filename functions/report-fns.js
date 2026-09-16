@@ -25,7 +25,7 @@
  */
 
 const { planTransition, normalizeStatus } = require('./report-workflow.cjs');
-const { capName } = require('./perm-catalog.cjs');
+const { fixedCan } = require('./fixed-role-policy.cjs');
 const { LOCKED_MONTHS_DOC, lockIndexChange } = require('./locked-months.cjs');
 
 const AUTHZ = 'authz';
@@ -64,11 +64,11 @@ module.exports = function reportFns(ctx) {
     return d;
   }
 
-  const capOf = (authz) => (key) => (authz.caps || {})[capName(key)] === true;
+  const capOf = (authz) => (key) => fixedCan(authz, key);
 
   function sees(authz, clientId) {
     if (capOf(authz)('client.view.all')) return true;
-    const ids = authz.accessibleClientIds;
+    const ids = authz.role === '팀장' ? authz.leaderClientIds : authz.accessibleClientIds;
     return Array.isArray(ids) && ids.includes(String(clientId));
   }
 
@@ -79,22 +79,24 @@ module.exports = function reportFns(ctx) {
    * 언제든 팀장 단계를 건너뛸 수 있다 — 그것이 원래 모바일 앱의 구멍이었다.
    * 그래서 팀장이 **있고 결재할 수 있는 상태**인지까지 확인한다.
    */
-  async function leaderState(clientId, uid) {
-    const snap = await db.collection(CLIENT_ACCESS).doc(String(clientId))
-      .collection(MEMBERS).where('isLeader', '==', true).get();
+  async function leaderState(clientId, uid, tx = null) {
+    const query = db.collection(CLIENT_ACCESS).doc(String(clientId))
+      .collection(MEMBERS).where('isLeader', '==', true);
+    const snap = tx ? await tx.get(query) : await query.get();
 
     const leaders = snap.docs.map((d) => d.id);
     const isAssignedLeader = leaders.includes(String(uid));
     if (!leaders.length) return { isAssignedLeader, leaderVacant: true };
 
     // 배정된 팀장이 실제로 결재할 수 있는가(재직 + 권한).
-    const authzSnaps = await Promise.all(
-      leaders.map((id) => db.collection(AUTHZ).doc(id).get())
-    );
+    const authzSnaps = await Promise.all(leaders.map((id) => {
+      const ref = db.collection(AUTHZ).doc(id);
+      return tx ? tx.get(ref) : ref.get();
+    }));
     const usable = authzSnaps.some((s) => {
       if (!s.exists) return false;
       const d = s.data() || {};
-      return d.enabled === true && (d.caps || {})[capName('report.approve.team')] === true;
+      return fixedCan(d, 'report.approve.team');
     });
     return { isAssignedLeader, leaderVacant: !usable };
   }
@@ -111,11 +113,15 @@ module.exports = function reportFns(ctx) {
     return { id: snap.docs[0].id, ...snap.docs[0].data() };
   }
 
-  function pickClientFields(extra) {
+  function pickClientFields(extra, authz, isAssignedLeader) {
     const out = {};
     for (const key of CLIENT_FIELDS) {
       if (extra && Object.prototype.hasOwnProperty.call(extra, key)) {
-        out[key] = String(extra[key] || '').slice(0, MAX_SUMMARY);
+        const allowed = (key === 'staffComment' && fixedCan(authz, 'report.submit'))
+          || (key === 'leaderComment' && isAssignedLeader
+            && fixedCan(authz, 'report.approve.team'))
+          || (key === 'centerComment' && fixedCan(authz, 'report.approve.center'));
+        if (allowed) out[key] = String(extra[key] || '').slice(0, MAX_SUMMARY);
       }
     }
     return out;
@@ -142,42 +148,54 @@ module.exports = function reportFns(ctx) {
       throw new HttpsError('permission-denied', '담당하지 않는 입주자입니다.');
     }
 
-    const summary = String(d.summary || '').slice(0, MAX_SUMMARY);
-    const extra = pickClientFields(d.extraSet);
-
     const report = await findReport(clientId, year, month);
-    const { isAssignedLeader, leaderVacant } = await leaderState(clientId, auth.uid);
-
-    // 전이표가 정한다. 버튼이 보이든 말든, 콘솔에서 부르든 여기를 통과해야 한다.
-    const plan = planTransition(action, report && report.status, {
-      can: capOf(authz),
-      userId: auth.uid,
-      userName: String(d.userName || ''),
-      isAuthor: !!report && String(report.createdBy || '') === auth.uid,
-      isAssignedLeader,
-      leaderVacant,
-      now: new Date().toISOString(),
-    });
-    if (!plan.ok) throw new HttpsError('failed-precondition', plan.reason);
-
-    const patch = { status: plan.next, ...plan.set, ...extra };
-    if (summary) patch.summary = summary;
-
+    const summary = String(d.summary || '').slice(0, MAX_SUMMARY);
     let reportId = report && report.id;
+    let resultPlan = null;
     await db.runTransaction(async (tx) => {
       const lockRef = db.collection(CONFIG).doc(LOCKED_MONTHS_DOC);
+      const actorSnap = await tx.get(db.collection(AUTHZ).doc(auth.uid));
+      const currentAuthz = actorSnap.exists ? actorSnap.data() || {} : {};
+      if (currentAuthz.enabled !== true || !sees(currentAuthz, clientId)) {
+        throw new HttpsError('permission-denied', '현재 담당 범위에서 제외된 입주자입니다.');
+      }
+      const { isAssignedLeader, leaderVacant } = await leaderState(clientId, auth.uid, tx);
       let lockChange = null;
       let reportRef;
+      let currentReport = null;
       if (reportId) {
         reportRef = db.collection(REPORTS).doc(reportId);
         const snap = await tx.get(reportRef);
         if (!snap.exists) throw new HttpsError('not-found', '보고서를 찾을 수 없습니다.');
-        // 읽은 뒤 상태가 바뀌었을 수 있다 — 탭 두 개, 동시 결재.
-        // 여기서 다시 확인하지 않으면 낡은 판단으로 전이한다.
-        if (normalizeStatus(snap.data().status) !== plan.from) {
-          throw new HttpsError('aborted', '그 사이 보고서 상태가 바뀌었습니다. 새로고침 후 다시 시도하세요.');
+        currentReport = snap.data() || {};
+        if (normalizeStatus(currentReport.status) !== normalizeStatus(report.status)) {
+          throw new HttpsError(
+            'aborted',
+            '그 사이 보고서 상태가 바뀌었습니다. 새로고침 후 다시 시도하세요.',
+          );
         }
-        lockChange = lockIndexChange(snap.data(), { ...snap.data(), status: plan.next });
+      } else {
+        reportRef = db.collection(REPORTS).doc();
+        reportId = reportRef.id;
+      }
+
+      const plan = planTransition(action, currentReport && currentReport.status, {
+        can: capOf(currentAuthz),
+        userId: auth.uid,
+        userName: String(d.userName || ''),
+        isAuthor: !!currentReport && String(currentReport.createdBy || '') === auth.uid,
+        isAssignedLeader,
+        leaderVacant,
+        now: new Date().toISOString(),
+      });
+      if (!plan.ok) throw new HttpsError('failed-precondition', plan.reason);
+      resultPlan = plan;
+      const extra = pickClientFields(d.extraSet, currentAuthz, isAssignedLeader);
+      const patch = { status: plan.next, ...plan.set, ...extra };
+      if (summary) patch.summary = summary;
+
+      if (currentReport) {
+        lockChange = lockIndexChange(currentReport, { ...currentReport, status: plan.next });
         if (lockChange) await tx.get(lockRef);
         const full = { ...patch };
         // 도착 상태보다 뒤 단계의 도장을 지운다 —
@@ -185,8 +203,6 @@ module.exports = function reportFns(ctx) {
         for (const f of plan.clear) full[f] = FieldValue.delete();
         tx.update(reportRef, full);
       } else {
-        reportRef = db.collection(REPORTS).doc();
-        reportId = reportRef.id;
         tx.set(reportRef, {
           clientId, year, month,
           createdAt: FieldValue.serverTimestamp(),
@@ -219,9 +235,13 @@ module.exports = function reportFns(ctx) {
     });
 
     logger.info('[applyReportTransition]', {
-      by: auth.uid, clientId, year, month, action, from: plan.from, to: plan.next,
+      by: auth.uid, clientId, year, month, action,
+      from: resultPlan.from, to: resultPlan.next,
     });
-    return { ok: true, reportId, from: plan.from, to: plan.next, cleared: plan.clear };
+    return {
+      ok: true, reportId, from: resultPlan.from,
+      to: resultPlan.next, cleared: resultPlan.clear,
+    };
   });
 
   // ───────────────────────────────────────────────────────────
@@ -233,7 +253,7 @@ module.exports = function reportFns(ctx) {
   // ───────────────────────────────────────────────────────────
   const saveReportComment = callable('saveReportComment', async (request) => {
     const auth = request.auth;
-    const authz = await requireAuthz(auth);
+    await requireAuthz(auth);
 
     const d = request.data || {};
     const clientId = String(d.clientId || '').trim();
@@ -247,29 +267,56 @@ module.exports = function reportFns(ctx) {
     if (!clientId || !Number.isInteger(year) || !Number.isInteger(month)) {
       throw new HttpsError('invalid-argument', '입주자와 연월이 필요합니다.');
     }
-    if (!sees(authz, clientId)) {
-      throw new HttpsError('permission-denied', '담당하지 않는 입주자입니다.');
-    }
-    if (!capOf(authz)('report.own')) {
-      throw new HttpsError('permission-denied', '보고서 권한이 없습니다.');
-    }
-
     const value = String(d.value || '').slice(0, MAX_SUMMARY);
     const report = await findReport(clientId, year, month);
+    const reportRef = report
+      ? db.collection(REPORTS).doc(report.id)
+      : db.collection(REPORTS).doc();
 
-    if (report) {
-      await db.collection(REPORTS).doc(report.id).update({ [key]: value });
-      return { ok: true, reportId: report.id };
-    }
-    const ref = db.collection(REPORTS).doc();
-    await ref.set({
-      clientId, year, month, status: 'draft',
-      createdAt: FieldValue.serverTimestamp(),
-      createdBy: auth.uid,
-      createdByName: String(d.userName || ''),
-      [key]: value,
+    await db.runTransaction(async (tx) => {
+      const actorSnap = await tx.get(db.collection(AUTHZ).doc(auth.uid));
+      const reportSnap = report ? await tx.get(reportRef) : null;
+      const actor = actorSnap.exists ? actorSnap.data() || {} : {};
+      if (actor.enabled !== true || !sees(actor, clientId)) {
+        throw new HttpsError('permission-denied', '현재 담당 범위에서 제외된 입주자입니다.');
+      }
+
+      const current = reportSnap && reportSnap.exists ? reportSnap.data() || {} : null;
+      const status = normalizeStatus(current && current.status);
+      const allowed = (key === 'staffComment'
+          && fixedCan(actor, 'report.submit')
+          && ['draft', 'rejected'].includes(status))
+        || (key === 'leaderComment'
+          && fixedCan(actor, 'report.approve.team')
+          && Array.isArray(actor.leaderClientIds)
+          && actor.leaderClientIds.includes(clientId)
+          && status === 'submitted')
+        || (key === 'centerComment'
+          && fixedCan(actor, 'report.approve.center')
+          && status === 'team_approved');
+      if (!allowed) {
+        throw new HttpsError('permission-denied', '이 단계의 의견란을 수정할 권한이 없습니다.');
+      }
+      if (!current && key !== 'staffComment') {
+        throw new HttpsError('failed-precondition', '담당자가 보고서 초안을 만든 뒤 의견을 남길 수 있습니다.');
+      }
+
+      if (current) tx.update(reportRef, { [key]: value });
+      else tx.set(reportRef, {
+        clientId, year, month, status: 'draft',
+        createdAt: FieldValue.serverTimestamp(),
+        createdBy: auth.uid,
+        createdByName: String(d.userName || ''),
+        [key]: value,
+      });
+      tx.set(db.collection(AUDIT_LOGS).doc(), {
+        action: 'report.comment', actorUid: auth.uid,
+        clientId, targetId: reportRef.id, detail: { key },
+        timestamp: FieldValue.serverTimestamp(),
+        expireAt: new Date(Date.now() + AUDIT_TTL_MS),
+      });
     });
-    return { ok: true, reportId: ref.id };
+    return { ok: true, reportId: reportRef.id };
   });
 
   // ───────────────────────────────────────────────────────────

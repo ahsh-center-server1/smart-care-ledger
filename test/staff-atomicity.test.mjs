@@ -74,6 +74,7 @@ function build(seed) {
     VALID_ROLES,
     USERS,
     SECRETS,
+    randomId: () => 'request-fixed',
     ...makeAuthzWriter(db),
   });
   return { db, fns };
@@ -157,7 +158,7 @@ test('본인 계정은 비활성화할 수 없다', async () => {
   assert.equal(db.docs.get('users/boss').active, true);
 });
 
-test('마지막 관리자는 비활성화할 수 없다', async () => {
+test('업무 팀장은 관리자 계정을 비활성화할 수 없다', async () => {
   const seed = seedTwo();
   seed['users/kim'].isAdmin = true;   // 관리자 2명
   const { db, fns } = build(seed);
@@ -170,7 +171,7 @@ test('마지막 관리자는 비활성화할 수 없다', async () => {
 
   await assert.rejects(
     () => fns.setStaffActive({ auth: other, data: { userId: 'kim', active: false } }),
-    (e) => e.code === 'failed-precondition' && /마지막 관리자/.test(e.message),
+    (e) => e.code === 'permission-denied',
   );
   assert.equal(db.docs.get('users/kim').active, true);
   assert.equal(db.docs.get('authz/kim').enabled, true);
@@ -180,31 +181,70 @@ test('마지막 관리자는 비활성화할 수 없다', async () => {
 // 승인 · 등록
 // ─────────────────────────────────────────────
 
-test('승인은 역할과 caps 를 함께 올린다', async () => {
-  const seed = seedTwo();
+function withDirector(seed) {
+  seed['users/director'] = { userId: 'director', name: '다른 센터장', role: '센터장', isAdmin: false, approved: true, active: true };
+  seed['authz/director'] = authzOf('director', '센터장', false);
+  return seed;
+}
+
+test('역할 변경은 시스템 관리자 요청 → 다른 센터장 승인 → 관리자 실행으로만 적용된다', async () => {
+  const seed = withDirector(seedTwo());
   seed['users/new1'] = { userId: 'new1', name: '신입', role: '입력자', approved: false, active: true };
   const { db, fns } = build(seed);
 
-  await fns.approveStaff({ auth: ADMIN, data: { userId: 'new1', role: '팀장' } });
+  const data = { userId: 'new1', role: '팀장', isAdmin: false };
+  const first = await fns.approveStaff({ auth: ADMIN, data });
+  assert.equal(first.ok, false);
+  assert.equal(db.docs.get('users/new1').approved, false, '승인 전에 역할이 적용됐습니다');
+  await fns.approveStaff({ auth: { uid: 'director' }, data });
+  assert.equal(db.docs.get('users/new1').approved, false, '실행 전에 역할이 적용됐습니다');
+  await fns.approveStaff({ auth: ADMIN, data });
 
   assert.equal(db.docs.get('users/new1').approved, true);
   const authz = db.docs.get('authz/new1');
   assert.equal(authz.role, '팀장');
   assert.equal(authz.enabled, true);
-  assert.equal(authz.caps.settingsStaff, true, '팀장인데 직원 설정 권한이 없습니다');
+  assert.equal(authz.enabled, true);
+  assert.equal(db.docs.get('staffPrivilegeRequests/request-fixed').state, 'executed');
 });
 
-test('승인 중 authz 가 실패하면 승인도 되지 않는다', async () => {
-  const seed = seedTwo();
+test('역할 실행 중 authz 쓰기가 실패하면 users와 요청 상태도 바뀌지 않는다', async () => {
+  const seed = withDirector(seedTwo());
   seed['users/new1'] = { userId: 'new1', name: '신입', role: '입력자', approved: false, active: true };
   const { db, fns } = build(seed);
+  const data = { userId: 'new1', role: '팀장', isAdmin: false };
+  await fns.approveStaff({ auth: ADMIN, data });
+  await fns.approveStaff({ auth: { uid: 'director' }, data });
   db.failWrite = (path) => path === 'authz/new1';
 
   await assert.rejects(
-    () => fns.approveStaff({ auth: ADMIN, data: { userId: 'new1', role: '팀장' } }),
+    () => fns.approveStaff({ auth: ADMIN, data }),
     /쓰기 실패/,
   );
   assert.equal(db.docs.get('users/new1').approved, false, '승인이 반쯤 적용됐습니다');
+  assert.equal(db.docs.get('staffPrivilegeRequests/request-fixed').state, 'approved');
+});
+
+test('센터장과 시스템 관리자가 같은 사람이면 자기 요청을 승인하지 못해 보류된다', async () => {
+  const { db, fns } = build(seedTwo());
+  const data = { userId: 'kim', role: '팀장', isAdmin: false };
+  await fns.approveStaff({ auth: ADMIN, data });
+  await assert.rejects(() => fns.approveStaff({ auth: ADMIN, data }),
+    (e) => e.code === 'failed-precondition');
+  assert.equal(db.docs.get('staffPrivilegeRequests/request-fixed').state, 'pending');
+  assert.equal(db.docs.get('users/kim').role, '담당자');
+});
+
+test('역할 변경 취소는 적용 전 요청을 닫고 이력 문서는 보존한다', async () => {
+  const { db, fns } = build(seedTwo());
+  const data = { userId: 'kim', role: '팀장', isAdmin: false };
+  await fns.approveStaff({ auth: ADMIN, data });
+  await fns.cancelStaffPrivilegeChange({ auth: ADMIN, data: { userId: 'kim' } });
+  assert.equal(db.docs.get('users/kim').privilegeChange, undefined);
+  assert.equal(db.docs.get('users/kim').role, '담당자');
+  const history=db.docs.get('staffPrivilegeRequests/request-fixed');
+  assert.equal(history.state, 'cancelled');
+  assert.equal(history.cancelledBy, 'boss');
 });
 
 test('없는 직원을 승인하면 아무것도 쓰지 않는다', async () => {
@@ -218,7 +258,7 @@ test('없는 직원을 승인하면 아무것도 쓰지 않는다', async () => 
   assert.equal(db.docs.has('authz/ghost'), false);
 });
 
-test('신규 등록은 users·비밀번호·authz 를 한꺼번에 만든다', async () => {
+test('신규 등록은 입력자·승인대기로 고정하고 비밀번호·authz 를 원자적으로 만든다', async () => {
   const { db, fns } = build(seedTwo());
   const out = await fns.upsertStaff({
     auth: ADMIN,
@@ -228,7 +268,9 @@ test('신규 등록은 users·비밀번호·authz 를 한꺼번에 만든다', a
   assert.equal(out.okCount, 1, JSON.stringify(out.results));
   assert.equal(db.docs.get('users/new2').name, '신입2');
   assert.equal(db.docs.get('userSecrets/new2').hash, 'h:longenough1');
-  assert.equal(db.docs.get('authz/new2').enabled, true);
+  assert.equal(db.docs.get('users/new2').role, '입력자');
+  assert.equal(db.docs.get('users/new2').approved, false);
+  assert.equal(db.docs.get('authz/new2').enabled, false);
   assert.equal(db.docs.get('authz/new2').capSchemaVersion, CAP_SCHEMA_VERSION);
 });
 
@@ -268,86 +310,75 @@ test('한 명이 실패해도 나머지는 저장된다', async () => {
   assert.equal(db.docs.has('users/ok2'), true);
 });
 
-test('기존 직원 수정은 approved·active 를 보존한다', async () => {
+test('기존 직원의 일반 정보는 역할을 바꾸지 않을 때만 수정된다', async () => {
   const seed = seedTwo();
   seed['users/kim'].approved = true;
   const { db, fns } = build(seed);
 
-  await fns.upsertStaff({ auth: ADMIN, data: { userId: 'kim', name: '김수정', role: '팀장' } });
+  const out = await fns.upsertStaff({ auth: ADMIN, data: { userId: 'kim', name: '김수정', role: '담당자' } });
 
   const u = db.docs.get('users/kim');
+  assert.equal(out.okCount, 1);
   assert.equal(u.name, '김수정');
   assert.equal(u.approved, true);
   assert.equal(u.active, true);
-  assert.equal(db.docs.get('authz/kim').role, '팀장');
+  assert.equal(db.docs.get('authz/kim').role, '담당자');
   assert.deepEqual(db.docs.get('authz/kim').accessibleClientIds, ['c1'], '담당이 지워졌습니다');
+});
+
+test('기존 직원 비밀번호는 일반 정보 저장 경로로 재설정할 수 없다', async () => {
+  const seed = seedTwo();
+  seed['userSecrets/kim'] = { hash: 'old' };
+  const { db, fns } = build(seed);
+  const out = await fns.upsertStaff({
+    auth: ADMIN,
+    data: { userId: 'kim', name: '김담당', role: '담당자', password: 'newpassword1' },
+  });
+  assert.equal(out.okCount, 0);
+  assert.match(out.results[0].error, /비밀번호.*변경할 수 없습니다/);
+  assert.equal(db.docs.get('userSecrets/kim').hash, 'old');
+});
+
+test('퇴사 계정의 이름을 바꿔 UID를 다른 사람에게 재사용할 수 없다', async () => {
+  const seed = seedTwo();
+  seed['users/kim'].active = false;
+  seed['authz/kim'].enabled = false;
+  const { db, fns } = build(seed);
+  const out = await fns.upsertStaff({
+    auth: ADMIN,
+    data: { userId: 'kim', name: '새 사람', role: '담당자', team: '새 팀' },
+  });
+  assert.equal(out.okCount, 0);
+  assert.match(out.results[0].error, /UID.*재사용/);
+  assert.equal(db.docs.get('users/kim').name, '김담당');
+  assert.equal(db.docs.get('users/kim').active, false);
+});
+
+test('upsertStaff로 기존 직원의 역할이나 관리자 자격을 직접 바꿀 수 없다', async () => {
+  const { db, fns } = build(seedTwo());
+  const out = await fns.upsertStaff({ auth: ADMIN, data: { userId: 'kim', name: '김담당', role: '팀장' } });
+  assert.equal(out.okCount, 0);
+  assert.match(out.results[0].error, /별도 승인/);
+  assert.equal(db.docs.get('users/kim').role, '담당자');
 });
 
 // ─────────────────────────────────────────────
 // 삭제
 // ─────────────────────────────────────────────
 
-test('삭제는 명부·비밀번호·권한을 함께 지운다', async () => {
+test('직원 삭제는 UID와 이력 보존을 위해 항상 거부된다', async () => {
   const seed = seedTwo();
   seed['userSecrets/kim'] = { hash: 'x' };
   seed['clients/c1'] = { name: '입주자1', userIds: 'other', teamLeader: 'boss' };
   const { db, fns } = build(seed);
 
-  const out = await fns.deleteStaff({ auth: ADMIN, data: { userId: 'kim' } });
-
-  assert.equal(out.ok, true);
-  assert.equal(db.docs.has('users/kim'), false);
-  assert.equal(db.docs.has('authz/kim'), false);
-  assert.equal(db.docs.has('userSecrets/kim'), false);
-});
-
-test('담당으로 배정돼 있으면 삭제를 거부하고 아무것도 지우지 않는다', async () => {
-  const seed = seedTwo();
-  seed['clients/c1'] = { name: '입주자1', userIds: 'kim,park' };
-  const { db, fns } = build(seed);
-
   await assert.rejects(
     () => fns.deleteStaff({ auth: ADMIN, data: { userId: 'kim' } }),
-    (e) => e.code === 'failed-precondition' && /입주자1/.test(e.message),
+    (e) => e.code === 'failed-precondition' && /삭제하지 않습니다/.test(e.message),
   );
   assert.equal(db.docs.has('users/kim'), true);
   assert.equal(db.docs.has('authz/kim'), true);
-});
-
-test('부분 일치로 남의 배정을 자기 것으로 보지 않는다', async () => {
-  // userIds 는 쉼표 문자열이다. 'kim' 을 찾을 때 'kimchi' 가 걸리면
-  // 지워도 되는 계정을 못 지운다(반대 방향 실수는 더 위험하다).
-  const seed = seedTwo();
-  seed['clients/c1'] = { name: '입주자1', userIds: 'kimchi,park' };
-  const { db, fns } = build(seed);
-
-  await fns.deleteStaff({ auth: ADMIN, data: { userId: 'kim' } });
-  assert.equal(db.docs.has('users/kim'), false);
-});
-
-test('유령 멤버 문서가 함께 정리된다', async () => {
-  const seed = seedTwo();
-  seed['clientAccess/c9/members/kim'] = { uid: 'kim', isStaff: true, isLeader: false };
-  const { db, fns } = build(seed);
-
-  const out = await fns.deleteStaff({ auth: ADMIN, data: { userId: 'kim' } });
-
-  assert.equal(out.staleMembers, 1);
-  assert.equal(db.docs.has('clientAccess/c9/members/kim'), false);
-});
-
-test('삭제 중 한 쓰기가 실패하면 계정이 그대로 남는다', async () => {
-  const seed = seedTwo();
-  seed['userSecrets/kim'] = { hash: 'x' };
-  const { db, fns } = build(seed);
-  db.failWrite = (path) => path === 'userSecrets/kim';
-
-  await assert.rejects(
-    () => fns.deleteStaff({ auth: ADMIN, data: { userId: 'kim' } }),
-    /쓰기 실패/,
-  );
-  assert.equal(db.docs.has('users/kim'), true, '명부만 지워졌습니다');
-  assert.equal(db.docs.has('authz/kim'), true);
+  assert.equal(db.docs.has('userSecrets/kim'), true);
 });
 
 test('본인 계정은 삭제할 수 없다', async () => {
@@ -371,6 +402,7 @@ test('팀장 미만은 직원 관리를 할 수 없다', async () => {
     ['upsertStaff', { userId: 'x', name: 'x', role: '입력자', password: 'longenough1' }],
     ['deleteStaff', { userId: 'boss' }],
     ['approveStaff', { userId: 'boss', role: '입력자' }],
+    ['cancelStaffPrivilegeChange', { userId: 'boss' }],
   ]) {
     await assert.rejects(
       () => fns[name]({ auth: staff, data }),
@@ -380,26 +412,26 @@ test('팀장 미만은 직원 관리를 할 수 없다', async () => {
   }
 });
 
-test('자기보다 높은 등급은 부여할 수 없다', async () => {
+test('센터장은 시스템 관리자 요청 없이 역할을 직접 부여할 수 없다', async () => {
   const seed = seedTwo();
-  seed['authz/lead'] = authzOf('lead', '팀장', false);
+  seed['authz/lead'] = authzOf('lead', '센터장', false);
   const { db, fns } = build(seed);
   const lead = { uid: 'lead' };
   await assert.rejects(
     () => fns.approveStaff({ auth: lead, data: { userId: 'kim', role: '센터장' } }),
-    (e) => e.code === 'permission-denied',
+    (e) => e.code === 'failed-precondition',
   );
   assert.equal(db.docs.get('authz/kim').role, '담당자');
 });
 
-test('관리자 플래그는 관리자만 줄 수 있다', async () => {
+test('센터장은 관리자 플래그도 시스템 관리자 요청 없이 부여할 수 없다', async () => {
   const seed = seedTwo();
   seed['authz/lead'] = authzOf('lead', '센터장', false);   // isAdmin 아님
   const { db, fns } = build(seed);
   const lead = { uid: 'lead' };
   await assert.rejects(
     () => fns.approveStaff({ auth: lead, data: { userId: 'kim', role: '담당자', isAdmin: true } }),
-    (e) => e.code === 'permission-denied',
+    (e) => e.code === 'failed-precondition',
   );
   assert.equal(db.docs.get('users/kim').isAdmin, false);
 });
@@ -421,7 +453,7 @@ test('staff-fns 의 모든 쓰기가 트랜잭션을 거친다', () => {
     .replace(/^\s*\/\/.*$/gm, '');
 
   const direct = [...src.matchAll(/(\w+)\.(set|update|delete|batch|commit)\s*\(/g)]
-    .filter((m) => m[1] !== 'tx')
+    .filter((m) => m[1] !== 'tx' && m[1] !== 'FieldValue')
     .map((m) => `${m[1]}.${m[2]}(`);
 
   assert.deepEqual(
