@@ -165,30 +165,51 @@ module.exports = function clientFns(ctx) {
       if (!fixedCan(actor, 'assignments.manage')) {
         throw new HttpsError('permission-denied', '담당 배정 권한이 더 이상 유효하지 않습니다.');
       }
+      // 신규 등록은 이름이 있어야 한다. 이름 없는 입주자는 목록에서 빈 줄로
+      // 나타나고 무엇인지 알 방법이 없다.
       if (created) {
-        throw new HttpsError('failed-precondition', '입주자 신규 등록 절차는 아직 열려 있지 않습니다.');
+        if (!fixedCan(actor, 'settings.client')) {
+          throw new HttpsError('permission-denied', '입주자를 등록할 권한이 없습니다.');
+        }
+        if (!fields.name) {
+          throw new HttpsError('invalid-argument', '입주자 이름을 입력하세요.');
+        }
       }
-      if (actor.role === '팀장'
+
+      // 기존 입주자에 대한 팀장 제약. 신규에는 "현재 지정 팀장"이 없으므로
+      // 적용할 수 없다 — cur 이 null 이라 여기서 접근하면 터진다.
+      if (!created && actor.role === '팀장'
           && String(cur.teamLeader || '').trim() !== String(auth.uid)) {
         throw new HttpsError('permission-denied', '본인이 지정 팀장인 입주자의 담당만 변경할 수 있습니다.');
       }
-      if (actor.role === '팀장' && changeLeader
+      if (!created && actor.role === '팀장' && changeLeader
           && nextLeader !== String(cur.teamLeader || '').trim()) {
         throw new HttpsError('permission-denied', '담당 팀장 지정은 센터장만 변경할 수 있습니다.');
       }
+      // 팀장이 새로 등록하면 **본인이 그 입주자의 팀장**이 된다. 다른 사람을
+      // 팀장으로 앉히는 것은 기존 입주자와 같은 이유로 센터장만 할 수 있다.
+      // (이 줄이 없으면 팀장이 만든 입주자가 곧바로 본인에게 안 보인다 —
+      //  팀장의 담당 범위는 leaderClientIds 이기 때문이다.)
+      if (created && actor.role === '팀장'
+          && changeLeader && nextLeader && nextLeader !== String(auth.uid)) {
+        throw new HttpsError('permission-denied', '담당 팀장 지정은 센터장만 변경할 수 있습니다.');
+      }
 
+      // 신규 등록이면 **이전 상태가 없다.** cur 은 null 이므로 한 번만 풀어
+      // 두고 아래에서 재사용한다 — 곳곳에서 cur.userIds 를 직접 읽으면
+      // 신규 경로에서 터진다(실제로 그랬다).
+      const prevStaff = cur ? parseStaffIds(cur.userIds) : [];
+      const prevLeader = String((cur && cur.teamLeader) || '').trim();
+
+      const staff = changeStaff ? nextStaff : prevStaff;
+      let leader = changeLeader ? nextLeader : prevLeader;
       // 신규 등록인데 담당을 주지 않았으면 만든 사람을 담당으로 넣는다.
       // 담당이 없는 입주자는 만든 사람 화면에도 보이지 않아 막다른 길이 된다.
-      const staff = changeStaff ? nextStaff : parseStaffIds(cur.userIds);
-      const leader = changeLeader ? nextLeader
-        : String((cur && cur.teamLeader) || '').trim();
+      if (created && actor.role === '팀장' && !leader) leader = String(auth.uid);
 
       const rawPlan = planAssignmentChange({
         clientId,
-        prev: {
-          staff: parseStaffIds(cur.userIds),
-          leader: String((cur && cur.teamLeader) || '').trim(),
-        },
+        prev: { staff: prevStaff, leader: prevLeader },
         next: { staff, leader },
       });
       const assignmentChanged = rawPlan.memberOps.length > 0
@@ -214,10 +235,7 @@ module.exports = function clientFns(ctx) {
         tx.set(db.collection(ASSIGNMENT_CHANGES).doc(assignmentChangeId), {
           changeId: assignmentChangeId,
           clientId,
-          before: {
-            staffUids: parseStaffIds(cur.userIds),
-            leaderUid: String(cur.teamLeader || '').trim(),
-          },
+          before: { staffUids: prevStaff, leaderUid: prevLeader },
           after: { staffUids: staff, leaderUid: leader },
           changedBy: auth.uid,
           changedAt: FieldValue.serverTimestamp(),

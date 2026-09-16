@@ -52,16 +52,37 @@ test('계좌 단계는 입주자 단계에 막혀 있다', () => {
   assert.equal(steps.find(s => s.key === 'accounts').blockedBy, 'clients');
 });
 
-test('담당자는 분류는 만들 수 있지만 입주자·계좌는 등록할 수 없다', () => {
+test('담당자는 어느 개설 단계도 진행할 수 없다', () => {
   const { steps } = stateAs('담당자');
-  assert.equal(steps.find(s => s.key === 'categories').can, true);   // nav.settings
-  assert.equal(steps.find(s => s.key === 'clients').can, false);     // settings.client
+  // 기본 분류는 clientId 가 없는 **공통 분류**라 settings.category.common 이
+  // 필요하다. 담당자가 가진 settings.category(입주자 전용)로는 못 만든다 —
+  // 예전에는 여기서 settings.category 를 보고 버튼을 띄운 뒤 규칙이 거부했다.
+  assert.equal(steps.find(s => s.key === 'categories').can, false);
+  assert.equal(steps.find(s => s.key === 'clients').can, false);
   assert.equal(steps.find(s => s.key === 'accounts').can, false);
 });
 
-test('팀장은 담당 배정만 관리하고 설정 마법사의 직접 변경 권한을 상속하지 않는다', () => {
+// ─────────────────────────────────────────────
+// 부팅 — 이것이 깨지면 새 배포가 기동되지 않는다
+//
+// 한때 세 단계가 전부 막혀 있었다. 첫 관리자(signup 이 만드는 센터장+관리자)가
+// 분류도 입주자도 계좌도 만들 수 없어, 빈 DB 에서 아무도 시작할 수 없었다.
+// 권한 하나만 다시 닫혀도 같은 상태로 돌아가므로 역할별로 못 박아 둔다.
+// ─────────────────────────────────────────────
+test('첫 관리자(센터장+관리자)가 빈 배포를 끝까지 진행할 수 있다', () => {
+  const { steps, complete } = stateAs('센터장', { isAdmin: true });
+  assert.equal(complete, false, '빈 DB 인데 완료로 보입니다');
+  const blocked = steps.filter(s => !s.can).map(s => s.key);
+  assert.deepEqual(
+    blocked, [],
+    `첫 관리자가 진행할 수 없는 단계가 있습니다: ${blocked.join(', ')}\n`
+    + '이 상태로 배포하면 빈 DB 에서 아무도 시스템을 열 수 없습니다.',
+  );
+});
+
+test('팀장도 시설 개설 단계를 끝까지 진행할 수 있다', () => {
   const { steps } = stateAs('팀장');
-  assert.deepEqual(steps.map(s => s.can), [false, true, false]);
+  assert.deepEqual(steps.map(s => s.can), [true, true, true]);
 });
 
 test('입력자는 어떤 단계도 진행할 수 없다', () => {

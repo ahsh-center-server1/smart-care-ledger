@@ -33,7 +33,11 @@ export function getSetupState() {
       title: '기본 분류 만들기',
       desc: '식비·교통비 같은 지출 분류입니다. 나중에 설정에서 바꿀 수 있어요.',
       done: (S.categories || []).length > 0,
-      can: can('settings.category'),
+      // DEFAULT_CATEGORIES 에는 clientId 가 없다 — 전 입주자에게 적용되는
+      // **공통 분류**이고, 규칙은 그것을 settingsCategoryCommon 으로 막는다.
+      // 여기서 settings.category(입주자 전용)를 보면 담당자에게 버튼이 보이고
+      // 눌렀을 때 규칙이 거부한다.
+      can: can('settings.category.common'),
       actionLabel: '기본 분류 만들기',
       action: seedDefaultCategories,
     },

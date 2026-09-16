@@ -66,16 +66,71 @@ test('팀장은 자기 담당 입주자의 담당 직원만 바꾸고 담당 팀
   assert.equal(db.docs.has('assignmentChanges/change-1'), false);
 });
 
-test('담당 배정 권한은 입주자 기본정보 수정이나 신규 등록을 포함하지 않는다', async () => {
+// 신규 등록은 settings.client 로 판정한다. assignments.manage 만으로 열리면
+// "담당을 배정할 수 있는 사람"과 "입주자를 만들 수 있는 사람"이 같아진다 —
+// 그 둘은 별개다. 코드가 두 권한을 따로 확인하는지 본다.
+test('입주자 신규 등록은 settings.client 를 따로 확인한다', async () => {
+  const { db, fns } = build();
+  // 담당 배정 권한은 있지만 settings.client 가 없는 주체.
+  db.docs.set('authz/assigner', {
+    ...authz('assigner', '팀장', ['c1'], ['c1']),
+    // fixedCan 은 role 로 판정하므로, 권한을 떼려면 역할을 지운다.
+    role: '', isAdmin: false,
+  });
+  await assert.rejects(() => fns.saveClient({
+    auth: { uid: 'assigner' },
+    data: { clientId: 'new-client', fields: { name: '새 입주자' } },
+  }), (e) => e.code === 'permission-denied');
+  assert.equal(db.docs.has('clients/new-client'), false);
+});
+
+test('이름 없는 입주자는 만들 수 없다', async () => {
   const { db, fns } = build();
   await assert.rejects(() => fns.saveClient({
-    auth: { uid: 'leader' }, data: { clientId: 'c1', fields: { name: '변조' } },
-  }), (e) => e.code === 'permission-denied');
-  await assert.rejects(() => fns.saveClient({
     auth: { uid: 'center' }, data: { clientId: 'new-client', staffUids: ['staff1'] },
-  }), (e) => e.code === 'failed-precondition');
-  assert.equal(db.docs.get('clients/c1').name, '내 입주자');
+  }), (e) => e.code === 'invalid-argument');
   assert.equal(db.docs.has('clients/new-client'), false);
+});
+
+test('센터장은 입주자를 등록하고 담당까지 함께 배정한다', async () => {
+  const { db, fns } = build();
+  await fns.saveClient({
+    auth: { uid: 'center' },
+    data: { clientId: 'new-client', fields: { name: '새 입주자' }, staffUids: ['staff1'] },
+  });
+  assert.equal(db.docs.get('clients/new-client').name, '새 입주자');
+  assert.equal(db.docs.get('clients/new-client').userIds, 'staff1');
+  // 투영본이 같은 트랜잭션에서 따라와야 담당자 화면에 곧바로 보인다.
+  assert.deepEqual(db.docs.get('authz/staff1').accessibleClientIds, ['new-client']);
+});
+
+// 팀장의 담당 범위는 leaderClientIds 다. 본인을 팀장으로 넣지 않으면 방금
+// 만든 입주자가 곧바로 본인에게 안 보인다 — 만들자마자 사라지는 셈이다.
+test('팀장이 등록한 입주자는 본인이 담당 팀장이 된다', async () => {
+  const { db, fns } = build();
+  await fns.saveClient({
+    auth: { uid: 'leader' },
+    data: { clientId: 'new-client', fields: { name: '새 입주자' }, staffUids: ['staff1'] },
+  });
+  assert.equal(db.docs.get('clients/new-client').teamLeader, 'leader');
+  assert.deepEqual(db.docs.get('authz/leader').leaderClientIds, ['c1', 'new-client']);
+});
+
+test('팀장은 등록하면서 다른 사람을 담당 팀장으로 앉힐 수 없다', async () => {
+  const { db, fns } = build();
+  await assert.rejects(() => fns.saveClient({
+    auth: { uid: 'leader' },
+    data: { clientId: 'new-client', fields: { name: '새 입주자' }, leaderUid: 'other' },
+  }), (e) => e.code === 'permission-denied');
+  assert.equal(db.docs.has('clients/new-client'), false);
+});
+
+test('기본정보 수정은 settings.client 가 있어야 한다', async () => {
+  const { db, fns } = build();
+  await fns.saveClient({
+    auth: { uid: 'leader' }, data: { clientId: 'c1', fields: { name: '고친 이름' } },
+  });
+  assert.equal(db.docs.get('clients/c1').name, '고친 이름');
 });
 
 test('센터장은 모든 입주자의 담당 배정을 변경할 수 있다', async () => {

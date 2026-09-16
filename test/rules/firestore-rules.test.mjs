@@ -262,16 +262,50 @@ describe('clients · accounts', () => {
     await assertFails(updateDoc(doc(as(ACTORS.관리자), `clients/${MY_CLIENT}`), { memo: 'ok' }));
   });
 
-  it('accounts: 팀장도 직접 변경할 수 없다', async () => {
-    await assertFails(updateDoc(doc(as(ACTORS.팀장), 'accounts/a1'), { memo: 'ok' }));
+  // 계좌 관리는 시설 개설에 필요하다(계좌가 없으면 거래를 넣을 곳이 없다).
+  // 다만 담당 범위 안에서만 — 계좌의 기초잔액은 그 사람 장부 전체의 출발점이라,
+  // 남의 입주자 계좌를 건드리면 그 장부가 통째로 틀어진다.
+  it('accounts: 팀장은 담당 입주자의 계좌를 변경할 수 있다', async () => {
+    await assertSucceeds(updateDoc(doc(as(ACTORS.팀장), 'accounts/a1'), { label: '생활비2' }));
   });
 
-  it('accounts: 센터장도 직접 변경할 수 없다', async () => {
-    await assertFails(updateDoc(doc(as(ACTORS.센터장), 'accounts/a1'), { memo: 'ok2' }));
+  it('accounts: 담당 밖 계좌는 팀장도 변경할 수 없다', async () => {
+    await assertFails(updateDoc(doc(as(ACTORS.팀장), 'accounts/a9'), { label: 'ok3' }));
   });
 
-  it('accounts: 담당 밖 계좌도 팀장은 변경할 수 없다', async () => {
-    await assertFails(updateDoc(doc(as(ACTORS.팀장), 'accounts/a9'), { memo: 'ok3' }));
+  it('accounts: 센터장은 전 입주자의 계좌를 변경할 수 있다', async () => {
+    await assertSucceeds(updateDoc(doc(as(ACTORS.센터장), 'accounts/a9'), { label: '남계좌2' }));
+  });
+
+  it('accounts: clientId 는 바꿀 수 없다 — 계좌를 남의 입주자로 옮기는 길', async () => {
+    await assertFails(
+      updateDoc(doc(as(ACTORS.센터장), 'accounts/a1'), { clientId: OTHER_CLIENT }));
+  });
+
+  it('accounts: 기초잔액이 숫자가 아니면 거부한다', async () => {
+    // 문자열이 들어가면 balance.js 의 합산이 조용히 NaN 이 되고,
+    // 화면에는 잔액이 비어 보일 뿐 이유가 남지 않는다.
+    await assertFails(
+      updateDoc(doc(as(ACTORS.센터장), 'accounts/a1'), { initialBalance: '10만원' }));
+  });
+
+  it('accounts: 없는 입주자의 계좌는 만들 수 없다', async () => {
+    await assertFails(setDoc(doc(as(ACTORS.센터장), 'accounts/ghost'), {
+      clientId: 'no-such-client', label: '유령', initialBalance: 0,
+    }));
+  });
+
+  it('accounts: 담당 입주자의 계좌는 새로 만들 수 있다 — 개설 경로', async () => {
+    await assertSucceeds(setDoc(doc(as(ACTORS.센터장), "accounts/new-acc"), {
+      clientId: MY_CLIENT, label: '새 통장', initialBalance: 0,
+      initialBalanceDate: '2026-01-01',
+    }));
+  });
+
+  it('accounts: 담당자는 계좌를 만들 수 없다', async () => {
+    await assertFails(setDoc(doc(as(ACTORS.담당자), "accounts/nope-acc"), {
+      clientId: MY_CLIENT, label: '안됨', initialBalance: 0,
+    }));
   });
 });
 
@@ -495,8 +529,10 @@ describe('categories · fixedItems', () => {
     await assertFails(updateDoc(doc(as(ACTORS.담당자), 'categories/cat1'), { x: 1 }));
   });
 
-  it('공통 분류는 팀장도 직접 쓸 수 없다', async () => {
-    await assertFails(updateDoc(doc(as(ACTORS.팀장), 'categories/cat1'), { x: 1 }));
+  // 공통 분류는 팀장 이상만 — 시설 개설에 기본 분류가 필요하기 때문이다.
+  // 경계는 담당자와 팀장 사이이고, 그것은 바로 위 테스트가 지킨다.
+  it('공통 분류는 팀장이 쓸 수 있다 — 기본 분류를 만들어야 개설이 된다', async () => {
+    await assertSucceeds(updateDoc(doc(as(ACTORS.팀장), 'categories/cat1'), { x: 1 }));
   });
 
   it('입주자 전용 분류는 담당자가 쓸 수 있다', async () => {
@@ -781,7 +817,9 @@ describe('fail-closed — 근거는 클레임이 아니라 authz 문서다', () 
     // 반대 방향. 클레임은 이제 아무 역할도 하지 않으므로 없어도 된다.
     const noClaims = { uid: ACTORS.팀장.uid };
     await assertSucceeds(getDoc(doc(as(noClaims), `clients/${MY_CLIENT}`)));
-    await assertFails(updateDoc(doc(as(noClaims), 'accounts/a1'), { memo: 'ok' }));
+    // 거부 방향도 authz 가 정한다. clients 직접 쓰기는 역할과 무관하게 막혀
+    // 있으므로(saveClient 콜러블만) 클레임 유무에 좌우되지 않는 기준점이다.
+    await assertFails(updateDoc(doc(as(noClaims), `clients/${MY_CLIENT}`), { memo: 'ok' }));
   });
 });
 

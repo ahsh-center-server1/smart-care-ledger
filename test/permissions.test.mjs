@@ -47,13 +47,49 @@ test('팀장과 센터장은 검토 권한만 받고 입력 권한을 상속하�
   as('팀장');
   assert.equal(can('report.approve.team'), true);
   assert.equal(can('assignments.manage'), true);
-  assert.equal(can('trx.create'), false);
-  assert.equal(can('settings.account'), false);
+  // 장부에 직접 쓰는 권한은 검토 역할에 없다 — 이것이 이 테스트의 요점이다.
+  for (const key of ['trx.create', 'trx.edit', 'trx.transfer', 'report.submit']) {
+    assert.equal(can(key), false, `팀장이 입력 권한 ${key}를 상속했습니다`);
+  }
   as('센터장');
   assert.equal(can('report.approve.center'), true);
   assert.equal(can('settings.archive'), true);
   assert.equal(can('trx.create'), false);
   assert.equal(can('report.approve.team'), false);
+});
+
+test('시설 개설·운영 권한은 검토 역할에 있고 그 아래에는 없다', () => {
+  // settings.client · settings.account · settings.category.common 은 입력 권한이
+  // 아니라 **시설을 열고 유지하는 관리 권한**이다. 한때 아무에게도 없었고,
+  // 그래서 빈 DB 에 첫 관리자가 들어가면 분류·입주자·계좌를 하나도 만들 수 없어
+  // 시스템이 기동되지 않았다(부팅 회귀 테스트는 test/setup.test.mjs).
+  const OPS = ['settings.client', 'settings.account', 'settings.category.common'];
+  for (const role of ['팀장', '센터장']) {
+    as(role);
+    for (const key of OPS) assert.equal(can(key), true, `${role}에게 ${key}가 닫혔습니다`);
+  }
+  // 담당자 이하로는 내려가지 않는다. 공통 분류는 전 입주자에게 영향을 주고,
+  // 계좌의 기초잔액은 그 사람 장부 전체의 출발점이다.
+  for (const role of ['담당자', '입력자']) {
+    as(role);
+    for (const key of OPS) assert.equal(can(key), false, `${role}이 ${key}를 얻었습니다`);
+  }
+  // 관리자 자격만으로는 열리지 않는다 — 기술 권한과 업무 권한은 직교한다.
+  as('', true);
+  for (const key of OPS) assert.equal(can(key), false, `관리자 자격이 ${key}를 열었습니다`);
+});
+
+test('파괴적·통제 우회 권한은 여전히 아무에게도 없다', () => {
+  // 위의 셋과 달리 이쪽은 절차가 없어서가 아니라 그 자체가 위험해서 닫혀 있다.
+  // 되살리려면 별도 설계가 필요하고, 그때까지 이 목록은 비어 있어야 한다.
+  const FORBIDDEN = ['lock.bypass', 'settings.permissions', 'settings.reset',
+    'trx.delete', 'trx.delete.bulk', 'report.delete', 'report.release'];
+  for (const role of ['입력자', '담당자', '팀장', '센터장']) {
+    as(role);
+    for (const key of FORBIDDEN) assert.equal(can(key), false, `${role}이 ${key}를 얻었습니다`);
+    as(role, true);
+    for (const key of FORBIDDEN) assert.equal(can(key), false, `${role}+관리자가 ${key}를 얻었습니다`);
+  }
 });
 
 test('시스템 관리자 자격은 기술 권한만 더한다', () => {
