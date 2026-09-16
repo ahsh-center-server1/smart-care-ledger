@@ -38,7 +38,7 @@ export async function heicToJpeg(file) {
     const blob = Array.isArray(out) ? out[0] : out;
     if (!blob || !blob.size) return file;
     const base = (file.name || 'image').replace(/\.[^.]+$/, '');
-    console.log(`[HEIC 변환] ${file.name || 'image'} → ${base}.jpg (${(blob.size/1024).toFixed(0)}KB)`);
+    console.debug(`[HEIC 변환] ${file.name || 'image'} → ${base}.jpg (${(blob.size/1024).toFixed(0)}KB)`);
     return new File([blob], base + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
   } catch (e) {
     console.warn('HEIC 변환 실패, 원본 사용:', e.message);
@@ -96,7 +96,7 @@ export async function compressImage(file, maxPx=1200, quality=0.78) {
             type: 'image/jpeg', lastModified: Date.now()
           });
           const ratio = Math.round((1 - blob.size/origSize) * 100);
-          console.log(`[압축] ${srcName}: ${(origSize/1024).toFixed(0)}KB → ${(blob.size/1024).toFixed(0)}KB (${ratio}% 감소)`);
+          console.debug(`[압축] ${srcName}: ${(origSize/1024).toFixed(0)}KB → ${(blob.size/1024).toFixed(0)}KB (${ratio}% 감소)`);
           resolve(compressed);
         }, 'image/jpeg', quality);
       };

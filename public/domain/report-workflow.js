@@ -61,13 +61,21 @@ export const STAGE_STAMPS = {
  */
 export const TRANSITIONS = {
   draft:         { save: 'draft', submit: 'submitted' },
+  // approveTeamProxy 는 **의도적으로 없다.** 팀장 자리가 비었다는 이유만으로
+  // 센터장이 팀장 단계를 건너뛸 수 있으면 2단 결재가 1단이 된다. 공석은
+  // 정식 대행 지정으로 푸는 것이고, 그 절차는 아직 없다.
+  //   근거 테스트: test/report-transition.test.mjs
+  //               「배정 팀장이 퇴사해도 암묵적 대행을 허용하지 않는다」
   submitted:     { approveTeam: 'team_approved',
                    reject: 'rejected', recall: 'draft', revert: 'draft' },
   team_approved: { approveCenter: 'confirmed', reject: 'rejected',
                    recall: 'draft', revert: 'submitted' },
   confirmed:     { revert: 'team_approved' },
-  // 반려된 보고서가 영구 정지되지 않도록 탈출 경로를 둘 이상 보장한다.
-  // 담당자가 퇴사·부재여도 팀장 이상이 release로 초안으로 되돌릴 수 있다.
+  // release 도 **의도적으로 없다.** 반려된 보고서는 작성·제출 절차로만 다시
+  // 올라간다 — 결재 단계를 건너뛰는 탈출구를 두지 않는다. 담당자가 부재면
+  // 담당 배정을 바꿔 다른 담당자가 제출한다.
+  //   근거 테스트: test/report-workflow.test.mjs
+  //               「rejected는 작성·제출 절차로만 다시 진행한다」
   rejected:      { save: 'draft', submit: 'submitted' },
 };
 
@@ -80,7 +88,6 @@ export function normalizeStatus(status) {
 /** 이 액션이 찍는 도장 단계들 */
 const ACTION_STAMPS = {
   submit:           ['submitted'],
-  submitAsLeader:   ['submitted', 'team_approved'],
   approveTeam:      ['team_approved'],
   approveTeamProxy: ['team_approved'],
   approveCenter:    ['confirmed'],
@@ -103,12 +110,6 @@ function permissionError(action, from, ctx) {
 
     case 'submit':
       return can('report.submit') ? null : '제출 권한이 없습니다.';
-
-    case 'submitAsLeader':
-      if (!can('report.submit')) return '제출 권한이 없습니다.';
-      if (!can('report.approve.team')) return '팀장 결재 권한이 없습니다.';
-      if (!isAssignedLeader) return '이 입주자의 담당 팀장이 아닙니다.';
-      return null;
 
     case 'approveTeam':
       if (!can('report.approve.team')) return '팀장 결재 권한이 없습니다.';
@@ -163,7 +164,7 @@ function permissionError(action, from, ctx) {
 /**
  * 전이를 계산한다. **실행 직전에 반드시 호출한다.**
  *
- * @param {string} action  save|submit|submitAsLeader|approveTeam|approveTeamProxy|
+ * @param {string} action  save|submit|approveTeam|approveTeamProxy|
  *                         approveCenter|reject|recall|revert|release
  * @param {string} current 현재 report.status (빈 값 허용)
  * @param {Object} ctx     { userId, userName, now, isAuthor, isAssignedLeader, leaderVacant }

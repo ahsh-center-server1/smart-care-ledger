@@ -149,7 +149,6 @@ Object.assign(window, {
   handleGenSummary: Rpt.handleGenSummary,
   renderApproval: Rpt.renderApproval,
   doApproval: Rpt.doApproval,
-  doApprovalAsLeader: Rpt.doApprovalAsLeader,
   doReject: Rpt.doReject,
   doTeamApproveProxy: Rpt.doTeamApproveProxy,
   doRevertToDraft: Rpt.doRevertToDraft,

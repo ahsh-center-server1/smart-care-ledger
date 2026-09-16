@@ -263,10 +263,18 @@ test('정식 대행 지정 없는 대행 결재는 거부한다', () => {
   assert.equal(r.ok, false);
 });
 
-test('팀장 직접 제출로 자기 결재를 건너뛰지 못한다', () => {
+// 예전에는 '제출 + 팀장결재 동시'(submitAsLeader) 동작이 있었다. 고정 역할
+// 정책에서 팀장은 report.submit 을 갖지 않으므로 그 동작은 어떤 주체로도
+// 성립하지 않고, 전이표에도 없다. 이름이 되살아나지 않는지까지 확인한다 —
+// 전이표에 다시 넣으면 팀장이 자기 제출건을 스스로 결재하게 된다.
+test('팀장 직접 제출 경로는 존재하지 않는다', () => {
   as('팀장');
-  const r = planTransition('submitAsLeader', 'draft', { ...CTX, isAssignedLeader: true });
-  assert.equal(r.ok, false);
+  for (const from of Object.keys(TRANSITIONS)) {
+    assert.equal(TRANSITIONS[from].submitAsLeader, undefined,
+      `${from}에 submitAsLeader가 되살아났습니다`);
+    assert.equal(planTransition('submitAsLeader', from, { ...CTX, isAssignedLeader: true }).ok,
+      false);
+  }
 });
 
 test('작성자는 팀장·센터장 역할이 있어도 자기 보고서를 결재하지 못한다', () => {
@@ -362,7 +370,7 @@ test('서버의 전이 실행만 status를 쓴다', async () => {
 test('결재 함수는 모두 applyReportTransition을 통한다', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../public/modules/report.js', import.meta.url), 'utf8');
-  for (const fn of ['doApproval', 'doApprovalAsLeader', 'doTeamApproveProxy',
+  for (const fn of ['doApproval', 'doTeamApproveProxy',
                     'doReject', 'doRevertToDraft', 'recallReport']) {
     const start = src.indexOf(`export async function ${fn}(`);
     assert.ok(start > 0, `${fn}이 없습니다`);

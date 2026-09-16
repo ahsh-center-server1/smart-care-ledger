@@ -794,10 +794,7 @@ export function renderApproval(report,curStatus){
     if(has('save'))
       mkBtn('💾 임시저장','color:#64748b;border-color:#cbd5e1;',()=>applyReportTransition('save'));
 
-    // 배정 팀장이면서 본인이 담당인 경우에는 '직접 제출' 하나만 보여준다
-    if(has('submitAsLeader')&&ctx.isDirectStaff)
-      mkBtn('📤 직접 제출','color:var(--amber);border-color:#fde68a;',()=>showConfirm('보고서 제출','담당 팀장으로서 직접 제출합니다.\n팀장 결재가 자동으로 완료됩니다.',()=>applyReportTransition('submitAsLeader'),'제출'));
-    else if(has('submit'))
+    if(has('submit'))
       mkBtn('📤 제출','color:var(--amber);border-color:#fde68a;',()=>showConfirm('보고서 제출','제출 후에는 회수하기 전까지 수정할 수 없습니다.\n계속하시겠습니까?',()=>applyReportTransition('submit'),'제출'));
 
     if(has('approveTeam'))
@@ -895,14 +892,10 @@ export async function doApproval(action){
   if(action==='draft')return applyReportTransition('save');
   const ctx=reportActorContext();
   const avail=availableActions(S.reportData?.report?.status,ctx);
-  const forward=['approveCenter','approveTeam','approveTeamProxy','submitAsLeader','submit']
+  const forward=['approveCenter','approveTeam','approveTeamProxy','submit']
     .find(a=>avail.includes(a));
   if(!forward){toast('현재 상태에서 진행할 수 있는 결재가 없습니다.','error',4000);return false;}
   return applyReportTransition(forward);
-}
-
-export async function doApprovalAsLeader(action){
-  return applyReportTransition(action==='draft'?'save':'submitAsLeader');
 }
 
 export async function doTeamApproveProxy(){

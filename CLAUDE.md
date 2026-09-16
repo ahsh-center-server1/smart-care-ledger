@@ -107,27 +107,34 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
   ▲                   │                          │                               │
   └─recall/revert─────┘                          │                               │
   ▲                   └───reject──▶ rejected ◀───┘                               │
-  └─release/submit───────────────────┘           ◀────────────revert─────────────┘
+  └─submit────────────────────────────┘          ◀────────────revert─────────────┘
 ```
 
 | 액션 | 필요 권한 | 비고 |
 |---|---|---|
 | `save` | `report.draft` | 임시저장 |
 | `submit` | `report.submit` | |
-| `submitAsLeader` | `report.submit` + `report.approve.team` + 배정 팀장 | 제출+팀장결재 동시 |
 | `approveTeam` | `report.approve.team` + 배정 팀장 | |
-| `approveTeamProxy` | `report.approve.center` + **팀장 공석일 때만** | 대행 표시가 남음 |
 | `approveCenter` | `report.approve.center` | |
 | `reject` | `report.reject` + 지금 결재할 차례인 사람 | 사유 필수 |
 | `recall` | 작성자(`createdBy`)+`report.recall`, 또는 팀장 이상 | |
 | `revert` | 직전 단계의 결재 권한 (confirmed는 `report.revert`) | 한 단계씩 |
-| `release` | `report.release` | 담당자 부재 시 반려 해제 |
+
+**전이표에 없는 동작** — 이름만 남기지 않는다. 표에 없으면 권한 검사에 닿기
+전에 거부된다.
+
+| 없는 동작 | 왜 없나 |
+|---|---|
+| `submitAsLeader` | 팀장은 `report.submit`을 갖지 않는다(역할 분리). 어떤 주체로도 성립하지 않아 제거했다 |
+| `approveTeamProxy` | 자리가 비었다는 이유만으로 팀장 단계를 건너뛰면 2단 결재가 1단이 된다. 공석은 **정식 대행 지정**으로 푼다(절차 미구현) |
+| `release` | 반려건은 작성·제출 절차로만 다시 올라간다. 담당자 부재는 담당 배정 변경으로 푼다 |
 
 - **도장 정리**: 전이할 때마다 도착 상태보다 뒤 단계의 결재 기록을
   `deleteField()`로 지운다. 취소된 서명이 인쇄물에 남지 않는다.
 - **`createdBy`**: 보고서를 만드는 모든 경로가 기록한다. 회수 권한 판정의 근거.
-- **막다른 상태 없음**: `rejected`에서 담당자 재제출(`submit`)과
-  팀장 이상 해제(`release`) 두 경로가 보장된다.
+- **`rejected`에서 나가는 길**: 담당자 재제출(`submit`) 하나다. 담당자가
+  부재면 담당 배정을 바꿔 다른 담당자가 제출한다 — 결재 단계를 건너뛰는
+  탈출구는 두지 않는다.
 
 ## 6. 거래 유형(type)
 

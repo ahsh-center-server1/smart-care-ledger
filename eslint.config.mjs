@@ -63,6 +63,16 @@ export default [
       'no-constant-condition': ['error', { checkLoops: false }],
       'no-empty': ['warn', { allowEmptyCatch: true }],
       'require-atomic-updates': 'off',
+      // 디버그 `console.log`가 배포본에 남지 않게 한다.
+      //
+      // 실제로 새어 나갔다: 로그인 경로에 임시로 넣은 네 줄이 authz 문서
+      // 전체(역할·담당 입주자 ID·caps)를 모든 사용자 콘솔에 찍고 있었다.
+      // 거주인의 금전 기록을 다루는 앱이라 그 자체가 흘리면 안 되는 값이다.
+      //
+      // warn·error는 남긴다 — 전부 "실패했지만 화면은 계속 간다"를 알리는
+      // 오류 경로이고, 그것을 지우면 원인을 알 수 없는 조용한 실패가 된다.
+      // debug는 용량 진단(HEIC 변환·압축률)용으로, 기본 콘솔에는 안 뜬다.
+      'no-console': ['error', { allow: ['warn', 'error', 'debug'] }],
     },
   },
 

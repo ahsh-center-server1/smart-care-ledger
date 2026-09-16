@@ -28,6 +28,7 @@ import { bankbookRowsToParsed } from '../domain/receipt.js';
 import { classifyMerchant } from '../domain/receipt-match.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
 import { hasReceipt, receiptAccessUrl } from '../services/receipt-access.js';
+import { fnErrorMessage } from '../services/fn-errors.js';
 
 // ─────────────────────────────────────────────
 // 모달
@@ -1113,7 +1114,15 @@ export function renderClientForm(c){
     if(canEditDetails)p.fields={name:data.name,contact:data.contact,memo:data.memo};
     if(data.userIds!==undefined)p.staffUids=String(data.userIds).split(',');
     if(data.teamLeader!==undefined)p.leaderUid=data.teamLeader;
-    await window._fbFn.call('saveClient')(p);
+    // 거부를 삼키지 않는다. saveClient 는 신규 등록·담당 범위·마지막 관리자 같은
+    // 조건을 서버에서 거절하는데, try 가 없으면 그 거절이 unhandled rejection 으로
+    // 사라져 **화면에 아무 일도 일어나지 않았다** — 저장된 줄 알고 넘어가게 된다.
+    try{
+      await window._fbFn.call('saveClient')(p);
+    }catch(e){
+      toast(fnErrorMessage(e,'입주자 저장에 실패했습니다.'),'error');
+      return;
+    }
     toast('저장됨','success'); closeModal(); await refetchClients(); renderManagement();
     await refreshSetupAfterChange();
   });
@@ -1152,7 +1161,14 @@ export function renderAccountForm(a){
     // currentBalance도 여기서 쓰지 않는다 — syncAccountOnSettingsChange 트리거가
     // 기초잔액·기준일 변경을 감지해 전체 거래 기준으로 다시 계산한다.
     const{doc,setDoc}=fb();
-    await setDoc(doc(fdb(),COLS.ACCOUNTS,id),data,{merge:true});
+    // 계좌 쓰기는 규칙이 settingsAccount capability 로 거절할 수 있다.
+    // try 가 없으면 그 거절이 조용히 사라져 저장된 것처럼 보였다.
+    try{
+      await setDoc(doc(fdb(),COLS.ACCOUNTS,id),data,{merge:true});
+    }catch(e){
+      toast(fnErrorMessage(e,'계좌 저장에 실패했습니다. 권한을 확인하세요.'),'error');
+      return;
+    }
     toast('저장됨','success'); closeModal(); await refetchAccounts(); renderManagement();
     await refreshSetupAfterChange();
   });
