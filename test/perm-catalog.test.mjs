@@ -337,3 +337,51 @@ test('permissions.js 에 손으로 적은 등급 리터럴이 없다', () => {
     `permissions.js 에 등급 리터럴이 생겼습니다: ${literals.join(', ')}`,
   );
 });
+
+// ─────────────────────────────────────────────
+// 등급 계산은 프로덕션에서 죽어 있어야 한다
+//
+// 권한 판정의 출처는 fixed-role-policy 하나다. perm-catalog 의 등급·오버라이드
+// 계산은 표시·검증용 메타데이터로만 남아 있고, 규칙은 caps 를 읽지도 않는다.
+//
+// 그런데 computeCaps·effectiveRank 는 여전히 export 돼 있어서 "쓰면 되는 것"
+// 처럼 보인다. 하나라도 프로덕션 경로로 돌아오면 판정 근거가 다시 두 벌이 되고,
+// 이 프로젝트는 그때 화면과 서버가 갈라지는 것을 이미 겪었다.
+// ─────────────────────────────────────────────
+test('등급 기반 판정이 프로덕션에 없다', async () => {
+  const { readdirSync, statSync } = await import('node:fs');
+  const { join, relative } = await import('node:path');
+  const ROOT = new URL('..', import.meta.url).pathname;
+
+  // 프로덕션 = 브라우저에 가는 코드 + 배포되는 Functions. 테스트·도구는 제외
+  // (테스트는 낡은 caps 픽스처를 만들 때 아직 computeCaps 를 쓴다).
+  const roots = ['public', 'functions'];
+  const files = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      if (name === 'node_modules' || name === 'vendor' || name.startsWith('.')) continue;
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) walk(p);
+      // 카탈로그 자신은 당연히 제 함수를 정의한다.
+      else if (/\.(js|cjs|mjs)$/.test(name) && !p.includes('perm-catalog')) files.push(p);
+    }
+  };
+  for (const r of roots) walk(join(ROOT, r));
+
+  const banned = /\b(computeCaps|effectiveRank)\s*\(/;
+  const hits = [];
+  for (const f of files) {
+    const src = readFileSync(f, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    src.split('\n').forEach((line, i) => {
+      if (banned.test(line)) hits.push(`${relative(ROOT, f)}:${i + 1}  ${line.trim()}`);
+    });
+  }
+
+  assert.deepEqual(
+    hits, [],
+    '등급 기반 권한 계산이 프로덕션 코드로 돌아왔습니다:\n  ' + hits.join('\n  ')
+      + '\n판정은 fixed-role-policy.js 의 fixedCan/computeFixedCaps 로 합니다.',
+  );
+});

@@ -4,7 +4,10 @@
   "scripts": {
     "lint": "eslint .",
     "test": "node --test test/*.test.mjs",
-    "check": "npm run lint && npm run vendor:check && npm test",
+    "//deps": "functions/는 별도 package.json이다. 루트 설치만으로는 들어오지 않아, 새로 클론하면 테스트 4개가 'Cannot find module sharp'로 죽었다(원인이 코드처럼 보인다). postinstall이 함께 설치하고, deps:check가 빠졌을 때 무엇을 하라고 알려 준다.",
+    "postinstall": "npm --prefix functions ci --no-audit --no-fund",
+    "deps:check": "node tools/check-deps.mjs",
+    "check": "npm run deps:check && npm run lint && npm run vendor:check && npm test",
     "lint:syntax": "node lint.cjs",
     "vendor": "node tools/vendor.mjs",
     "vendor:check": "node tools/vendor.mjs --check",

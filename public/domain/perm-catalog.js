@@ -1,28 +1,32 @@
 // public/domain/perm-catalog.js
 //
-// 권한 카탈로그 — **저장소가 소유하는 정적 사실.** 순수 모듈이라 DOM·Firestore를 모른다.
+// 권한 **메타데이터** 카탈로그 — 순수 모듈이라 DOM·Firestore를 모른다.
 //
-// 왜 이 파일이 생겼나
-//   권한 등급표가 두 벌이었다. 화면은 `config/permissions` 오버라이드를 읽고,
-//   서버(firestore.rules · storage.rules · functions)는 등급 숫자를 하드코딩했다.
-//   그래서 관리자가 등급을 **내리면** 버튼은 보이는데 서버가 거부했고(신고된 증상),
-//   **올리면** 버튼은 숨는데 서버는 그대로 허용했다(보안 구멍).
+// ⚠️ 이 파일은 더 이상 권한의 근거가 아니다.
 //
-//   여기가 그 유일한 출처다. 4개 집행 지점(UI · Firestore · Storage · Functions)이
-//   이 표를 근거로 하고, test/contract/ 의 계약 테스트가 어긋남을 CI에서 잡는다.
+//   권한 판정의 유일한 출처는 public/domain/fixed-role-policy.js 다(고정 역할
+//   정책). 화면의 can(), Functions 의 fixedCan(), 그리고 두 규칙 파일의 cap()
+//   이 전부 그 표를 따른다. 여기 있는 등급(defaultRank·securityFloor)과
+//   오버라이드 계산(effectiveRank·computeCaps)은 **아무도 집행하지 않는다.**
 //
-// 왜 오버라이드와 분리하는가
-//   `securityFloor`가 관리자 편집 문서에 있으면 관리자 계정 하나로 하한 자체를
-//   내릴 수 있다. 그래서 하한·집행 지점·범위는 **배포로만** 바뀌고,
-//   `config/permissions`에는 그 하한 이상의 오버라이드만 담긴다.
+//   한때는 근거였다. 등급표에 관리자 오버라이드를 얹는 구조였고, 서버가
+//   authz/{uid}.caps 에 불리언으로 미리 계산해 두면 규칙이 그것만 읽었다.
+//   그 구조는 "관리자 계정 하나로 보안 하한을 움직일 수 있다"는 문제가 있어
+//   고정 정책으로 바뀌었다. 규칙은 이제 caps 를 읽지 않고 role 로 직접 판정한다.
 //
-//   유효 등급 = max(securityFloor, override ?? defaultRank)
+// 그럼 왜 남겨 두나 — 두 가지 때문이다.
 //
-// 왜 caps 스냅샷인가
-//   Storage 규칙은 평가당 Firestore 문서를 2개까지만 읽는다. `config/permissions`를
-//   규칙에서 직접 읽으면 통장 경로(계좌 → 입주자 → 권한)가 한도를 넘는다.
-//   그래서 서버가 사용자별 `authz/{uid}.caps`에 **불리언으로 미리 계산**해 두고,
-//   규칙은 등급 계산 없이 그 불리언만 읽는다. 조회 1회로 끝난다.
+//   1. 집행 지점 메타데이터. 키마다 어느 컬렉션(resource)을 어느 지점
+//      (enforcement)에서 막는지를 담고 있고, test/contract/enforcement.test.mjs
+//      의 게이트들이 그것으로 "규칙 블록이 있는가"를 판정한다. 고정 정책에는
+//      이 정보가 없다.
+//   2. 누락 감지. test/fixed-role-policy.test.mjs 가 이 카탈로그의 모든 키에
+//      대해 고정 정책이 명시적 결정을 갖는지 확인한다. 키를 새로 만들고
+//      정책에 넣는 것을 잊으면 거기서 잡힌다.
+//
+//   즉 **표시·검증용 메타데이터**다. 권한을 묻는 코드는 fixed-role-policy 를
+//   본다. 등급 계산이 프로덕션 코드로 돌아오지 않는지는
+//   test/perm-catalog.test.mjs 의 「등급 기반 판정이 프로덕션에 없다」가 지킨다.
 
 'use strict';
 

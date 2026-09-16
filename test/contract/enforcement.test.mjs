@@ -315,6 +315,109 @@ test('[게이트 B] reports 직접 쓰기가 막혀 있다', () => {
 });
 
 // ─────────────────────────────────────────────
+// 게이트 B/C — 규칙 안의 권한표가 정책과 같은가
+//
+// 왜 이 게이트가 필요한가
+//   권한표의 출처는 public/domain/fixed-role-policy.js 하나다. 서버 사본
+//   (functions/fixed-role-policy.cjs)은 생성물이고 `--check`가 낡음을 잡는다.
+//   그런데 **규칙 파일 두 개는 그 표를 손으로 옮겨 적은 사본**이다. cap() 안에
+//   역할별 허용 목록이 문자열 배열로 박혀 있고, 지금까지 그것을 정책과
+//   대조하는 검사가 하나도 없었다.
+//
+//   위의 「실제 부여된 Firestore 권한을 규칙이 집행한다」는 cap 이름이 파일
+//   어딘가에 **등장하는지**만 본다. 등장하면서 엉뚱한 역할에 붙어 있어도
+//   통과한다 — 즉 권한 상승을 잡지 못한다.
+//
+//   이 프로젝트는 등급표가 두 벌이어서 화면과 서버가 갈라지는 일을 이미
+//   겪었다. 사본이 넷으로 늘었으니 대조도 넷이어야 한다.
+// ─────────────────────────────────────────────
+
+/** 규칙의 cap() 안에서 "role == 'X' && name in [...]" 을 뽑아낸다. */
+function parseRuleCapTable(src) {
+  const body = stripComments(src);
+  const start = body.indexOf('function cap(name)');
+  assert.ok(start >= 0, 'cap(name) 함수를 찾을 수 없습니다 — 규칙 구조가 바뀌었습니다');
+  // cap() 다음에 오는 함수 정의 전까지가 본문이다.
+  const rest = body.slice(start + 1);
+  const end = rest.indexOf('function ');
+  const capBody = end >= 0 ? rest.slice(0, end) : rest;
+
+  const byRole = {};
+  for (const m of capBody.matchAll(/role == '([^']+)'\s*&&\s*name in \[([^\]]*)\]/g)) {
+    byRole[m[1]] = [...m[2].matchAll(/'([A-Za-z]+)'/g)].map(x => x[1]).sort();
+  }
+  const adminMatch = capBody.match(/isAdmin'\s*,\s*false\)\s*==\s*true\s*&&\s*name in \[([^\]]*)\]/);
+  byRole.__admin = adminMatch
+    ? [...adminMatch[1].matchAll(/'([A-Za-z]+)'/g)].map(x => x[1]).sort()
+    : [];
+  return byRole;
+}
+
+/** 정책이 이 주체에게 실제로 주는 cap 이름. */
+function policyCaps(principal) {
+  return PERM_KEYS.concat(['assignments.manage', 'staff.role.approve',
+    'system.audit', 'system.ai', 'system.backup'])
+    .filter((k, i, a) => a.indexOf(k) === i)
+    .filter(k => fixedCan(principal, k))
+    .map(capName)
+    .sort();
+}
+
+test('[게이트 B] firestore.rules의 cap() 표가 고정 역할 정책과 정확히 일치한다', () => {
+  const table = parseRuleCapTable(firestoreRules);
+  const problems = [];
+
+  for (const role of FIXED_ROLES) {
+    const expected = policyCaps({ role, enabled: true, isAdmin: false });
+    const actual = table[role] || [];
+    for (const c of actual.filter(x => !expected.includes(x))) {
+      problems.push(`${role}: 규칙이 더 준다 → ${c} (권한 상승)`);
+    }
+    for (const c of expected.filter(x => !actual.includes(x))) {
+      problems.push(`${role}: 규칙이 덜 준다 → ${c} (기능 죽음)`);
+    }
+  }
+
+  const adminExpected = policyCaps({ role: '', enabled: true, isAdmin: true });
+  for (const c of table.__admin.filter(x => !adminExpected.includes(x))) {
+    problems.push(`관리자: 규칙이 더 준다 → ${c} (권한 상승)`);
+  }
+  for (const c of adminExpected.filter(x => !table.__admin.includes(x))) {
+    problems.push(`관리자: 규칙이 덜 준다 → ${c} (기능 죽음)`);
+  }
+
+  assert.deepEqual(
+    problems, [],
+    'firestore.rules의 cap() 표가 fixed-role-policy.js와 어긋났습니다:\n  '
+      + problems.join('\n  '),
+  );
+});
+
+test('[게이트 C] storage.rules의 cap() 표가 정책보다 더 주지 않는다', () => {
+  // Storage 는 파일 접근에 필요한 cap 만 담는 **부분집합**이다(보고서·설정
+  // 권한은 파일과 무관하다). 그래서 "빠진 것"은 정상이고, **정책에 없는 것을
+  // 주는 것**만 위반이다 — 그쪽이 권한 상승이다.
+  const table = parseRuleCapTable(storageRules);
+  const problems = [];
+
+  for (const role of FIXED_ROLES) {
+    const expected = policyCaps({ role, enabled: true, isAdmin: false });
+    for (const c of (table[role] || []).filter(x => !expected.includes(x))) {
+      problems.push(`${role}: 정책에 없는 권한을 준다 → ${c}`);
+    }
+  }
+  const adminExpected = policyCaps({ role: '', enabled: true, isAdmin: true });
+  for (const c of table.__admin.filter(x => !adminExpected.includes(x))) {
+    problems.push(`관리자: 정책에 없는 권한을 준다 → ${c}`);
+  }
+
+  assert.deepEqual(
+    problems, [],
+    'storage.rules의 cap() 표가 정책보다 넓습니다:\n  ' + problems.join('\n  '),
+  );
+});
+
+// ─────────────────────────────────────────────
 // 게이트 C — Storage Rules
 // ─────────────────────────────────────────────
 

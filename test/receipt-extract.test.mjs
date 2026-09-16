@@ -20,6 +20,7 @@ const require = createRequire(import.meta.url);
 const {
   RECEIPT_TOOL, BANKBOOK_TOOL, SYSTEM_PROMPT, MAX_IMAGE_BYTES,
   validateImage, geminiSchemaFromTool, extractToolInput,
+  ALLOWED_MEDIA, CONVERTIBLE_MEDIA,
 } = require('../functions/ai/receipt-extract.js');
 const ai = require('../functions/ai/gemini.js');
 
@@ -142,8 +143,38 @@ test('허용 형식만 통과한다', () => {
   assert.doesNotThrow(() => validateImage({ base64: b64, mediaType: 'image/webp' }));
   assert.throws(() => validateImage({ base64: b64, mediaType: 'application/pdf' }),
     /image-type-unsupported/);
+  // HEIC 는 따로 구분한다 — Storage 가 받는 형식이라 "업로드는 됐는데 판독만
+  // 실패"가 실제로 일어난다. 그때 안내가 달라야 한다.
   assert.throws(() => validateImage({ base64: b64, mediaType: 'image/heic' }),
-    /image-type-unsupported/);
+    /image-type-heic/);
+  assert.throws(() => validateImage({ base64: b64, mediaType: 'image/heif' }),
+    /image-type-heic/);
+});
+
+// storage.rules 가 받는 형식과 어긋나면 둘 중 하나가 죽은 설정이 된다:
+//   · 판독 목록에만 있는 형식 → 업로드될 수 없어 영원히 안 쓰인다(image/gif 가 그랬다)
+//   · 업로드되는데 어느 목록에도 없는 형식 → 안내 없이 일반 오류로 떨어진다
+test('판독·변환 대상 형식이 storage.rules가 받는 형식과 어긋나지 않는다', () => {
+  const { readFileSync } = require('node:fs');
+  const rules = readFileSync(new URL('../storage.rules', import.meta.url), 'utf8');
+
+  // receiptTypeOk() 의 image/(jpeg|png|...) 패턴에서 형식을 뽑는다.
+  const m = rules.match(/contentType\.matches\('image\/\(([^)]+)\)'\)/);
+  assert.ok(m, 'storage.rules 에서 receiptTypeOk 형식 목록을 찾지 못했습니다');
+  const uploadable = new Set(m[1].split('|').map(s => `image/${s.trim()}`));
+
+  const phantom = [...ALLOWED_MEDIA].filter(t => !uploadable.has(t));
+  assert.deepEqual(phantom, [],
+    `Storage 가 받지 않는 형식을 판독 목록에 두고 있습니다: ${phantom.join(', ')}`);
+
+  const unconvertible = [...CONVERTIBLE_MEDIA].filter(t => !uploadable.has(t));
+  assert.deepEqual(unconvertible, [],
+    `Storage 가 받지 않는 형식을 변환 안내 목록에 두고 있습니다: ${unconvertible.join(', ')}`);
+
+  const unhandled = [...uploadable].filter(
+    t => !ALLOWED_MEDIA.has(t) && !CONVERTIBLE_MEDIA.has(t));
+  assert.deepEqual(unhandled, [],
+    `업로드는 되는데 판독·안내 어느 쪽도 다루지 않는 형식이 있습니다: ${unhandled.join(', ')}`);
 });
 
 test('사진이 없으면 호출하지 않는다', () => {

@@ -23,7 +23,23 @@ const {
 /** 모델 호출에 허용하는 이미지 크기. 앱은 업로드 전에 1200px로 압축한다. */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
-const ALLOWED_MEDIA = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+/**
+ * 판독할 수 있는 형식. **Storage 가 받는 형식의 부분집합이어야 한다**
+ * (storage.rules 의 receiptTypeOk). 여기에만 있는 형식은 업로드될 수 없으므로
+ * 영원히 죽은 항목이다 — 실제로 image/gif 가 그랬다.
+ *   대조 테스트: test/receipt-extract.test.mjs
+ */
+const ALLOWED_MEDIA = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+/**
+ * 업로드는 되지만 모델에 그대로 넘길 수 없는 형식.
+ *
+ * 앱은 iPhone HEIC 를 업로드 전에 JPEG 로 바꾸지만, 변환은 CDN 에서 받아 오는
+ * heic2any 에 달려 있고 **실패하면 원본을 그대로 올린다**(image.js). 그러면
+ * 파일은 Storage 에 남고 판독만 실패한다. 그 경우 "JPG·PNG·WEBP 만 됩니다"는
+ * 맞는 말이지만 아이폰 사용자에게는 무엇을 하라는 건지 알려 주지 못한다.
+ */
+const CONVERTIBLE_MEDIA = new Set(['image/heic', 'image/heif']);
 
 /**
  * 영수증 한 장 → 값 하나.
@@ -196,6 +212,7 @@ function extractToolInput(response, toolName) {
 /** 이미지 입력 검증. 모델 호출 전에 걸러 비용을 쓰지 않는다. */
 function validateImage({ base64, mediaType }) {
   if (!base64 || typeof base64 !== 'string') throw new Error('image-missing');
+  if (CONVERTIBLE_MEDIA.has(mediaType)) throw new Error('image-type-heic');
   if (!ALLOWED_MEDIA.has(mediaType)) throw new Error('image-type-unsupported');
   // base64는 원본의 약 4/3 크기다.
   const approxBytes = Math.floor(base64.length * 3 / 4);
@@ -258,6 +275,7 @@ module.exports = {
   SYSTEM_PROMPT,
   MAX_IMAGE_BYTES,
   ALLOWED_MEDIA,
+  CONVERTIBLE_MEDIA,
   validateImage,
   geminiSchemaFromTool,
   extractToolInput,

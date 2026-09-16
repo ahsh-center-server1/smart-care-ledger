@@ -169,6 +169,17 @@ module.exports = function aiFns(ctx) {
     if (m === 'image-missing') {
       return new HttpsError('invalid-argument', '사진이 전달되지 않았습니다.' + MANUAL);
     }
+    if (m === 'image-type-heic') {
+      // 업로드 자체는 성공한 상태다(Storage 는 HEIC 를 받는다). 앱이 올리기 전에
+      // JPEG 로 바꾸는데 그 변환이 실패한 경우이므로, 형식 이름만 말하면
+      // 아이폰 사용자는 무엇을 해야 할지 알 수 없다.
+      return new HttpsError(
+        'invalid-argument',
+        '아이폰 HEIC 사진이라 판독할 수 없습니다. 사진을 JPG로 저장해 다시 올리거나, '
+        + '아이폰 설정 → 카메라 → 포맷을 「높은 호환성」으로 바꾸면 다음부터 자동으로 됩니다.'
+        + MANUAL,
+      );
+    }
     if (m === 'image-type-unsupported') {
       return new HttpsError('invalid-argument', 'JPG·PNG·WEBP 사진만 판독할 수 있습니다.' + MANUAL);
     }
