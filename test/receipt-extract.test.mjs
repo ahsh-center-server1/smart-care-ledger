@@ -19,33 +19,31 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const {
   RECEIPT_TOOL, BANKBOOK_TOOL, SYSTEM_PROMPT, MAX_IMAGE_BYTES,
-  validateImage, extractToolInput,
+  validateImage, geminiSchemaFromTool, extractToolInput,
 } = require('../functions/ai/receipt-extract.js');
-const ai = require('../functions/ai/anthropic.js');
+const ai = require('../functions/ai/gemini.js');
 
 // ── 모델·설정 ─────────────────────────────────────────────────
 test('모델 id가 상수로 고정돼 있다', () => {
-  // 값이 틀리면 런타임 400이라 문자열을 코드에 박아 둔다.
-  assert.equal(ai.ANALYZE_MODEL, 'claude-opus-5');
-  assert.equal(ai.FALLBACK_MODEL, 'claude-opus-4-8');
-  assert.match(ai.FALLBACK_BETA, /^server-side-fallback-\d{4}-\d{2}-\d{2}$/);
+  // 값이 틀리면 런타임 400이다. 기본값은 코드에 두고, 운영에서는 GEMINI_MODEL로 바꿀 수 있다.
+  assert.match(ai.ANALYZE_MODEL, /^gemini-/);
 });
 
 test('키가 없으면 기능 없음이지 크래시가 아니다', () => {
-  const saved = process.env.ANTHROPIC_API_KEY;
+  const saved = process.env.GEMINI_API_KEY;
   try {
-    delete process.env.ANTHROPIC_API_KEY;
-    ai.resetAnthropicClientForTest();
+    delete process.env.GEMINI_API_KEY;
+    ai.resetGeminiClientForTest();
     assert.equal(ai.isAiConfigured(), false);
     // 구분된 오류를 던진다 — 호출부가 안내 메시지로 바꿔 내보낸다.
-    assert.throws(() => ai.getAnthropicClient(), /ai-not-configured/);
+    assert.throws(() => ai.getGeminiClient(), /ai-not-configured/);
 
-    process.env.ANTHROPIC_API_KEY = '   ';   // 공백만 있는 값도 미설정으로 본다
+    process.env.GEMINI_API_KEY = '   ';   // 공백만 있는 값도 미설정으로 본다
     assert.equal(ai.isAiConfigured(), false);
   } finally {
-    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = saved;
-    ai.resetAnthropicClientForTest();
+    if (saved === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = saved;
+    ai.resetGeminiClientForTest();
   }
 });
 
@@ -127,6 +125,15 @@ test('시스템 프롬프트가 계약을 명시한다', () => {
   assert.match(SYSTEM_PROMPT, /confidence/);
 });
 
+test('Gemini 구조화 출력 스키마에는 지원 대상 필드만 보낸다', () => {
+  const schema = geminiSchemaFromTool(RECEIPT_TOOL);
+  assert.equal(schema.type, 'object');
+  assert.ok(!Object.hasOwn(schema, 'additionalProperties'));
+  assert.deepEqual(schema.propertyOrdering, Object.keys(RECEIPT_TOOL.input_schema.properties));
+  assert.deepEqual(schema.required, RECEIPT_TOOL.input_schema.required);
+  assert.ok(!Object.hasOwn(schema.properties.items.items, 'additionalProperties'));
+});
+
 // ── 이미지 검증 (비용을 쓰기 전에 걸러낸다) ────────────────────
 test('허용 형식만 통과한다', () => {
   const b64 = 'x'.repeat(100);
@@ -153,49 +160,39 @@ test('너무 큰 사진은 호출 전에 거부한다', () => {
 });
 
 // ── 응답 파싱 ─────────────────────────────────────────────────
-test('tool_use 블록에서 값을 꺼낸다', () => {
+test('Gemini JSON 응답에서 값을 꺼낸다', () => {
   const res = {
-    stop_reason: 'tool_use',
-    content: [
-      { type: 'text', text: '확인했습니다' },
-      { type: 'tool_use', name: 'extract_receipt', input: { merchant: '이마트' } },
-    ],
+    candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"merchant":"이마트"}' }] } }],
   };
   assert.deepEqual(extractToolInput(res, 'extract_receipt'), { merchant: '이마트' });
 });
 
 test('거절은 구분된 오류로 던진다', () => {
-  const res = { stop_reason: 'refusal', stop_details: { category: 'cyber' }, content: [] };
+  const res = { promptFeedback: { blockReason: 'SAFETY' }, candidates: [] };
   assert.throws(() => extractToolInput(res, 'extract_receipt'), (e) => {
     assert.equal(e.message, 'ai-analyze-refused');
-    assert.equal(e.category, 'cyber');
+    assert.equal(e.category, 'SAFETY');
     return true;
   });
 });
 
-test('tool_use가 없으면 무엇이 왔는지 오류에 담는다', () => {
+test('JSON이 아니면 무엇이 왔는지 오류에 담는다', () => {
   // 그냥 "실패"만 남기면 원인을 알 수 없다.
-  const res = { stop_reason: 'end_turn', content: [{ type: 'text', text: '못 읽겠습니다' }] };
+  const res = {
+    candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '못 읽겠습니다' }] } }],
+  };
   assert.throws(() => extractToolInput(res, 'extract_receipt'), (e) => {
     assert.equal(e.message, 'ai-analyze-invalid-output');
-    assert.match(e.detail, /stop_reason=end_turn/);
-    assert.match(e.detail, /text/);
+    assert.match(e.detail, /finishReason=STOP/);
+    assert.match(e.detail, /못 읽겠습니다/);
     return true;
   });
 });
 
-test('다른 도구 이름의 블록은 받지 않는다', () => {
-  const res = {
-    stop_reason: 'tool_use',
-    content: [{ type: 'tool_use', name: 'something_else', input: {} }],
-  };
-  assert.throws(() => extractToolInput(res, 'extract_receipt'), /ai-analyze-invalid-output/);
-});
-
-test('content가 비어 있어도 깨지지 않는다', () => {
-  assert.throws(() => extractToolInput({ stop_reason: 'end_turn' }, 'extract_receipt'),
+test('응답 텍스트가 비어 있어도 깨지지 않는다', () => {
+  assert.throws(() => extractToolInput({ candidates: [{ finishReason: 'STOP' }] }, 'extract_receipt'),
     /ai-analyze-invalid-output/);
-  assert.throws(() => extractToolInput({ stop_reason: 'end_turn', content: [] }, 'extract_receipt'),
+  assert.throws(() => extractToolInput({ candidates: [] }, 'extract_receipt'),
     /ai-analyze-invalid-output/);
 });
 
@@ -203,7 +200,7 @@ test('content가 비어 있어도 깨지지 않는다', () => {
 // 배포 계약 — 시크릿 선언
 //
 // Functions v2는 함수에 선언된 시크릿만 런타임 환경에 주입한다.
-// 빠뜨리면 배포본에서 process.env.ANTHROPIC_API_KEY가 undefined가 되고,
+// 빠뜨리면 배포본에서 process.env.GEMINI_API_KEY가 undefined가 되고,
 // 기능은 "설정 안 됨"으로 **조용히 꺼진 채** 남는다 — 오류도 나지 않는다.
 // 로컬 에뮬레이터에서는 .env를 읽어 동작하므로 배포 후에만 드러난다.
 // ─────────────────────────────────────────────────────────────
@@ -211,7 +208,7 @@ test('AI 콜러블 세 개 모두에 시크릿이 선언돼 있다', async () =>
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../functions/ai-fns.js', import.meta.url), 'utf8');
 
-  assert.match(src, /const AI_SECRETS = \{ secrets: \['ANTHROPIC_API_KEY'\] \}/,
+  assert.match(src, /const AI_SECRETS = \{ secrets: \['GEMINI_API_KEY'\] \}/,
     'AI_SECRETS 선언을 찾을 수 없습니다');
 
   for (const fn of ['getAiStatus', 'analyzeReceipt', 'analyzeBankbook']) {
@@ -248,9 +245,8 @@ test('키가 public/ 어디에도 없다 — 있으면 즉시 공개된다', asy
   const leaked = [];
   for (const f of files) {
     const src = readFileSync(f, 'utf8');
-    // 실제 키 형태와, 키를 읽으려는 시도 양쪽을 본다.
-    if (/sk-ant-[A-Za-z0-9_-]{10,}/.test(src)) leaked.push(`${f}: 키 형태 문자열`);
-    if (/ANTHROPIC_API_KEY/.test(src)) leaked.push(`${f}: ANTHROPIC_API_KEY 참조`);
+    // Firebase 웹 설정의 공개 API key도 AIza로 시작하므로, Gemini 서버 키 이름의 노출만 본다.
+    if (/GEMINI_API_KEY/.test(src)) leaked.push(`${f}: GEMINI_API_KEY 참조`);
   }
   assert.deepEqual(leaked, [],
     'public/은 그대로 서빙된다 — 키나 키 참조가 있으면 즉시 공개된다:\n  '

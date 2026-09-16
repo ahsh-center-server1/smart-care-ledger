@@ -16,9 +16,9 @@
  */
 
 const {
-  ANALYZE_MODEL, FALLBACK_MODEL, FALLBACK_BETA, ANALYZE_EFFORT,
-  getAnthropicClient,
-} = require('./anthropic');
+  ANALYZE_MODEL,
+  getGeminiClient,
+} = require('./gemini');
 
 /** 모델 호출에 허용하는 이미지 크기. 앱은 업로드 전에 1200px로 압축한다. */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -136,23 +136,61 @@ const SYSTEM_PROMPT = [
   '  채우는 것보다 낮은 확신도를 주는 것이 낫습니다 — 사람이 확인합니다.',
 ].join('\n');
 
-/** tool_use 블록을 꺼낸다. 없으면 무엇이 왔는지 알 수 있게 오류에 담는다. */
+function geminiSchemaFromTool(tool) {
+  const strip = (schema) => {
+    if (!schema || typeof schema !== 'object') return schema;
+    const out = {};
+    for (const [key, value] of Object.entries(schema)) {
+      if (key === 'additionalProperties' || key === 'strict') continue;
+      if (key === 'properties') {
+        out.properties = Object.fromEntries(
+          Object.entries(value || {}).map(([k, v]) => [k, strip(v)]),
+        );
+        out.propertyOrdering = Object.keys(value || {});
+        continue;
+      }
+      if (key === 'items') {
+        out.items = strip(value);
+        continue;
+      }
+      out[key] = value;
+    }
+    return out;
+  };
+  return strip(tool.input_schema);
+}
+
+function geminiText(response) {
+  if (typeof response.text === 'string') return response.text;
+  if (typeof response.text === 'function') return response.text();
+  const parts = response.candidates?.[0]?.content?.parts || [];
+  return parts.map((p) => p.text || '').join('');
+}
+
+/** Gemini 구조화 출력 JSON을 꺼낸다. 없으면 무엇이 왔는지 알 수 있게 오류에 담는다. */
 function extractToolInput(response, toolName) {
-  if (response.stop_reason === 'refusal') {
+  const blockReason = response.promptFeedback && response.promptFeedback.blockReason;
+  const finishReason = response.candidates?.[0]?.finishReason;
+  if (blockReason || ['SAFETY', 'PROHIBITED_CONTENT', 'RECITATION'].includes(finishReason)) {
     const err = new Error('ai-analyze-refused');
-    err.category = response.stop_details && response.stop_details.category;
+    err.category = blockReason || finishReason;
     throw err;
   }
-  const block = (response.content || []).find(
-    (b) => b.type === 'tool_use' && b.name === toolName,
-  );
-  if (!block) {
-    const kinds = (response.content || []).map((b) => b.type).join(',') || '(없음)';
+
+  const text = geminiText(response).trim();
+  if (!text) {
     const err = new Error('ai-analyze-invalid-output');
-    err.detail = `stop_reason=${response.stop_reason} content=[${kinds}]`;
+    err.detail = `tool=${toolName} finishReason=${finishReason || '(없음)'} text=(없음)`;
     throw err;
   }
-  return block.input;
+  try {
+    return JSON.parse(text);
+  } catch (cause) {
+    const err = new Error('ai-analyze-invalid-output');
+    err.detail = `tool=${toolName} finishReason=${finishReason || '(없음)'} text=${text.slice(0, 200)}`;
+    err.cause = cause;
+    throw err;
+  }
 }
 
 /** 이미지 입력 검증. 모델 호출 전에 걸러 비용을 쓰지 않는다. */
@@ -167,29 +205,25 @@ function validateImage({ base64, mediaType }) {
 
 /** 공통 호출부. */
 async function callWithTool({ base64, mediaType, tool, userText }) {
-  const client = getAnthropicClient();
+  const client = getGeminiClient();
 
-  const response = await client.beta.messages.create({
+  const response = await client.models.generateContent({
     model: ANALYZE_MODEL,
-    max_tokens: 8000,
-    // 정책상 거절 시 예비 모델이 같은 호출 안에서 이어받는다.
-    betas: [FALLBACK_BETA],
-    fallbacks: [{ model: FALLBACK_MODEL }],
-    system: SYSTEM_PROMPT,
-    output_config: { effort: ANALYZE_EFFORT },
-    tools: [tool],
-    // 반드시 이 도구로만 답하게 한다 — 자유 서술이 오면 파싱할 것이 없다.
-    tool_choice: { type: 'tool', name: tool.name },
-    messages: [{
+    contents: [{
       role: 'user',
-      content: [
-        { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-        { type: 'text', text: userText },
+      parts: [
+        { inlineData: { mimeType: mediaType, data: base64 } },
+        { text: userText },
       ],
     }],
+    config: {
+      systemInstruction: SYSTEM_PROMPT,
+      responseMimeType: 'application/json',
+      responseSchema: geminiSchemaFromTool(tool),
+    },
   });
 
-  return { input: extractToolInput(response, tool.name), usage: response.usage };
+  return { input: extractToolInput(response, tool.name), usage: response.usageMetadata };
 }
 
 /**
@@ -225,6 +259,7 @@ module.exports = {
   MAX_IMAGE_BYTES,
   ALLOWED_MEDIA,
   validateImage,
+  geminiSchemaFromTool,
   extractToolInput,
   extractReceipt,
   extractBankbook,

@@ -160,7 +160,7 @@ test('검사는 경로 필터 없이 PR의 모든 커밋에 돈다', () => {
 test('검사가 functions/ 의존성도 설치한다', () => {
   // functions/는 별도 package.json이다. 루트 npm ci는 그것을 설치하지 않는다.
   // test/receipt-extract.test.mjs가 functions/ai/*를 require하므로, 이 설치가
-  // 빠지면 `Cannot find module '@anthropic-ai/sdk'`로 죽는다.
+  // 빠지면 Functions 전용 AI SDK 의존성을 찾지 못한다.
   //
   // 로컬에서는 이미 설치돼 있어 드러나지 않는다 — 첫 CI 실행에서 잡힌 실패다.
   const src = read(CI);

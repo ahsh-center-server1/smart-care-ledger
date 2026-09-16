@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 영수증·통장 사진 자동입력 — Claude API 콜러블.
+ * 영수증·통장 사진 자동입력 — Gemini API 콜러블.
  *
  * 모델은 **제안만** 한다 — DB에 쓰지 않고 초안을 돌려준다. 날짜 정규화,
  * 카테고리 추정, 거래 매칭은 전부 클라이언트의 순수 모듈이 결정적으로 한다
@@ -19,7 +19,7 @@ module.exports = function aiFns(ctx) {
     db, getBucket, callable, requireCaller, HttpsError, logger, FieldValue, Timestamp,
   } = ctx;
 
-  const { isAiConfigured } = ctx.aiProvider || require('./ai/anthropic');
+  const { isAiConfigured } = ctx.aiProvider || require('./ai/gemini');
   const { extractReceipt, extractBankbook } = ctx.extractors || require('./ai/receipt-extract');
   const { consumeRateLimits } = ctx.rateLimiter || require('./rateLimit');
   const { fixedCan } = require('./fixed-role-policy.cjs');
@@ -62,13 +62,13 @@ module.exports = function aiFns(ctx) {
    */
   /**
    * 시크릿 선언. Functions v2는 여기 적힌 것만 런타임 환경에 주입한다 —
-   * 빠뜨리면 배포본에서 process.env.ANTHROPIC_API_KEY가 undefined가 되고,
+   * 빠뜨리면 배포본에서 process.env.GEMINI_API_KEY가 undefined가 되고,
    * 기능은 "설정 안 됨"으로 조용히 꺼진 채 남는다.
    *
-   * 키 등록:  firebase functions:secrets:set ANTHROPIC_API_KEY
+   * 키 등록:  firebase functions:secrets:set GEMINI_API_KEY
    * (자세한 절차는 docs/RECEIPT-AI-SETUP.md)
    */
-  const AI_SECRETS = { secrets: ['ANTHROPIC_API_KEY'] };
+  const AI_SECRETS = { secrets: ['GEMINI_API_KEY'] };
 
   const getAiStatus = callable('getAiStatus', async (request) => {
     // 권한이 없거나 백필 전이면 "설정되지 않음"으로 답한다 — 이 호출은
@@ -231,8 +231,8 @@ module.exports = function aiFns(ctx) {
         clientId: String(job.clientId),
         byteLength: bytes,
         confidence: Number(extracted && extracted.confidence) || 0,
-        inputTokens: (usage && usage.input_tokens) || 0,
-        outputTokens: (usage && usage.output_tokens) || 0,
+        inputTokens: (usage && (usage.promptTokenCount ?? usage.input_tokens)) || 0,
+        outputTokens: (usage && (usage.candidatesTokenCount ?? usage.output_tokens)) || 0,
       });
 
       return { extracted };
@@ -257,8 +257,8 @@ module.exports = function aiFns(ctx) {
         byteLength: bytes,
         count: Array.isArray(extracted && extracted.rows) ? extracted.rows.length : 0,
         confidence: Number(extracted && extracted.confidence) || 0,
-        inputTokens: (usage && usage.input_tokens) || 0,
-        outputTokens: (usage && usage.output_tokens) || 0,
+        inputTokens: (usage && (usage.promptTokenCount ?? usage.input_tokens)) || 0,
+        outputTokens: (usage && (usage.candidatesTokenCount ?? usage.output_tokens)) || 0,
       });
 
       return { extracted };

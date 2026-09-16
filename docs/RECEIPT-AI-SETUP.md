@@ -9,7 +9,7 @@
 
 | 하는 일 | 누가 |
 |---|---|
-| 사진에 인쇄된 글자를 구조화해서 옮겨 적기 | Claude (모델) |
+| 사진에 인쇄된 글자를 구조화해서 옮겨 적기 | Gemini (모델) |
 | 날짜 해석 (`26.09.07` → `2026-09-07`) | 코드 (`public/domain/receipt.js`) |
 | 금액 해석 (`12,000원` → `12000`) | 코드 |
 | 분류 결정 (식비·교통비…) | **설정 화면의 자동분류 규칙** |
@@ -26,24 +26,26 @@
 
 | 항목 | 값 |
 |---|---|
-| 모델 | `claude-opus-5` |
-| 사진 1장 | 약 **$0.02** (입력 ~1,500토큰 + 출력 ~500토큰) |
-| 월 500장 | 약 **$10** |
+| 모델 | 기본 `gemini-2.5-flash-lite` (`GEMINI_MODEL` 환경변수로 교체 가능) |
+| 사진 1장 | 실제 모델·이미지 크기·과금 등급에 따라 달라짐 |
+| 월 500장 | Google AI Studio 또는 Vertex AI 콘솔의 현재 단가로 확인 |
 
 **공짜가 아닙니다.** 그래서:
-- 사용자별 레이트리밋 **분당 20장** (`functions/rateLimit.js`)
+- 사용자별 레이트리밋 기본 **분당 10장** (`AI_USER_RPM`)
+- 프로젝트 전체 레이트리밋 기본 **분당 30장** (`AI_PROJECT_RPM`)
 - 한 번에 최대 **10장**
 - 업로드 전에 1200px로 압축 (`services/image.js`) — 토큰 수를 줄입니다
 
-비용이 부담되면 `functions/ai/anthropic.js`의 `ANALYZE_EFFORT`를 `'low'`로
-낮추세요. 인식률과 비용이 함께 내려갑니다.
+운영 자료에는 입주자 개인정보와 금융 정보가 포함될 수 있습니다. 무료 등급을
+실제 자료에 쓰기 전에는 Google의 현재 데이터 사용 정책과 시설 개인정보
+처리방침을 확인하세요.
 
 ---
 
 ## 3. 설치
 
 ### 3-1. API 키 발급
-https://console.anthropic.com 에서 API 키를 만듭니다 (`sk-ant-...`).
+Google AI Studio 또는 Google Cloud 콘솔에서 Gemini API 키를 만듭니다.
 
 ### 3-2. Functions 시크릿으로 넣기
 
@@ -52,11 +54,11 @@ https://console.anthropic.com 에서 API 키를 만듭니다 (`sk-ant-...`).
 
 ```bash
 # 스테이징에 먼저
-firebase functions:secrets:set ANTHROPIC_API_KEY --project staging
+firebase functions:secrets:set GEMINI_API_KEY --project staging
 # (프롬프트에 키를 붙여넣습니다)
 
 # 확인
-firebase functions:secrets:access ANTHROPIC_API_KEY --project staging
+firebase functions:secrets:access GEMINI_API_KEY --project staging
 ```
 
 ### 3-3. 함수에 시크릿을 연결
@@ -82,7 +84,7 @@ firebase deploy --only functions:analyzeReceipt,functions:analyzeBankbook,functi
 
 ## 4. 개인정보
 
-- 사진은 판독을 위해 Anthropic API로 전송됩니다. 시설의 개인정보 처리방침에
+- 사진은 판독을 위해 Gemini API로 전송됩니다. 시설의 개인정보 처리방침에
   이 사실이 반영되어야 합니다.
 - 변경 이력에는 **메타데이터만** 남깁니다 — 사진·상호명·품목은 기록하지
   않습니다 (`writeAiAuditLog`의 summary 참조). 기록 자체가 개인정보 사본이
@@ -95,7 +97,7 @@ firebase deploy --only functions:analyzeReceipt,functions:analyzeBankbook,functi
 ## 5. 끄기
 
 ```bash
-firebase functions:secrets:destroy ANTHROPIC_API_KEY --project staging
+firebase functions:secrets:destroy GEMINI_API_KEY --project staging
 firebase deploy --only functions:getAiStatus --project staging
 ```
 
