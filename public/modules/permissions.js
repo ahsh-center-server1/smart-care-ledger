@@ -107,6 +107,10 @@ export async function initPermissions() {
     if (seq !== permissionLoadSeq || S.user?.userId !== uid) return;
     const data = snap.exists() ? snap.data() : null;
     const caps = computeFixedCaps(data);
+    console.log("👉 1. 찾는 컬렉션 이름:", COLS.AUTHZ);
+    console.log("👉 2. 내 UID:", uid);
+    console.log("👉 3. DB에서 가져온 값:", data);
+    console.log("👉 4. 부여된 권한(caps):", caps);
     if (data?.enabled !== true || !Object.values(caps).some(value => value === true)) {
       throw new Error('사용 가능한 권한 정보가 없습니다. 관리자에게 문의하세요.');
     }
