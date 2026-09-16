@@ -36,6 +36,7 @@ export const S = {
   fixedItems: [],          // 고정항목 (활성 입주자 기준)
   allFixedItems: [],       // 고정항목 전체 (대시보드/배너 미납 알림용)
   confirmedMonths: new Set(), // 최종 결재 완료된 월 캐시
+  submittedMonths: new Set(), // 제출~결재 중인 월 캐시 (삭제만 막는다)
   permOverride: null,      // 기능별 최소 등급 오버라이드 (initPermissions() 로드)
   // 권한 스냅샷(authz/{uid}.caps). 보안 규칙이 읽는 값과 같은 것이라,
   // can() 이 이것을 보면 화면과 집행이 어긋나지 않는다. 백필 전이면 null.

@@ -92,10 +92,12 @@ test('안내 화면이 누구에게도 열리지 않는 기능을 알려 준다'
   assert.match(html, /제공되지 않는 기능/);
   assert.match(html, /누구에게도/);
   assert.match(html, /영구히 제공되지 않음/);
-  assert.match(html, /절차 준비 중/);
-  // 두 부류의 대표 항목이 실제로 실려 있다.
   assert.match(html, /전체 초기화/);
-  assert.match(html, /거래 삭제/);
+  // 절차가 생겨 열린 것은 목록에서 빠져야 한다. 남아 있으면 쓸 수 있는 기능을
+  // "제공되지 않는다"고 안내하게 된다.
+  assert.doesNotMatch(html, /거래 삭제/);
+  // 빈 부류는 제목조차 그리지 않는다(지금 절차 대기는 비어 있다).
+  assert.doesNotMatch(html, /절차 준비 중/);
   // 대안을 알려 준다 — 못 한다는 말만 남기지 않는다.
   assert.match(html, /정정 거래|확정 취소/);
 });

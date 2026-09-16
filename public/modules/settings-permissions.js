@@ -43,14 +43,20 @@ export function renderPermissionPanel() {
   // 이것이 없으면 사용자는 사라진 버튼을 보고 "내 등급이 낮아서"라고 읽고,
   // 팀장·센터장에게 요청하러 간다. 그쪽도 못 하므로 서로 시간만 쓴다.
   // 그래서 "누구도 못 한다"와 "언젠가 열린다"를 여기서 분명히 말해 둔다.
+  // 빈 부류는 아예 그리지 않는다 — 제목만 있고 목록이 빈 칸이면
+  // "여기 뭔가 있었는데 안 보인다"로 읽힌다.
+  const group = (title, keys) => (keys.length
+    ? `<dt>${escAttr(title)}</dt><dd><ul>${
+      keys.map(key => `<li>${escAttr(unavailableMessage(key).split(':')[0])}</li>`).join('')
+    }</ul></dd>`
+    : '');
+
   const unavailable = `
       <h3>제공되지 않는 기능</h3>
       <p>아래는 역할과 무관하게 <strong>누구에게도</strong> 열리지 않습니다. 등급 문제가 아니므로 상급자에게 요청해도 실행할 수 없습니다.</p>
       <dl>
-        <dt>영구히 제공되지 않음</dt>
-        <dd><ul>${FORBIDDEN_KEYS.map(key => `<li>${escAttr(unavailableMessage(key).split(':')[0])}</li>`).join('')}</ul></dd>
-        <dt>절차 준비 중 — 마련되면 열림</dt>
-        <dd><ul>${PENDING_PROCEDURE_KEYS.map(key => `<li>${escAttr(unavailableMessage(key).split(':')[0])}</li>`).join('')}</ul></dd>
+        ${group('영구히 제공되지 않음', FORBIDDEN_KEYS)}
+        ${group('절차 준비 중 — 마련되면 열림', PENDING_PROCEDURE_KEYS)}
       </dl>
       <p style="color:var(--muted);">기록을 지우는 대신 정정 거래를 입력하거나, 마감된 자료는 확정 취소 → 수정 → 재결재 절차를 따릅니다.</p>`;
 

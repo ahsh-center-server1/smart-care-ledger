@@ -10,6 +10,11 @@ const grants = {
     'receipt.attachAny', 'receipt.replace', 'receipt.print', 'report.own',
     'report.draft', 'report.submit', 'report.recall', 'settings.category',
     'settings.fixed', 'settings.budget', 'audit.view',
+    // 삭제는 **제출 전에만** 가능하다. 권한이 아니라 상태가 막는다 —
+    // config/lockedMonths.submittedMonths 색인을 규칙이 함께 본다.
+    // 실제 삭제 수요(엑셀 중복 업로드·입력 오타)는 전부 제출 전에 드러나고,
+    // 제출 뒤에 지우면 결재한 숫자와 장부가 달라진다.
+    'trx.delete', 'trx.delete.bulk', 'report.delete',
   ],
   // 팀장·센터장의 settings.client · settings.account · settings.category.common 은
   // **시설을 개설·운영하는 권한**이다. 결재 권한이 아니라 관리 업무이므로
@@ -60,13 +65,21 @@ const forbidden = [
 
 /**
  * 위험해서가 아니라 **안전한 절차가 아직 없어서** 닫혀 있다.
+ * 절차가 생기면 열린다 — 지금까지 둘이 그렇게 열렸다.
  *
- * 금전 기록 삭제는 "지울 수 있는가"가 아니라 "어떤 절차로 지우는가"의 문제다.
- * 사회복지시설의 장부라 보존 의무와 감사 추적이 걸려 있고, 그 설계가 서기
- * 전에는 여는 것보다 닫아 두는 편이 낫다. 절차가 생기면 열린다 —
- * 시설 개설 권한이 실제로 그렇게 열렸다.
+ *   시설 개설(settings.client · settings.account · settings.category.common)
+ *     → saveClient 신규 등록 + accounts 규칙의 담당 범위 검사
+ *   금전 기록 삭제(trx.delete · trx.delete.bulk · report.delete)
+ *     → **제출 전에만** 허용. 제출 색인(locked-months.cjs)이 상태로 막는다
+ *
+ * 지금 비어 있다. 여기 키를 넣을 때는 "무엇이 준비되면 열리는가"를 함께 적는다 —
+ * 그러지 않으면 "잠시 닫은 것"이 "영원히 없는 것"처럼 굳는다(실제로 그랬다).
+ *
+ * 콜러블로만 닫혀 있는 것도 성격은 같다: 입주자 비활성·물리 삭제
+ * (setClientActive · deleteClient)는 보존 절차가 없어 failed-precondition 이다.
+ * 정책 키가 아니라 여기 실리지 않는다.
  */
-const pendingProcedure = ['trx.delete', 'trx.delete.bulk', 'report.delete'];
+const pendingProcedure = [];
 
 const denied = [...forbidden, ...pendingProcedure];
 

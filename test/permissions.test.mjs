@@ -79,11 +79,12 @@ test('시설 개설·운영 권한은 검토 역할에 있고 그 아래에는 �
   for (const key of OPS) assert.equal(can(key), false, `관리자 자격이 ${key}를 열었습니다`);
 });
 
-test('파괴적·통제 우회 권한은 여전히 아무에게도 없다', () => {
-  // 위의 셋과 달리 이쪽은 절차가 없어서가 아니라 그 자체가 위험해서 닫혀 있다.
-  // 되살리려면 별도 설계가 필요하고, 그때까지 이 목록은 비어 있어야 한다.
+test('통제 우회 권한은 여전히 아무에게도 없다', () => {
+  // 절차가 없어서가 아니라 그 자체가 위험해서 닫혀 있다. 되살리려면 이 정책의
+  // 전제를 바꿔야 하고, 그때까지 이 목록은 비어 있어야 한다.
+  // (삭제 권한은 「제출 전에만」 절차가 생겨 담당자에게 열렸다 — 아래 테스트.)
   const FORBIDDEN = ['lock.bypass', 'settings.permissions', 'settings.reset',
-    'trx.delete', 'trx.delete.bulk', 'report.delete', 'report.release'];
+    'report.release'];
   for (const role of ['입력자', '담당자', '팀장', '센터장']) {
     as(role);
     for (const key of FORBIDDEN) assert.equal(can(key), false, `${role}이 ${key}를 얻었습니다`);
@@ -166,13 +167,11 @@ test('닫힌 기능의 안내 문구가 "권한 없음"과 구별된다', async 
   assert.match(forbidden, /제공되지 않는/);
   assert.doesNotMatch(forbidden, /아직|권한이 없습니다/);
 
-  // 절차 대기 — 열릴 수 있다는 것이 드러나야 한다.
-  const pending = unavailableMessage('trx.delete');
-  assert.match(pending, /아직 제공되지 않습니다/);
-  assert.doesNotMatch(pending, /권한이 없습니다/);
-
   // 등급·범위 문제는 그대로 "권한이 없습니다" — 이쪽은 요청하면 열린다.
+  // 삭제도 이제 여기에 속한다: 담당자에게는 있고, 막는 것은 권한이 아니라
+  // 제출 상태다.
   assert.match(unavailableMessage('settings.account'), /권한이 없습니다/);
+  assert.match(unavailableMessage('trx.delete'), /권한이 없습니다/);
 
   // 이름을 사람이 읽을 수 있어야 한다(키를 그대로 노출하지 않는다).
   assert.match(unavailableMessage('trx.delete.bulk'), /일괄 삭제/);

@@ -26,7 +26,9 @@
 
 const { planTransition, normalizeStatus } = require('./report-workflow.cjs');
 const { fixedCan } = require('./fixed-role-policy.cjs');
-const { LOCKED_MONTHS_DOC, lockIndexChange } = require('./locked-months.cjs');
+const {
+  LOCKED_MONTHS_DOC, lockIndexChange, submitIndexChange, SUBMITTED_STATUSES,
+} = require('./locked-months.cjs');
 
 const AUTHZ = 'authz';
 const REPORTS = 'reports';
@@ -161,6 +163,7 @@ module.exports = function reportFns(ctx) {
       }
       const { isAssignedLeader, leaderVacant } = await leaderState(clientId, auth.uid, tx);
       let lockChange = null;
+      let submitChange = null;
       let reportRef;
       let currentReport = null;
       if (reportId) {
@@ -194,9 +197,20 @@ module.exports = function reportFns(ctx) {
       const patch = { status: plan.next, ...plan.set, ...extra };
       if (summary) patch.summary = summary;
 
+      // 색인 변경은 **신규 생성 경로에서도** 계산한다.
+      //
+      // 예전에는 currentReport 가 있을 때만 계산했다. 마감 색인만 볼 때는
+      // 그래도 맞았다(draft → confirmed 로 한 번에 갈 수 없다). 그런데 제출
+      // 색인은 다르다 — 보고서가 없는 상태에서 submit 하면 문서가 곧바로
+      // submitted 로 만들어지므로, 여기서 빠지면 그 달이 제출됐는데도 색인에
+      // 없어 거래가 삭제된다.
+      const beforeDoc = currentReport ? { ...currentReport, clientId, year, month } : null;
+      const afterDoc = { ...(currentReport || {}), clientId, year, month, status: plan.next };
+      lockChange = lockIndexChange(beforeDoc, afterDoc);
+      submitChange = submitIndexChange(beforeDoc, afterDoc);
+      if (lockChange || submitChange) await tx.get(lockRef);
+
       if (currentReport) {
-        lockChange = lockIndexChange(currentReport, { ...currentReport, status: plan.next });
-        if (lockChange) await tx.get(lockRef);
         const full = { ...patch };
         // 도착 상태보다 뒤 단계의 도장을 지운다 —
         // 취소된 서명이 인쇄물에 남지 않아야 한다.
@@ -214,13 +228,19 @@ module.exports = function reportFns(ctx) {
         });
       }
 
-      if (lockChange) {
-        tx.set(lockRef, {
-          months: {
+      if (lockChange || submitChange) {
+        const indexPatch = { updatedAt: FieldValue.serverTimestamp() };
+        if (lockChange) {
+          indexPatch.months = {
             [lockChange.key]: lockChange.locked ? true : FieldValue.delete(),
-          },
-          updatedAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
+          };
+        }
+        if (submitChange) {
+          indexPatch.submittedMonths = {
+            [submitChange.key]: submitChange.submitted ? true : FieldValue.delete(),
+          };
+        }
+        tx.set(lockRef, indexPatch, { merge: true });
       }
 
       const auditRef = db.collection(AUDIT_LOGS).doc();
@@ -347,6 +367,16 @@ module.exports = function reportFns(ctx) {
 
     const report = await findReport(clientId, year, month);
     if (!report) throw new HttpsError('not-found', '저장된 보고서가 없습니다.');
+
+    // 제출 뒤에는 지울 수 없다. 결재자가 보고 있는(또는 이미 본) 보고서가
+    // 사라지면 결재 이력만 남고 대상이 없어진다 — 되돌리려면 회수·결재 취소로
+    // draft 로 내린 뒤 지운다. 색인도 그때 함께 풀린다.
+    if (SUBMITTED_STATUSES.includes(normalizeStatus(report.status))) {
+      throw new HttpsError(
+        'failed-precondition',
+        '제출된 보고서는 삭제할 수 없습니다. 회수하거나 결재를 취소한 뒤 삭제하세요.',
+      );
+    }
 
     await db.collection(REPORTS).doc(report.id).delete();
     logger.info('[deleteReport]', { by: auth.uid, clientId, year, month, status: report.status });

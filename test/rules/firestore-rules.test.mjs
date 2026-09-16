@@ -682,7 +682,19 @@ describe('archive_YYYY 컬렉션', () => {
 // ─────────────────────────────────────────────────────────────
 describe('마감 잠금 · 불변 필드', () => {
   before(async () => {
-    await seed('config/lockedMonths', { months: { [`${MY_CLIENT}_2026-03`]: true } });
+    await seed('config/lockedMonths', {
+      months: { [`${MY_CLIENT}_2026-03`]: true },
+      // 제출된 달 — 수정은 되고 삭제만 막힌다.
+      submittedMonths: { [`${MY_CLIENT}_2026-05`]: true },
+    });
+    await seed('transactions/t-submitted', {
+      clientId: MY_CLIENT, date: '2026-05-15', amountOut: 1000, createdBy: 'staff-owner',
+    });
+    // 삭제 테스트 전용 — 다른 테스트가 쓰는 문서를 지우면 실행 순서에 따라
+    // 그쪽이 깨진다(실제로 t-open 을 쓰다가 그랬다).
+    await seed('transactions/t-deletable', {
+      clientId: MY_CLIENT, date: '2026-04-20', amountOut: 1000, createdBy: 'staff-owner',
+    });
     await seed('transactions/t-locked', {
       clientId: MY_CLIENT, date: '2026-03-15', amountOut: 1000, createdBy: 'staff-owner',
     });
@@ -693,6 +705,34 @@ describe('마감 잠금 · 불변 필드', () => {
 
   it('마감된 달의 거래는 센터장도 고칠 수 없다', async () => {
     await assertFails(updateDoc(doc(as(ACTORS.센터장), 'transactions/t-locked'), { amountOut: 2 }));
+  });
+
+  // ── 삭제는 제출 전에만 ──
+  //
+  // 실제 삭제 수요(엑셀 중복 업로드·입력 오타)는 전부 제출 전에 드러난다.
+  // 제출 뒤에 지우면 결재자가 본 숫자와 장부가 달라지므로, 회수해서 draft 로
+  // 내린 뒤 지우는 것이 정상 경로다.
+  it('작성 중인 달의 거래는 담당자가 지울 수 있다', async () => {
+    await assertSucceeds(deleteDoc(doc(as(ACTORS.담당자), 'transactions/t-deletable')));
+  });
+
+  it('제출된 달의 거래는 담당자도 지울 수 없다', async () => {
+    await assertFails(deleteDoc(doc(as(ACTORS.담당자), 'transactions/t-submitted')));
+  });
+
+  it('제출된 달이라도 수정은 된다 — 삭제만 막는 잠금이다', async () => {
+    await assertSucceeds(
+      updateDoc(doc(as(ACTORS.담당자), 'transactions/t-submitted'), { amountOut: 1500 }));
+  });
+
+  it('마감된 달의 거래는 삭제도 막힌다', async () => {
+    await assertFails(deleteDoc(doc(as(ACTORS.담당자), 'transactions/t-locked')));
+  });
+
+  it('검토 역할은 거래를 지우지 않는다 — 장부에 손대지 않는다', async () => {
+    for (const actor of [ACTORS.팀장, ACTORS.센터장]) {
+      await assertFails(deleteDoc(doc(as(actor), 'transactions/t-submitted')));
+    }
   });
 
   it('마감된 달의 거래는 삭제할 수 없다', async () => {

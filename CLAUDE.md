@@ -121,13 +121,38 @@ archive_YYYY: 마감된 거래 데이터 백업
 | `report.release` | 반려건이 결재 단계를 건너뛰는 탈출구. 전이표에도 없다 |
 
 **절차 대기** — 위험해서가 아니라 안전한 절차가 아직 없어서. 절차가 생기면 열린다.
+지금 이 목록은 **비어 있다.** 지금까지 둘이 절차를 얻어 열렸다:
 
-| 권한 | 무엇이 필요한가 |
+| 한때 닫혀 있던 것 | 무엇이 생겨서 열렸나 |
 |---|---|
-| `trx.delete` · `trx.delete.bulk` · `report.delete` | 금전 기록을 **어떤 절차로** 지우는가. 보존 의무·감사 추적 설계가 먼저다 |
+| `settings.client` · `settings.account` · `settings.category.common` | `saveClient` 신규 등록 + `accounts` 규칙의 담당 범위 검사 |
+| `trx.delete` · `trx.delete.bulk` · `report.delete` | **제출 전에만** 삭제(아래). 권한이 아니라 상태가 막는다 |
 
-입주자 **비활성·물리 삭제**(`setClientActive` · `deleteClient`)도 절차 대기다 —
-콜러블이 `failed-precondition` 으로 거절한다. 등록·수정은 열려 있다.
+입주자 **비활성·물리 삭제**(`setClientActive` · `deleteClient`)는 여전히 절차가
+없어 콜러블이 `failed-precondition` 으로 거절한다. 등록·수정은 열려 있다.
+
+### 삭제는 제출 전에만 — 두 번째 색인
+
+삭제 수요는 대부분 엑셀 중복 업로드와 입력 오타이고, 둘 다 제출 전에 드러난다.
+제출 뒤에 지우면 결재자가 본 숫자와 장부가 달라지므로, **회수·결재 취소로
+`draft` 로 내린 뒤** 지우는 것이 정상 경로다.
+
+`config/lockedMonths` 문서가 색인을 **두 개** 담는다. 질문이 다르다.
+
+| 색인 | 질문 | 막는 것 | 채우는 상태 |
+|---|---|---|---|
+| `months` | 최종 결재가 끝났는가 | 수정 · 삭제 **둘 다** | `confirmed` |
+| `submittedMonths` | 결재 절차에 올라갔는가 | **삭제만** | `submitted` · `team_approved` · `confirmed` |
+
+한 문서에 둔 이유: 거래 쓰기 한 번당 규칙 조회가 늘지 않게 하기 위해서다.
+판정은 `functions/locked-months.cjs` 한 곳이고, 화면은 같은 색인을 읽어
+`core.js` 의 `trxDeleteBlockReason()` 으로 답한다 — 근거가 갈라지면 버튼은
+보이는데 서버가 거부한다.
+
+> ⚠️ **배포 시**: `submittedMonths` 는 처음에 없다. 그 상태에서는 결재 중인
+> 달의 거래도 지워진다(색인이 비면 "제출된 달 없음"으로 읽힌다). 배포 뒤
+> **설정 → 파생 문서 다시 만들기**(`rebuildLockedMonths`)를 눌러 백필한다.
+> 센터장(`settings.archive`) 또는 관리자(`system.backup`)가 실행할 수 있다.
 
 > ⚠️ 닫힌 키는 반드시 둘 중 한 부류에 속해야 한다. 분류되지 않은 채 닫히면
 > 화면이 이유를 말할 수 없고, 사용자는 "내 등급이 낮아서"로 읽어 상급자에게

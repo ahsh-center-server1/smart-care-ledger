@@ -19,15 +19,19 @@
 'use strict';
 
 import { toast, escHtml } from '../utils/ui.js';
-import { can, unavailableMessage } from './permissions.js';
+import { can } from './permissions.js';
 import { auditLog } from '../services/audit.js';
 import { fnErrorMessage } from '../services/fn-errors.js';
 import { refetchReports } from './core.js';
 
 export async function rebuildDerivedDocs() {
-  // 전체 초기화와 같은 등급으로 둔다 — 원본에서 다시 만드는 작업이라
-  // 데이터를 잃지는 않지만, 전 사용자에게 보이는 문서를 통째로 갈아 끼운다.
-  if (!can('settings.reset')) { toast(unavailableMessage('settings.reset'), 'error', 5000); return; }
+  // 예전에는 settings.reset 을 요구했다. 그 키는 아무에게도 없으므로
+  // **복구 버튼 자체가 눌리지 않았다** — 색인이 어긋났을 때 고칠 방법이 없다는
+  // 뜻이다. 서버(rebuildLockedMonths)와 같은 기준으로 맞춘다: 연도 마감(센터장)
+  // 이나 백업 운영(관리자). 원본에서 다시 만드는 작업이라 데이터를 잃지 않는다.
+  if (!can('settings.archive') && !can('system.backup')) {
+    toast('파생 문서 재생성 권한이 없습니다.', 'error', 5000); return;
+  }
 
   const btn = document.getElementById('btn-rebuild-derived');
   const out = document.getElementById('rebuild-derived-result');
@@ -43,6 +47,7 @@ export async function rebuildDerivedDocs() {
     const dir = await call('rebuildDirectories')();
 
     const lockCount = Number((lock && lock.data && lock.data.count) || 0);
+    const submitted = Number((lock && lock.data && lock.data.submitted) || 0);
     const staff = Number((dir && dir.data && dir.data.staff) || 0);
     const cats = Number((dir && dir.data && dir.data.categories) || 0);
 
@@ -50,7 +55,7 @@ export async function rebuildDerivedDocs() {
       out.innerHTML =
         '<div style="color:#15803d;font-weight:700;">✅ 완료</div>'
         + '<div style="color:var(--muted-foreground);margin-top:4px;">'
-        + `마감된 (입주자, 월) ${escHtml(lockCount)}건 · `
+        + `마감 ${escHtml(lockCount)}건 · 결재 중 ${escHtml(submitted)}건 · `
         + `직원 ${escHtml(staff)}명 · 분류 ${escHtml(cats)}건</div>`;
     }
     toast('파생 문서를 다시 만들었습니다.', 'success');

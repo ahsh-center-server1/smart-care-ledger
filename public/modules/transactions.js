@@ -7,7 +7,7 @@ import { fb, fdb, batchUpdateDocs, batchMixedOps } from '../services/firestore.j
 import { auditOp } from '../services/audit.js';
 import { calcAccountBalance } from '../services/balance.js';
 import { deleteFromStorage } from '../services/storage.js';
-import { loadTransactions, isConfirmedLocked } from './core.js';
+import { loadTransactions, isConfirmedLocked, trxDeleteBlockReason } from './core.js';
 import { openModal, getUnpaidMandatoryItems, openReceiptModal, openReceiptUpload } from './modals.js';
 import { can, unavailableMessage } from './permissions.js';
 import { hasReceipt, receiptAccessUrl } from '../services/receipt-access.js';
@@ -497,8 +497,8 @@ export async function delTrx(id,accId){
   if(!mine&&!can('trx.view.all')){
     toast('동료가 입력한 거래는 삭제할 수 없습니다.','error'); return;
   }
-  const trxCheck=S.transactions.find(x=>x.id===id);
-  if(trxCheck&&isConfirmedLocked(trxCheck.clientId,trxCheck.date)){toast('최종 결재 완료된 월의 거래는 삭제할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
+  const blocked=trxDeleteBlockReason(S.transactions.find(x=>x.id===id));
+  if(blocked){toast(blocked,'error',5000);return;}
   showConfirm('거래 삭제','이 거래 내역을 삭제하시겠습니까?\n삭제 후 잠시 동안 되돌릴 수 있습니다.',()=>{
     scheduleTrxDeletion([id]);
   },'삭제','btn btn-danger');
@@ -615,9 +615,9 @@ export async function confirmBulkDelete(){
   if(!can('trx.delete.bulk')){toast(unavailableMessage('trx.delete.bulk'),'error',5000);return;}
   const checked=Array.from(document.querySelectorAll('.row-check:checked'));
   if(!checked.length){toast('삭제할 항목을 선택하세요.','info');return;}
-  // confirmed 월 거래 포함 여부 체크
-  const lockedChecked=checked.filter(cb=>{const t=S.transactions.find(x=>x.id===cb.value);return t&&isConfirmedLocked(t.clientId,t.date);});
-  if(lockedChecked.length){toast(`최종 결재 완료된 월의 거래 ${lockedChecked.length}건이 포함되어 있습니다. 해당 거래는 삭제할 수 없습니다.`,'error');return;}
+  // 마감·제출 월이 섞여 있으면 통째로 막는다(부분 삭제는 더 헷갈린다).
+  const blockedRows=checked.map(cb=>trxDeleteBlockReason(S.transactions.find(x=>x.id===cb.value))).filter(Boolean);
+  if(blockedRows.length){toast(`삭제할 수 없는 거래 ${blockedRows.length}건이 포함돼 있습니다. ${blockedRows[0]}`,'error',5000);return;}
   const ids=checked.map(c=>c.value);
   showConfirm('일괄 삭제',`선택한 ${ids.length}건을 삭제하시겠습니까?\n삭제 후 잠시 동안 되돌릴 수 있습니다.`,()=>{
     scheduleTrxDeletion(ids);

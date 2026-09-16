@@ -65,7 +65,8 @@ service cloud.firestore {
           'trxCategoryEdit', 'trxReorder', 'trxTransfer', 'trxCsv', 'excelUpload',
           'bankbookUpload', 'receiptUpload', 'receiptAttachOwn', 'receiptAttachAny',
           'receiptReplace', 'receiptPrint', 'reportOwn', 'reportDraft', 'reportSubmit',
-          'reportRecall', 'settingsCategory', 'settingsFixed', 'settingsBudget', 'auditView'
+          'reportRecall', 'settingsCategory', 'settingsFixed', 'settingsBudget', 'auditView',
+          'trxDelete', 'trxDeleteBulk', 'reportDelete'
         ])
         || (role == '팀장' && name in [
           'navReport', 'navSettings', 'navStaff', 'trxViewAll', 'trxCsv',
@@ -120,6 +121,26 @@ service cloud.firestore {
     /** 거래 하나가 잠긴 달에 속하는가. date 는 'YYYY-MM-DD'. */
     function isLocked(data) {
       return lockedMonths().get(
+        data.get('clientId', '') + '_' + data.get('date', '')[0:7], false) == true;
+    }
+
+    /**
+     * 제출된 달인가 — **삭제만** 막는다.
+     *
+     * 마감(isLocked)과 다른 질문이다. 마감은 최종 결재가 끝나 수정·삭제를 모두
+     * 막고, 제출은 결재 절차에 올라가 **삭제만** 막는다(수정은 회수하면 된다).
+     * 결재자가 보고 있는 달에서 거래가 사라지면 결재한 숫자와 장부가 달라진다.
+     *
+     * 같은 문서를 읽으므로 조회는 늘지 않는다(lockedMonths 와 한 문서).
+     */
+    function submittedMonths() {
+      return exists(/databases/$(database)/documents/config/lockedMonths)
+        ? get(/databases/$(database)/documents/config/lockedMonths).data.get('submittedMonths', {})
+        : {};
+    }
+
+    function isSubmittedMonth(data) {
+      return submittedMonths().get(
         data.get('clientId', '') + '_' + data.get('date', '')[0:7], false) == true;
     }
 
@@ -271,10 +292,13 @@ service cloud.firestore {
                     && editableMonth(resource.data)
                     && editableMonth(request.resource.data);
 
+      // 삭제는 제출 전에만. 권한(trxDelete)과 상태(제출 색인)를 함께 본다 —
+      // 권한만 보면 결재 중인 달의 거래가 사라지고, 상태만 보면 아무나 지운다.
       allow delete: if (cap('trxDelete') || cap('trxDeleteBulk'))
                     && seesClient(resource.data.get('clientId', ''))
                     && (cap('trxViewAll') || isAuthor(resource.data))
-                    && editableMonth(resource.data);
+                    && editableMonth(resource.data)
+                    && !isSubmittedMonth(resource.data);
     }
 
     // ── 카테고리 ──

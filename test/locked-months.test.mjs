@@ -118,3 +118,76 @@ test('백필 입력이 비어도 깨지지 않는다', () => {
   assert.deepEqual(server.buildLockIndex(null), {});
   assert.deepEqual(server.buildLockIndex(undefined), {});
 });
+
+// ─────────────────────────────────────────────
+// 제출 색인 — 삭제 가능 여부의 근거
+//
+// 마감 색인과 답하는 질문이 다르다. 마감은 "최종 결재가 끝났는가"(수정·삭제
+// 모두 잠금), 제출은 "결재 절차에 올라갔는가"(삭제만 잠금).
+// ─────────────────────────────────────────────
+test('제출~결재 중인 상태만 제출 색인에 오른다', () => {
+  for (const status of ['submitted', 'team_approved', 'confirmed']) {
+    assert.equal(server.isSubmittedOrBeyond({ status }), true, status);
+  }
+  for (const status of ['draft', 'rejected', '', undefined]) {
+    assert.equal(server.isSubmittedOrBeyond({ status }), false, String(status));
+  }
+  assert.equal(server.isSubmittedOrBeyond(null), false);
+});
+
+test('제출하면 색인에 오르고 회수하면 내려간다', () => {
+  const base = { clientId: 'c1', year: 2026, month: 9 };
+  const key = lockKey('c1', 2026, 9);
+
+  // 없던 보고서가 곧바로 submitted 로 만들어지는 경로 — before 가 null 이다.
+  // 이 경우를 빠뜨리면 제출된 달의 거래가 그대로 삭제된다.
+  assert.deepEqual(
+    server.submitIndexChange(null, { ...base, status: 'submitted' }),
+    { key, submitted: true },
+  );
+  // 회수·반려 — 다시 담당자 손으로 돌아오므로 삭제가 열린다.
+  assert.deepEqual(
+    server.submitIndexChange({ ...base, status: 'submitted' }, { ...base, status: 'draft' }),
+    { key, submitted: false },
+  );
+  assert.deepEqual(
+    server.submitIndexChange({ ...base, status: 'team_approved' }, { ...base, status: 'rejected' }),
+    { key, submitted: false },
+  );
+});
+
+test('결재 단계 사이 이동은 제출 색인을 건드리지 않는다', () => {
+  const base = { clientId: 'c1', year: 2026, month: 9 };
+  for (const [from, to] of [
+    ['submitted', 'team_approved'], ['team_approved', 'confirmed'],
+    ['confirmed', 'team_approved'], ['draft', 'rejected'],
+  ]) {
+    assert.equal(
+      server.submitIndexChange({ ...base, status: from }, { ...base, status: to }), null,
+      `${from} → ${to}`,
+    );
+  }
+});
+
+test('제출 색인 백필은 결재 중인 달을 전부 담는다', () => {
+  const months = server.buildSubmitIndex([
+    { clientId: 'c1', year: 2026, month: 9, status: 'submitted' },
+    { clientId: 'c2', year: 2026, month: 9, status: 'confirmed' },
+    { clientId: 'c3', year: 2026, month: 9, status: 'draft' },
+    { clientId: 'c4', year: 2026, month: 9, status: 'rejected' },
+    { year: 2026, month: 9, status: 'submitted' },          // clientId 없음
+  ]);
+  assert.deepEqual(
+    Object.keys(months).sort(),
+    [lockKey('c1', 2026, 9), lockKey('c2', 2026, 9)].sort(),
+  );
+});
+
+test('두 색인의 범위가 다르다 — 마감은 최종 결재만', () => {
+  const reports = [
+    { clientId: 'c1', year: 2026, month: 9, status: 'submitted' },
+    { clientId: 'c2', year: 2026, month: 9, status: 'confirmed' },
+  ];
+  assert.equal(Object.keys(server.buildSubmitIndex(reports)).length, 2);
+  assert.deepEqual(Object.keys(server.buildLockIndex(reports)), [lockKey('c2', 2026, 9)]);
+});

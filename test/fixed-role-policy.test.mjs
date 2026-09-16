@@ -131,12 +131,19 @@ test('deniedReason 은 열린 권한에 null 을 준다', () => {
   }
 });
 
-test('파괴적 삭제는 절차 대기이고 통제 우회는 영구 금지다', () => {
-  // 이 구분이 뒤집히면 "언젠가 열린다"고 안내하면 안 되는 것을 그렇게 안내한다.
-  for (const key of ['trx.delete', 'trx.delete.bulk', 'report.delete']) {
-    assert.equal(policy.deniedReason(key), 'pending', `${key}는 절차가 생기면 열립니다`);
-  }
+test('통제 우회는 영구 금지이고, 삭제는 절차가 생겨 열렸다', () => {
   for (const key of ['settings.permissions', 'settings.reset', 'lock.bypass', 'report.release']) {
     assert.equal(policy.deniedReason(key), 'forbidden', `${key}는 설계상 영구히 없습니다`);
+  }
+  // 삭제는 "제출 전에만"이라는 절차가 생겨 담당자에게 열렸다. 권한이 아니라
+  // **상태**가 막으므로(제출 색인) deniedReason 은 null 이어야 한다 —
+  // pending 으로 남아 있으면 화면이 "아직 제공되지 않습니다"라고 거짓말한다.
+  for (const key of ['trx.delete', 'trx.delete.bulk', 'report.delete']) {
+    assert.equal(policy.deniedReason(key), null, `${key}는 열려 있습니다`);
+    assert.equal(can(user('담당자'), key), true, `${key}는 담당자가 가집니다`);
+    // 검토 역할은 장부에 손대지 않는다 — 삭제도 마찬가지다.
+    for (const role of ['팀장', '센터장']) {
+      assert.equal(can(user(role), key), false, `${role}이 ${key}를 얻었습니다`);
+    }
   }
 });

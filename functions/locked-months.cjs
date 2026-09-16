@@ -59,4 +59,57 @@ function buildLockIndex(reports) {
   return months;
 }
 
-module.exports = { LOCKED_MONTHS_DOC, lockKey, isConfirmed, lockIndexChange, buildLockIndex };
+// ─────────────────────────────────────────────────────────────
+// 제출 색인 — 삭제 가능 여부를 가른다
+//
+// 마감 색인(위)과 **다른 질문에 답한다.**
+//   마감 색인: 최종 결재가 끝났는가 → 수정·삭제 전면 잠금
+//   제출 색인: 결재 절차에 올라갔는가 → 삭제만 잠금(수정은 회수 후 가능)
+//
+// 삭제를 제출 전으로 제한하는 이유: 실제 삭제 수요는 엑셀 중복 업로드와 입력
+// 오타이고, 둘 다 제출 전에 드러난다. 반면 결재자가 보고 있는(또는 이미 본)
+// 달에서 거래가 사라지면 결재한 숫자와 장부가 달라진다 — 그때는 삭제가 아니라
+// 회수·반려로 되돌린 뒤 고쳐야 한다.
+//
+// 같은 문서(config/lockedMonths)에 담는 이유: Storage 규칙이 아니라 Firestore
+// 규칙이지만, 조회 수는 여전히 과금된다. 두 색인을 한 문서에 두면 거래 쓰기
+// 한 번당 조회가 늘지 않는다.
+// ─────────────────────────────────────────────────────────────
+
+/** 결재 절차에 올라간 상태. 이 달의 거래는 삭제할 수 없다. */
+const SUBMITTED_STATUSES = Object.freeze(['submitted', 'team_approved', 'confirmed']);
+
+/** 보고서가 제출됐거나 그 이후 단계인가. */
+function isSubmittedOrBeyond(report) {
+  return !!report && SUBMITTED_STATUSES.includes(report.status);
+}
+
+/**
+ * 보고서 변경에서 **제출 색인**에 적용할 변경만 뽑아낸다.
+ * 반환 { key, submitted } 또는 null. lockIndexChange 와 같은 모양이다.
+ */
+function submitIndexChange(before, after) {
+  const doc = after || before;
+  if (!doc || !doc.clientId || doc.year == null || doc.month == null) return null;
+
+  const key = lockKey(doc.clientId, doc.year, doc.month);
+  const was = isSubmittedOrBeyond(before);
+  const now = isSubmittedOrBeyond(after);
+  if (was === now) return null;
+  return { key, submitted: now };
+}
+
+/** reports 전체에서 제출 색인을 새로 만든다 (백필·복구용). */
+function buildSubmitIndex(reports) {
+  const months = {};
+  for (const r of (reports || [])) {
+    if (!isSubmittedOrBeyond(r) || !r.clientId || r.year == null || r.month == null) continue;
+    months[lockKey(r.clientId, r.year, r.month)] = true;
+  }
+  return months;
+}
+
+module.exports = {
+  LOCKED_MONTHS_DOC, lockKey, isConfirmed, lockIndexChange, buildLockIndex,
+  SUBMITTED_STATUSES, isSubmittedOrBeyond, submitIndexChange, buildSubmitIndex,
+};

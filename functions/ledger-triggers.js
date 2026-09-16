@@ -16,7 +16,7 @@ const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { calcAccountBalance, affectsBalance } = require('./balance.cjs');
 
 module.exports = function ledgerTriggers(ctx) {
-  const { db, callable, requireCaller } = ctx;
+  const { db, callable, requireCaller, HttpsError } = ctx;
 
   // ─────────────────────────────────────────────────────────────
   // syncAccountBalance — 거래가 바뀌면 계좌 currentBalance를 서버에서 재계산
@@ -150,6 +150,8 @@ module.exports = function ledgerTriggers(ctx) {
   const {
   LOCKED_MONTHS_DOC,
   buildLockIndex,
+  buildSubmitIndex,
+  SUBMITTED_STATUSES,
   } = require('./locked-months.cjs');
 
   const CONFIG = 'config';
@@ -167,20 +169,31 @@ module.exports = function ledgerTriggers(ctx) {
   const rebuildLockedMonths = callable('rebuildLockedMonths', async (request) => {
     // 관리자 전용 복구 작업이다. 등급 리터럴(99) 대신 카탈로그 키로 판정한다 —
     // settings.reset 은 관리자 전용이고 보안 하한이 걸려 설정에서 낮출 수 없다.
+    // 예전에는 settings.reset 을 요구했다. 그 키는 아무에게도 없으므로
+    // **복구 도구 자체가 실행 불가**였다 — 색인이 어긋났을 때 고칠 방법이
+    // 없다는 뜻이다. 연도 마감(센터장)이나 백업 운영(관리자)이 이 작업의
+    // 성격에 맞고, 둘 다 실제로 가질 수 있는 권한이다.
     const me = await requireCaller(request.auth);
-    me.require('settings.reset', '마감 색인 재생성');
+    if (!me.can('settings.archive') && !me.can('system.backup')) {
+      throw new HttpsError('permission-denied', '마감 색인 재생성 권한이 없습니다.');
+    }
 
-  const snap = await db.collection(REPORTS).where('status', '==', 'confirmed').get();
-  const months = buildLockIndex(snap.docs.map((d) => d.data()));
+  // 마감·제출 두 색인을 한 번에 다시 만든다. confirmed 는 제출 상태의
+  // 부분집합이므로 쿼리 하나로 족하다.
+  const snap = await db.collection(REPORTS).where('status', 'in', [...SUBMITTED_STATUSES]).get();
+  const reports = snap.docs.map((d) => d.data());
+  const months = buildLockIndex(reports);
+  const submittedMonths = buildSubmitIndex(reports);
 
   // set(merge 없이)으로 통째로 교체한다 — 지워져야 할 낡은 키가 남지 않게.
   await db.collection(CONFIG).doc(LOCKED_MONTHS_DOC).set({
     months,
+    submittedMonths,
     updatedAt: new Date().toISOString(),
     rebuiltBy: request.auth.uid,
   });
 
-  return { count: Object.keys(months).length };
+  return { count: Object.keys(months).length, submitted: Object.keys(submittedMonths).length };
   });
 
   return {

@@ -104,8 +104,13 @@ export async function fetchBaseData(opts) {
   if (snapMap.lockedMonths) {
     // 문서가 없으면(최초 배포·백필 전) 빈 집합이 된다. 그 상태에서는 잠금이 걸리지
     // 않으므로, 관리자가 설정에서 「마감 색인 재생성」을 눌러 백필해야 한다.
-    const months = (snapMap.lockedMonths.exists() ? snapMap.lockedMonths.data().months : null) || {};
+    const data = snapMap.lockedMonths.exists() ? snapMap.lockedMonths.data() : null;
+    const months = (data && data.months) || {};
     S.confirmedMonths = new Set(Object.keys(months).filter(k => months[k]));
+    // 제출된 달 — 삭제만 막는다(수정은 회수하면 된다). 규칙이 보는 것과 같은
+    // 색인이라, 여기서 버튼을 숨기면 서버 거부와 어긋나지 않는다.
+    const submitted = (data && data.submittedMonths) || {};
+    S.submittedMonths = new Set(Object.keys(submitted).filter(k => submitted[k]));
   }
 
   // 당월 수입/지출 집계 (대시보드 카드 표시용)
@@ -173,6 +178,39 @@ export function isConfirmedLocked(clientId, dateStr){
   // 키 형식은 lockKey 한 곳에서만 만든다 — 서버 트리거(functions/locked-months.cjs)와
   // 같은 형식이어야 하고, 손으로 조립한 곳이 늘면 반드시 어긋난다.
   return !!(S.confirmedMonths?.has(lockKey(clientId, ym.substring(0,4), ym.substring(5,7))));
+}
+
+/**
+ * 제출된 달인가 — **삭제만** 막는다.
+ *
+ * isConfirmedLocked 와 달리 lock.bypass 로 우회하지 않는다. 그 권한은 아무도
+ * 갖지 않고(FORBIDDEN_KEYS), 설령 생기더라도 "마감 월 편집"이지 "결재 중인
+ * 달의 삭제"가 아니다.
+ *
+ * 근거는 서버 규칙이 읽는 바로 그 색인(config/lockedMonths.submittedMonths)이다.
+ * 다른 근거를 쓰면 버튼은 보이는데 서버가 거부한다.
+ */
+export function isSubmittedLocked(clientId, dateStr){
+  const ym=(dateStr||'').substring(0,7);
+  if(ym.length!==7)return false;
+  return !!(S.submittedMonths?.has(lockKey(clientId, ym.substring(0,4), ym.substring(5,7))));
+}
+
+/**
+ * 이 거래를 지울 수 없는 이유. 지울 수 있으면 null.
+ *
+ * 단건 삭제와 일괄 삭제가 같은 질문을 따로 물으면 언젠가 한쪽만 고쳐진다.
+ * 규칙도 같은 두 색인(마감·제출)을 보므로, 여기가 서버 거부와 어긋나지 않는
+ * 유일한 자리다. 문구는 **어떻게 푸는지**까지 말한다 — 못 한다는 말만
+ * 남기면 사용자가 다음에 할 일을 모른다.
+ */
+export function trxDeleteBlockReason(trx){
+  if(!trx)return null;
+  if(isConfirmedLocked(trx.clientId,trx.date))
+    return '최종 결재 완료된 월의 거래는 삭제할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)';
+  if(isSubmittedLocked(trx.clientId,trx.date))
+    return '결재 중인 월의 거래는 삭제할 수 없습니다. 보고서를 회수한 뒤 삭제하세요.';
+  return null;
 }
 
 /**

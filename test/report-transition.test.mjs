@@ -365,20 +365,46 @@ test('센터장 의견은 최종 결재 직전 단계에서만 저장한다', as
   assert.equal(db.docs.get('reports/r1').centerComment, '최종 확인');
 });
 
-test('삭제 권한이 없으면 지울 수 없다', async () => {
+test('작성 단계의 보고서는 담당자가 지울 수 있다', async () => {
+  const { db, fns } = build();
+  report(db);                       // status: 'draft'
+  await fns.deleteReport({ ...as('담당자'), data: at() });
+  assert.equal(db.docs.has('reports/r1'), false);
+});
+
+test('반려된 보고서도 지울 수 있다 — 다시 쓰는 것이 정상 경로다', async () => {
+  const { db, fns } = build();
+  report(db, { status: 'rejected' });
+  await fns.deleteReport({ ...as('담당자'), data: at() });
+  assert.equal(db.docs.has('reports/r1'), false);
+});
+
+// 제출 뒤 삭제를 막는 것이 이 기능의 핵심이다. 결재자가 보고 있는(또는 이미
+// 본) 보고서가 사라지면 결재 이력만 남고 대상이 없어진다.
+test('제출된 뒤에는 지울 수 없다', async () => {
+  for (const status of ['submitted', 'team_approved', 'confirmed']) {
+    const { db, fns } = build();
+    report(db, { status });
+    await assert.rejects(
+      () => fns.deleteReport({ ...as('담당자'), data: at() }),
+      (e) => e.code === 'failed-precondition',
+      status,
+    );
+    assert.equal(db.docs.has('reports/r1'), true, status);
+  }
+});
+
+test('검토 역할은 보고서를 지우지 않는다 — 작성자의 문서다', async () => {
   const { db, fns } = build();
   report(db);
-  await assert.rejects(
-    () => fns.deleteReport({ ...as('담당자'), data: at() }),
-    (e) => e.code === 'permission-denied',
-  );
-  assert.equal(db.docs.has('reports/r1'), true);
-
-  await assert.rejects(
-    () => fns.deleteReport({ ...as('팀장'), data: at() }),
-    (e) => e.code === 'permission-denied',
-  );
-  assert.equal(db.docs.has('reports/r1'), true);
+  for (const role of ['팀장', '센터장']) {
+    await assert.rejects(
+      () => fns.deleteReport({ ...as(role), data: at() }),
+      (e) => e.code === 'permission-denied',
+      role,
+    );
+    assert.equal(db.docs.has('reports/r1'), true, role);
+  }
 });
 
 test('로그인하지 않으면 아무것도 못 한다', async () => {
