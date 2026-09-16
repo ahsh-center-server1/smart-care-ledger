@@ -10,7 +10,7 @@ import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.j
 import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { chunkForInQuery } from '../services/in-query.js';
-import { can } from './permissions.js';
+import { can, unavailableMessage } from './permissions.js';
 import { calcAccountBalanceAsOf, sumIncomeExpense } from '../services/balance.js';
 import { planTransition, availableActions, normalizeStatus } from '../domain/report-workflow.js';
 // 신원 컨텍스트와 결재 문구 표는 report-actor.js 로 나갔다. 화살표는 한 방향이다.
@@ -927,7 +927,7 @@ export async function doRevertToDraft(){
 }
 
 export async function doDeleteReport(){
-  if(!can('report.delete')){toast('보고서 삭제 권한이 없습니다.','error');return false;}
+  if(!can('report.delete')){toast(unavailableMessage('report.delete'),'error',5000);return false;}
   if(!S.reportData?.report?.id){toast('저장된 보고서가 없습니다.','error');return false;}
   const deletedId=S.reportData.report.id;
   const{clientId,year,month}=S.reportData;

@@ -37,14 +37,51 @@ const grants = {
   ],
 };
 const technical = ['nav.settings', 'nav.staff', 'settings.staff', 'system.audit', 'system.ai', 'system.backup'];
-// 아무에게도 주지 않는다. 위의 셋과 달리 이쪽은 **절차가 없어서**가 아니라
-// 그 자체가 위험해서 닫아 둔 것이다 — 되살리려면 별도 설계가 필요하다.
-//   · 파괴적: trx.delete · trx.delete.bulk · report.delete (금전 기록 소실)
-//   · 통제 우회: lock.bypass(마감 월 편집) · settings.reset(전체 초기화)
-//   · 정책 자체 편집: settings.permissions (고정 역할 정책의 존재 이유)
-//   · 결재 단계 건너뛰기: report.release
-const denied = ['lock.bypass', 'settings.permissions', 'settings.reset', 'trx.delete',
-  'trx.delete.bulk', 'report.delete', 'report.release'];
+// 아무에게도 주지 않는 권한. **두 부류이고, 구분이 중요하다.**
+//
+// 한때 둘이 한 배열에 섞여 있었고, 그래서 "절차가 없어서 잠시 닫은 것"이
+// "설계상 영원히 없는 것"과 같이 취급돼 그대로 굳었다. 시설 개설 권한
+// (settings.client · settings.account · settings.category.common)이 그렇게
+// 묶여 있다가 **빈 배포가 기동되지 않는** 상태를 만들었다.
+//
+// 화면 문구도 이 구분을 따른다. "권한이 없습니다"는 둘 다에 틀린 말이다 —
+// 등급이 낮아서가 아니라 기능이 없는 것이고, 한쪽은 기다리면 생긴다.
+
+/** 설계상 영구히 없다. 되살리려면 이 정책의 전제를 바꿔야 한다. */
+const forbidden = [
+  // 고정 역할 정책의 존재 이유 자체 — 정책을 정책으로 못 바꾸게 한다.
+  'settings.permissions',
+  // 통제 우회. 마감된 달의 편집과 전체 초기화는 감사 추적을 무의미하게 만든다.
+  'lock.bypass', 'settings.reset',
+  // 결재 단계 건너뛰기. 반려건은 작성·제출 절차로만 다시 올라간다
+  // (전이표에도 없다 — public/domain/report-workflow.js 의 TRANSITIONS 참고).
+  'report.release',
+];
+
+/**
+ * 위험해서가 아니라 **안전한 절차가 아직 없어서** 닫혀 있다.
+ *
+ * 금전 기록 삭제는 "지울 수 있는가"가 아니라 "어떤 절차로 지우는가"의 문제다.
+ * 사회복지시설의 장부라 보존 의무와 감사 추적이 걸려 있고, 그 설계가 서기
+ * 전에는 여는 것보다 닫아 두는 편이 낫다. 절차가 생기면 열린다 —
+ * 시설 개설 권한이 실제로 그렇게 열렸다.
+ */
+const pendingProcedure = ['trx.delete', 'trx.delete.bulk', 'report.delete'];
+
+const denied = [...forbidden, ...pendingProcedure];
+
+export const FORBIDDEN_KEYS = Object.freeze([...forbidden]);
+export const PENDING_PROCEDURE_KEYS = Object.freeze([...pendingProcedure]);
+
+/**
+ * 이 권한이 닫혀 있다면 왜인가. 열려 있으면 null.
+ * 화면은 이 값으로 문구를 고른다("아직 없다" vs "영원히 없다").
+ */
+export function deniedReason(key) {
+  if (forbidden.includes(key)) return 'forbidden';
+  if (pendingProcedure.includes(key)) return 'pending';
+  return null;
+}
 
 export const FIXED_POLICY_KEYS = Object.freeze([...new Set([
   ...Object.values(grants).flat(), ...technical, ...denied,

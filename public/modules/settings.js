@@ -30,7 +30,7 @@ import {
   RESET_OPERATION_ID, isResetLockActive, remainingCollections,
   resetProgressPercent, resetProgressLabel, isResetConfirmed,
 } from '../domain/data-reset.js';
-import { can } from './permissions.js';
+import { can, unavailableMessage } from './permissions.js';
 // 권한 패널은 settings-permissions.js 로 나갔다. 여기서 다시 내보내는 이유는
 // app.js 의 전역 등록과 설정 탭 전환이 이 모듈을 통해 부르기 때문이다.
 import { renderPermissionPanel } from './settings-permissions.js';
@@ -649,7 +649,7 @@ export async function saveBudget(){
  *   · 성공·실패 모두 변경 이력에 남는다.
  */
 export async function executeFirebaseReset(){
-  if(!can('settings.reset')){toast('권한이 없습니다.','error');return;}
+  if(!can('settings.reset')){toast(unavailableMessage('settings.reset'),'error',5000);return;}
 
   const{getDoc,doc}=fb();
   const db=fdb();

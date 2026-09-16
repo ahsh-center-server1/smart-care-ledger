@@ -157,3 +157,33 @@ test('코드에서 호출하는 모든 can 키는 고정 정책에 등록되어 
   assert.ok(used.size > 10);
   for (const key of used) assert.ok(FIXED_POLICY_KEYS.includes(key), `${key}가 고정 정책에 없습니다`);
 });
+
+test('닫힌 기능의 안내 문구가 "권한 없음"과 구별된다', async () => {
+  const { unavailableMessage } = await import('../public/modules/permissions.js');
+
+  // 영구 금지 — "언젠가 열린다"고 읽히면 안 된다.
+  const forbidden = unavailableMessage('settings.reset');
+  assert.match(forbidden, /제공되지 않는/);
+  assert.doesNotMatch(forbidden, /아직|권한이 없습니다/);
+
+  // 절차 대기 — 열릴 수 있다는 것이 드러나야 한다.
+  const pending = unavailableMessage('trx.delete');
+  assert.match(pending, /아직 제공되지 않습니다/);
+  assert.doesNotMatch(pending, /권한이 없습니다/);
+
+  // 등급·범위 문제는 그대로 "권한이 없습니다" — 이쪽은 요청하면 열린다.
+  assert.match(unavailableMessage('settings.account'), /권한이 없습니다/);
+
+  // 이름을 사람이 읽을 수 있어야 한다(키를 그대로 노출하지 않는다).
+  assert.match(unavailableMessage('trx.delete.bulk'), /일괄 삭제/);
+});
+
+test('닫힌 기능 문구가 상급자에게 요청하라고 말하지 않는다', async () => {
+  const { unavailableMessage, FORBIDDEN_KEYS, PENDING_PROCEDURE_KEYS }
+    = await import('../public/modules/permissions.js');
+  // 아무도 못 하는 일을 "관리자에게 문의"로 안내하면 서로 시간만 쓴다.
+  for (const key of [...FORBIDDEN_KEYS, ...PENDING_PROCEDURE_KEYS]) {
+    const msg = unavailableMessage(key);
+    assert.doesNotMatch(msg, /관리자에게|팀장에게|문의/, `${key}: ${msg}`);
+  }
+});

@@ -9,7 +9,7 @@ import { calcAccountBalance } from '../services/balance.js';
 import { deleteFromStorage } from '../services/storage.js';
 import { loadTransactions, isConfirmedLocked } from './core.js';
 import { openModal, getUnpaidMandatoryItems, openReceiptModal, openReceiptUpload } from './modals.js';
-import { can } from './permissions.js';
+import { can, unavailableMessage } from './permissions.js';
 import { hasReceipt, receiptAccessUrl } from '../services/receipt-access.js';
 
 // 필수 고정항목 미납 배너 렌더 (당월 기준)
@@ -491,8 +491,11 @@ export async function toggleReceiptMissing(id){
 export async function delTrx(id,accId){
   const t=S.transactions.find(x=>x.id===id);
   const mine=!t||t.createdBy===S.user?.userId;
-  if(!can('trx.delete')||(!mine&&!can('trx.view.all'))){
-    toast('거래 삭제 권한이 없습니다.','error'); return;
+  // 두 거부를 한 문장으로 묶으면 안 된다 — 이유가 다르고 사용자가 할 일도 다르다.
+  // 앞은 "이 기능이 아직 없다"(누구에게 부탁해도 안 된다), 뒤는 담당 범위 문제다.
+  if(!can('trx.delete')){ toast(unavailableMessage('trx.delete'),'error',5000); return; }
+  if(!mine&&!can('trx.view.all')){
+    toast('동료가 입력한 거래는 삭제할 수 없습니다.','error'); return;
   }
   const trxCheck=S.transactions.find(x=>x.id===id);
   if(trxCheck&&isConfirmedLocked(trxCheck.clientId,trxCheck.date)){toast('최종 결재 완료된 월의 거래는 삭제할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
@@ -609,7 +612,7 @@ export function exportFilteredCSV(){
 
 // 일괄 삭제 — 되돌리기 유예 후 배치 삭제 (scheduleTrxDeletion 재사용)
 export async function confirmBulkDelete(){
-  if(!can('trx.delete.bulk')){toast('일괄 삭제 권한이 없습니다.','error');return;}
+  if(!can('trx.delete.bulk')){toast(unavailableMessage('trx.delete.bulk'),'error',5000);return;}
   const checked=Array.from(document.querySelectorAll('.row-check:checked'));
   if(!checked.length){toast('삭제할 항목을 선택하세요.','info');return;}
   // confirmed 월 거래 포함 여부 체크

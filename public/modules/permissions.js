@@ -6,7 +6,10 @@ import { COLS } from '../constants.js';
 import {
   PERM_CATALOG, PERM_KEYS, SELECTABLE_RANKS, ROLE_RANK, ROLES, ADMIN_RANK,
 } from '../domain/perm-catalog.js';
-import { fixedCan, computeFixedCaps } from '../domain/fixed-role-policy.js';
+import {
+  fixedCan, computeFixedCaps, deniedReason,
+  FORBIDDEN_KEYS, PENDING_PROCEDURE_KEYS,
+} from '../domain/fixed-role-policy.js';
 
 export { ROLE_RANK, ROLES, ADMIN_RANK, SELECTABLE_RANKS };
 
@@ -74,6 +77,36 @@ export function myRank() {
 }
 
 export function can(key) { return fixedCan(currentIdentity(), key); }
+
+/** 권한 키 → 사람이 읽는 이름. PERM_SECTIONS 를 평평하게 편 것이다. */
+const KEY_LABEL = Object.fromEntries(
+  PERM_SECTIONS.flatMap(section => Object.entries(section.keys)),
+);
+
+export { FORBIDDEN_KEYS, PENDING_PROCEDURE_KEYS };
+
+/** 이 키가 누구에게도 열리지 않는가. 안내 화면이 목록을 만들 때 쓴다. */
+export function isUnavailable(key) { return deniedReason(key) !== null; }
+
+/**
+ * can() 이 false 일 때 보여줄 문장.
+ *
+ * "권한이 없습니다"는 **등급이 낮다**는 뜻으로 읽힌다. 그런데 닫힌 기능에는
+ * 틀린 말이다 — 센터장도 관리자도 못 하는 것이고, 승진해도 열리지 않는다.
+ * 사용자가 "누구에게 부탁하면 되나"를 찾아 헤매게 만드는 대신, 기능이 없다는
+ * 사실과 (절차 대기라면) 언젠가 열린다는 것을 말해 준다.
+ */
+export function unavailableMessage(key) {
+  const name = KEY_LABEL[key] || key;
+  switch (deniedReason(key)) {
+    case 'forbidden':
+      return `${name}: 제공되지 않는 기능입니다.`;
+    case 'pending':
+      return `${name}: 아직 제공되지 않습니다. 안전한 처리 절차가 준비되면 열립니다.`;
+    default:
+      return `${name} 권한이 없습니다.`;
+  }
+}
 
 // Kept for legacy display callers; not a grant or a rank inheritance contract.
 export function requiredRank(key) {

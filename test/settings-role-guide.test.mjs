@@ -84,3 +84,24 @@ test('확인된 authz 역할·활성 상태와 팀장 전용 배정을 우선한
   assert.doesNotMatch(html, /시설 전체 입주자|시스템 관리 업무 안내/);
   assert.match(render({ role: '담당자' }, {}, [], { authz: { enabled: false } }), /비활성 계정/);
 });
+
+test('안내 화면이 누구에게도 열리지 않는 기능을 알려 준다', () => {
+  // 사라진 버튼을 보고 "내 등급이 낮아서"라고 읽으면 상급자에게 요청하러 간다.
+  // 그쪽도 못 하므로 서로 시간만 쓴다 — 여기서 끊는다.
+  const html = render({ role: '센터장' }, { reportApproveCenter: true });
+  assert.match(html, /제공되지 않는 기능/);
+  assert.match(html, /누구에게도/);
+  assert.match(html, /영구히 제공되지 않음/);
+  assert.match(html, /절차 준비 중/);
+  // 두 부류의 대표 항목이 실제로 실려 있다.
+  assert.match(html, /전체 초기화/);
+  assert.match(html, /거래 삭제/);
+  // 대안을 알려 준다 — 못 한다는 말만 남기지 않는다.
+  assert.match(html, /정정 거래|확정 취소/);
+});
+
+test('안내 화면은 여전히 편집 제어를 만들지 않는다', () => {
+  // 제공되지 않는 기능 목록을 추가하면서 버튼이 섞여 들어가면 안 된다.
+  const html = render({ role: '센터장', isAdmin: true }, { reportApproveCenter: true });
+  assert.doesNotMatch(html, /<(?:button|select|input|form)\b/);
+});

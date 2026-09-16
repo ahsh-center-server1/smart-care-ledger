@@ -102,20 +102,38 @@ archive_YYYY: 마감된 거래 데이터 백업
 > `public/domain/perm-catalog.js` 는 **권한의 근거가 아니다.** 집행 지점
 > 메타데이터와 키 누락 감지에만 쓰이는 표시·검증용 자료다.
 
-### 아무도 가질 수 없는 권한
+### 아무도 가질 수 없는 권한 — 두 부류이고 구분이 중요하다
 
-닫혀 있는 것이 기능 누락처럼 보이지만 **의도된 것이다.** 되살리려면 설계가
-필요하고, 그때까지 `test/permissions.test.mjs` 가 비어 있음을 지킨다.
+닫혀 있는 것이 기능 누락처럼 보이지만 **의도된 것이다.** 다만 두 부류를
+섞으면 안 된다. 한때 섞여 있었고, 그래서 "절차가 없어 잠시 닫은 것"이
+"영원히 없는 것"처럼 굳어 **빈 배포가 기동되지 않았다**(시설 개설 권한).
 
-| 권한 | 왜 닫혀 있나 |
+`fixed-role-policy.js` 의 `FORBIDDEN_KEYS` · `PENDING_PROCEDURE_KEYS` 로
+나뉘고, `deniedReason(key)` 가 `'forbidden' | 'pending' | null` 을 준다.
+화면 문구도 이것으로 갈린다(`unavailableMessage`).
+
+**영구히 없다** — 되살리려면 이 정책의 전제를 바꿔야 한다.
+
+| 권한 | 왜 |
 |---|---|
-| `trx.delete` · `trx.delete.bulk` · `report.delete` | 금전 기록 소실. 보존 절차가 없다 |
-| `lock.bypass` · `settings.reset` | 통제 우회(마감 월 편집 · 전체 초기화) |
 | `settings.permissions` | 정책 자체 편집 — 고정 정책의 존재 이유 |
-| `report.release` | 반려건이 결재 단계를 건너뛰는 탈출구 |
+| `lock.bypass` · `settings.reset` | 통제 우회(마감 월 편집 · 전체 초기화) |
+| `report.release` | 반려건이 결재 단계를 건너뛰는 탈출구. 전이표에도 없다 |
 
-입주자 **비활성·물리 삭제**(`setClientActive` · `deleteClient`)도 같은 이유로
-콜러블이 거절한다. 등록·수정은 열려 있다.
+**절차 대기** — 위험해서가 아니라 안전한 절차가 아직 없어서. 절차가 생기면 열린다.
+
+| 권한 | 무엇이 필요한가 |
+|---|---|
+| `trx.delete` · `trx.delete.bulk` · `report.delete` | 금전 기록을 **어떤 절차로** 지우는가. 보존 의무·감사 추적 설계가 먼저다 |
+
+입주자 **비활성·물리 삭제**(`setClientActive` · `deleteClient`)도 절차 대기다 —
+콜러블이 `failed-precondition` 으로 거절한다. 등록·수정은 열려 있다.
+
+> ⚠️ 닫힌 키는 반드시 둘 중 한 부류에 속해야 한다. 분류되지 않은 채 닫히면
+> 화면이 이유를 말할 수 없고, 사용자는 "내 등급이 낮아서"로 읽어 상급자에게
+> 요청하러 간다 — 그쪽도 못 하므로 서로 시간만 쓴다.
+> `test/fixed-role-policy.test.mjs` 의 「닫힌 권한은 빠짐없이 한 부류로 분류된다」가
+> 이 불변식을 지킨다(반대 방향 — 분류해 두고 실제로는 열려 있는 것 — 도 잡는다).
 
 ---
 

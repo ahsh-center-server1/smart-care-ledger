@@ -19,7 +19,7 @@
 'use strict';
 
 import { toast, escHtml } from '../utils/ui.js';
-import { can } from './permissions.js';
+import { can, unavailableMessage } from './permissions.js';
 import { auditLog } from '../services/audit.js';
 import { fnErrorMessage } from '../services/fn-errors.js';
 import { refetchReports } from './core.js';
@@ -27,7 +27,7 @@ import { refetchReports } from './core.js';
 export async function rebuildDerivedDocs() {
   // 전체 초기화와 같은 등급으로 둔다 — 원본에서 다시 만드는 작업이라
   // 데이터를 잃지는 않지만, 전 사용자에게 보이는 문서를 통째로 갈아 끼운다.
-  if (!can('settings.reset')) { toast('권한이 없습니다.', 'error'); return; }
+  if (!can('settings.reset')) { toast(unavailableMessage('settings.reset'), 'error', 5000); return; }
 
   const btn = document.getElementById('btn-rebuild-derived');
   const out = document.getElementById('rebuild-derived-result');
