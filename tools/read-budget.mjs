@@ -301,4 +301,7 @@ if (total > WARN_THRESHOLD) {
     + '하루 편차와 재연결을 감당하지 못할 수 있습니다.');
   process.exit(1);
 }
-console.log(`✔ 여유 있음 (경보선 ${WARN_THRESHOLD.toLocaleString('ko-KR')} 이하)\n`);
+// --json 일 때는 아무것도 덧붙이지 않는다 — 한 줄이라도 섞이면 파싱이 깨진다.
+if (!JSON_OUT) {
+  console.log(`✔ 여유 있음 (경보선 ${WARN_THRESHOLD.toLocaleString('ko-KR')} 이하)\n`);
+}
