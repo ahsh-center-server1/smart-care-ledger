@@ -21,6 +21,7 @@ import {
 export { actorContext, reportActorContext, TRANSITION_AUDIT };
 import { auditLog } from '../services/audit.js';
 import { getImageUrl } from '../services/storage.js';
+import { reportChecklist, checklistLines } from '../domain/report-checklist.js';
 import { getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
 import { isConfirmedLocked } from './core.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
@@ -772,6 +773,8 @@ export function renderApproval(report,curStatus){
   mkBtnTo(btns,'🖨️ 인쇄/PDF','color:var(--blue);border-color:#bfdbfe;',()=>{if(!S.reportData){toast('먼저 조회하세요.','error');return;}window.print();});
   mkBtnTo(btns,'📊 엑셀 저장','color:#059669;border-color:#a7f3d0;',exportReportExcel);
 
+  renderSubmitChecklist(curStatus);
+
   // 하단: 제출/결재/반려 버튼
   // 버튼 목록은 전이표에서 직접 뽑는다 — 화면과 실행이 갈라질 수 없다.
   const sbEl=document.getElementById('rpt-submit-btns');
@@ -953,6 +956,48 @@ export async function recallReport(reportId){
     showConfirm('보고서 회수','보고서를 초안 상태로 되돌립니다. 계속하시겠습니까?',
       async()=>{resolve(await applyReportTransition('recall'));},'회수');
   });
+}
+
+/**
+ * 「제출 전 확인」 패널.
+ *
+ * **작성 단계에서만 보인다.** 결재자에게는 담당자가 해야 할 일 목록이므로
+ * 자리만 차지한다. 그리고 **막지 않는다** — 현금 영수증 없는 지출, 아직
+ * 분류를 정하지 못한 건, 이번 달만 건너뛰는 고정항목은 전부 실제로 일어난다.
+ *
+ * 추가 읽기가 없다. 보고서를 조회한 시점에 그 달 거래와 고정항목이 이미
+ * 메모리에 있다.
+ */
+function renderSubmitChecklist(curStatus){
+  const el=document.getElementById('rpt-checklist');
+  if(!el)return;
+  el.style.display='none'; el.innerHTML='';
+  // 작성 중일 때만. 제출 뒤에는 고칠 수 없으므로 알려 줄 이유도 없다.
+  if(!S.reportData||!can('report.submit'))return;
+  if(curStatus!=='draft'&&curStatus!==''&&curStatus!=='rejected')return;
+
+  const clientId=S.reportData.clientId;
+  const fixedItems=(S.allFixedItems||[]).filter(f=>f&&f.clientId===clientId);
+  const result=reportChecklist({transactions:S.reportData.trxList,fixedItems});
+  const lines=checklistLines(result);
+
+  if(result.clean){
+    el.style.display='block';
+    el.innerHTML='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;'
+      +'padding:10px 14px;font-size:13px;color:#15803d;">✓ 제출 전 확인할 것이 없습니다.</div>';
+    return;
+  }
+
+  el.style.display='block';
+  el.innerHTML='<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;">'
+    +'<div style="font-size:13px;font-weight:800;color:#92400e;margin-bottom:8px;">제출 전 확인</div>'
+    +'<ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;">'
+    +lines.map(l=>`<li style="font-size:13px;color:#78350f;">${escHtml(l.label)}`
+      +`<div style="font-size:11px;color:#a16207;margin-top:1px;">${escHtml(l.hint)}</div></li>`).join('')
+    +'</ul>'
+    +'<div style="font-size:11px;color:#a16207;margin-top:8px;">'
+    +'그대로 제출해도 됩니다 — 확인만 하시라는 안내입니다.</div>'
+    +'</div>';
 }
 
 // 현재 사용자가 결재해야 하는 대기 보고서만 추림 (팀장=담당 입주자의 submitted, 센터장/관리자=team_approved)
