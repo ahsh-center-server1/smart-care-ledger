@@ -45,7 +45,7 @@ const PENDING_SPLIT = {
   'public/modules/modals.js':         1666,
   'public/modules/report.js':         1451,
   'public/modules/settings.js':       924,
-  'public/modules/transactions.js':   720,
+  'public/modules/transactions.js':   705,
 };
 
 /** 우리가 쓰지 않은 코드는 대상이 아니다. */

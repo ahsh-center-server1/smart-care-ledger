@@ -2,7 +2,7 @@
 
 import { S } from '../state.js';
 import { COLS, cs } from '../constants.js';
-import { toast, toastAction, showConfirm, escAttr, escHtml, emptyState } from '../utils/ui.js';
+import { toast, toastAction, showConfirm, escAttr, emptyState } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchMixedOps } from '../services/firestore.js';
 import { auditOp } from '../services/audit.js';
 import { calcAccountBalance } from '../services/balance.js';
@@ -11,7 +11,10 @@ import { loadTransactions, isConfirmedLocked, trxDeleteBlockReason } from './cor
 import { openModal, getUnpaidMandatoryItems, openReceiptModal, openReceiptUpload } from './modals.js';
 import { can, unavailableMessage } from './permissions.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
-import { renderUnclassifiedBadge, isUnclassifiedTrx, resetFiltersUI } from './transactions-filters.js';
+import {
+  renderUnclassifiedBadge, isUnclassifiedTrx, resetFiltersUI,
+  openCatDropdownUI, closeCatDropdowns,
+} from './transactions-widgets.js';
 
 // 필수 고정항목 미납 배너 렌더 (당월 기준)
 function renderTrxMandatoryBanner(){
@@ -247,28 +250,10 @@ export function renderHistoryTable() {
   document.addEventListener('click',closeCatDropdowns,{once:true});
 }
 
-// ★ 버그3 수정 — cat-label span만 변경
-export function openCatDropdown(trxId, chipEl, type) {
-  closeCatDropdowns();
-  const dd=document.getElementById('dd-'+trxId); if(!dd)return;
-  const _clientId=S.activeClient||'';
-  // sortOrder 기준 정렬 (자주 쓰는 순서대로)
-  const catsSorted=S.categories
-    .filter(c=>c.keyword===''&&c.type===type&&(!c.clientId||c.clientId===_clientId))
-    .sort((a,b)=>(a.sortOrder??999)-(b.sortOrder??999));
-  const cats=[...new Set(catsSorted.map(c=>c.category))];
-  if (!cats.includes('확인필요'))cats.push('확인필요');
-  dd.innerHTML='';
-  cats.forEach(cat=>{
-    const c=cs(cat), item=document.createElement('div');
-    item.className='cat-dd-item';
-    item.innerHTML=`<span style="width:9px;height:9px;border-radius:50%;background:${c.dot};display:inline-block;flex-shrink:0;"></span>${escHtml(cat)}`;
-    item.addEventListener('click',e=>{e.stopPropagation();saveCatChange(trxId,cat,chipEl);closeCatDropdowns();});
-    dd.appendChild(item);
-  });
-  dd.classList.add('show');
-}
-export function closeCatDropdowns(){document.querySelectorAll('.cat-dd.show').forEach(d=>d.classList.remove('show'));}
+// 분류 인라인 드롭다운은 transactions-widgets.js 에 있다. saveCatChange 를
+// 넘겨 순환을 만들지 않는다.
+export const openCatDropdown=(trxId,chipEl,type)=>openCatDropdownUI(trxId,chipEl,type,saveCatChange);
+export { closeCatDropdowns };
 
 // 달력형 뷰
 export function renderCalendarView(){

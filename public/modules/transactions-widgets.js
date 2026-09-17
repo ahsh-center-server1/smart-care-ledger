@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 거래내역 필터 UI — 미분류 배지와 필터 초기화.
+ * 거래내역 화면의 작은 UI 조각들 — 미분류 배지, 필터 초기화, 분류 드롭다운.
  *
  * transactions.js 에서 떼어 냈다 — 그 파일은 쪼갤 목록에 올라 있고, 줄 수
  * 예산은 줄어들기만 한다. **화면 모듈을 import 하지 않는다**(순환에 끼어든다).
@@ -9,7 +9,9 @@
  */
 
 import { S } from '../state.js';
-import { toast } from '../utils/ui.js';
+import { toast, escHtml } from '../utils/ui.js';
+import { orderedCategories } from '../domain/category-order.js';
+import { cs } from '../constants.js';
 import { isUnclassified } from '../domain/monthly-summary.js';
 
 export { isUnclassified as isUnclassifiedTrx };
@@ -62,4 +64,46 @@ export function resetFiltersUI(reapply) {
   S.page = 1;
   reapply();
   toast('필터를 초기화했습니다.', 'success', 1500);
+}
+
+/**
+ * 분류 인라인 드롭다운.
+ *
+ * 「최근」을 위에 얹는다 — 드래그로 정한 순서는 그대로 두고 전체 목록도 줄이지
+ * 않는다. 익숙한 자리가 그대로 있어야 한다.
+ *
+ * `onPick` 을 받는 이유: 저장은 transactions.js 에 있고, 직접 import 하면
+ * 순환이 된다.
+ */
+export function openCatDropdownUI(trxId, chipEl, type, onPick) {
+  closeCatDropdowns();
+  const dd = document.getElementById('dd-' + trxId);
+  if (!dd) return;
+  const { recent, all } = orderedCategories({
+    categories: S.categories, transactions: S.transactions,
+    type, clientId: S.activeClient || '',
+  });
+  dd.innerHTML = '';
+  const addItem = (cat) => {
+    const c = cs(cat), item = document.createElement('div');
+    item.className = 'cat-dd-item';
+    item.innerHTML = `<span style="width:9px;height:9px;border-radius:50%;background:${c.dot};`
+      + `display:inline-block;flex-shrink:0;"></span>${escHtml(cat)}`;
+    item.addEventListener('click', (e) => {
+      e.stopPropagation(); onPick(trxId, cat, chipEl); closeCatDropdowns();
+    });
+    dd.appendChild(item);
+  };
+  const addLabel = (text) => {
+    const l = document.createElement('div');
+    l.style.cssText = 'font-size:10px;font-weight:700;color:#94a3b8;padding:4px 10px 2px;';
+    l.textContent = text; dd.appendChild(l);
+  };
+  if (recent.length) { addLabel('최근'); recent.forEach(addItem); addLabel('전체'); }
+  all.forEach(addItem);
+  dd.classList.add('show');
+}
+
+export function closeCatDropdowns() {
+  document.querySelectorAll('.cat-dd.show').forEach(d => d.classList.remove('show'));
 }

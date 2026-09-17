@@ -25,6 +25,7 @@ export { getUnpaidMandatoryItems, renderFixedItemsList } from './fixed-items.js'
 import * as ExcelParser from '../services/excel-parser.js';
 import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
 import { bankbookRowsToParsed } from '../domain/receipt.js';
+import { orderedCategories } from '../domain/category-order.js';
 import { classifyMerchant } from '../domain/receipt-match.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
 import { hasReceipt, receiptAccess, receiptAccessUrl, receiptViewKind } from '../services/receipt-access.js';
@@ -320,15 +321,22 @@ export function updateTrxCatSel(){
   }
   if(catRow)catRow.style.display='';
   sel.innerHTML='';
-  const clientId=S.activeClient||'';
-  const cats=[...new Set(
-    S.categories
-      .filter(c=>c.keyword===''&&c.type===type&&(!c.clientId||c.clientId===clientId))
-      .sort((a,b)=>(a.sortOrder??999)-(b.sortOrder??999))
-      .map(c=>c.category)
-  )];
-  if(!cats.includes('확인필요'))cats.push('확인필요');
-  cats.forEach(c=>sel.add(new Option(c,c)));
+  // 「최근」 묶음을 위에 얹는다. 드래그로 정한 순서는 그대로 두고, 전체 목록도
+  // 줄이지 않는다 — 익숙한 자리가 그대로 있어야 한다.
+  const {recent,all}=orderedCategories({
+    categories:S.categories, transactions:S.transactions,
+    type, clientId:S.activeClient||'',
+  });
+  if(recent.length){
+    const g=document.createElement('optgroup'); g.label='최근';
+    recent.forEach(c=>g.appendChild(new Option(c,c)));
+    sel.appendChild(g);
+    const rest=document.createElement('optgroup'); rest.label='전체';
+    all.forEach(c=>rest.appendChild(new Option(c,c)));
+    sel.appendChild(rest);
+    return;
+  }
+  all.forEach(c=>sel.add(new Option(c,c)));
 }
 
 // ─────────────────────────────────────────────
