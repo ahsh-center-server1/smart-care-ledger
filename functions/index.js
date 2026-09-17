@@ -288,6 +288,13 @@ exports.savePermissions = require('./permissions-fns')({
   db, callable, HttpsError, logger, FieldValue,
 }).savePermissions;
 
+// 분류 이름·색상 — 이름을 바꾸면 거래가 따라와야 하는데, 공통 분류를
+// 관리하는 팀장·센터장은 trx.edit 을 갖지 않는다(작성자·결재자 분리).
+// 브라우저에서 하면 이름만 바뀌고 거래는 그대로 남는 절반의 상태가 된다.
+Object.assign(exports, require('./category-fns')({
+  db, callable, requireCaller, HttpsError, logger, FieldValue,
+}));
+
 // 자산이동 — 두 다리를 한 트랜잭션에서 만든다. 상대편을 찾는 조회까지
 // 그 안에 있어야 두 사람이 같은 상대편을 덮어쓰지 않는다.
 Object.assign(exports, require('./transfer-fns')({

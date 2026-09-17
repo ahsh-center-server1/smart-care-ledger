@@ -34,6 +34,7 @@ import { can, unavailableMessage } from './permissions.js';
 // 권한 패널은 settings-permissions.js 로 나갔다. 여기서 다시 내보내는 이유는
 // app.js 의 전역 등록과 설정 탭 전환이 이 모듈을 통해 부르기 때문이다.
 import { renderPermissionPanel } from './settings-permissions.js';
+import { openCategoryEdit } from './settings-category.js';
 export { renderPermissionPanel };
 
 // ─────────────────────────────────────────────
@@ -316,7 +317,10 @@ export function renderCatTags(type){
   const seen=new Set();
   allCats.forEach((catDoc,i)=>{
     const cat=catDoc.category; if(seen.has(cat+(catDoc.clientId||'')))return; seen.add(cat+(catDoc.clientId||''));
-    const color=colors[i%colors.length], tag=document.createElement('span');
+    // 저장된 색이 있으면 그것을 쓴다. 없으면 예전처럼 팔레트에서 순서대로
+    // 배정한다 — 색을 한 번도 정하지 않은 분류가 갑자기 회색이 되지 않게.
+    const color=catDoc.color||colors[i%colors.length];
+    const tag=document.createElement('span');
     const isPersonal=!!catDoc.clientId;
     const isCommon=!catDoc.clientId;
     const isCommonReadOnly=isCommon&&!isAdmin;
@@ -328,6 +332,7 @@ export function renderCatTags(type){
     tag.dataset.order=String(catDoc.sortOrder??i);
     tag.innerHTML=`<span style="font-size:11px;color:#94a3b8;margin-right:2px;">⠿</span><span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-size:13px;font-weight:700;color:${color};">${escHtml(cat)}</span>`
       +(isPersonal?`<span style="font-size:10px;background:${color}22;color:${color};padding:1px 5px;border-radius:4px;margin-left:2px;">${clientName}</span>`:'')
+      +(isCommonReadOnly?'':`<button class="cat-edit" title="이름·색상 수정">✎</button>`)
       +(cat==='확인필요'||isCommonReadOnly?'':`<button class="cat-del">×</button>`);
     if(!isCommonReadOnly){
       tag.addEventListener('dragstart',e=>{dragSrc=tag;tag.style.opacity='0.5';e.dataTransfer.effectAllowed='move';});
@@ -356,6 +361,7 @@ export function renderCatTags(type){
         toast('순서 저장됨','success',1500);
       });
     }
+    if(!isCommonReadOnly)tag.querySelector('.cat-edit').addEventListener('click',()=>openCategoryEdit(type,catDoc,color,async()=>{await refetchCategories();loadSettings();}));
     if(cat!=='확인필요'&&!isCommonReadOnly)tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${cat}" 카테고리를 삭제하시겠습니까?`,()=>deleteCategory(type,cat,catDoc.clientId||''),'삭제','btn btn-danger'));
     el.appendChild(tag);
   });
