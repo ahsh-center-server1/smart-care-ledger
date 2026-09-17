@@ -27,7 +27,7 @@ import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButt
 import { bankbookRowsToParsed } from '../domain/receipt.js';
 import { classifyMerchant } from '../domain/receipt-match.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
-import { hasReceipt, receiptAccessUrl } from '../services/receipt-access.js';
+import { hasReceipt, receiptAccess, receiptAccessUrl, receiptViewKind } from '../services/receipt-access.js';
 import { fnErrorMessage } from '../services/fn-errors.js';
 
 // ─────────────────────────────────────────────
@@ -126,7 +126,7 @@ export function renderTrxForm(t){
     </div>`;
   window._trxReceiptClear=false;
   document.getElementById('f-receipt-view')?.addEventListener('click',async()=>{
-    try{openReceiptModal(await receiptAccessUrl(t),t.id);}
+    try{const a=await receiptAccess(t);openReceiptModal(a.url,t.id,{contentType:a.contentType});}
     catch(e){toast('증빙을 열지 못했습니다: '+(e.message||e),'error');}
   });
   document.getElementById('f-receipt-clear')?.addEventListener('click',()=>{
@@ -464,6 +464,19 @@ async function fetchExistingForDup(accId,rows){
   return new Set(snap.docs.map(d=>dupKey({accountId:accId,...d.data()})));
 }
 
+/**
+ * 엑셀 자리에 들어온 것이 사진인가.
+ *
+ * type 만 보지 않는다 — HEIC 는 브라우저에 따라 빈 type 으로 오고, 그러면
+ * 사진인데 엑셀로 넘어가 엉뚱한 오류가 난다. 확장자도 함께 본다.
+ */
+export function isImageFile(file){
+  if(!file)return false;
+  const type=String(file.type||'').toLowerCase();
+  if(type.startsWith('image/'))return true;
+  return /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(String(file.name||''));
+}
+
 export async function analyzeXlFile(){
   const fi=document.getElementById('xl-file');
   if(!fi?.files?.length){toast('파일을 선택하세요.','error');return;}
@@ -481,6 +494,20 @@ export async function analyzeXlFile(){
     .map(c=>({keyword:c.keyword,category:c.category,subcategory:c.subcategory||''}));
 
   try{
+    // 사진을 여기 떨어뜨리는 일이 잦다. 드롭 존은 accept 를 우회하므로
+    // 파일 선택 필터로는 막히지 않는다. 엑셀 파서에 넘기면 "지원하지 않는
+    // 형식"이라고 답하는데, **바로 옆에 통장 사진 판독 경로가 있으므로**
+    // 그 말은 사실도 아니고 무엇을 하라는 안내도 아니다.
+    if(isImageFile(fi.files[0])){
+      const photoBox=document.getElementById('xl-photo-box');
+      const photoReady=photoBox&&photoBox.style.display!=='none';
+      reset();
+      if(photoReady){ await analyzeBankbookPhoto(fi.files[0]); return; }
+      toast('사진은 엑셀 파일이 아닙니다. 통장 사진은 「통장 사진으로 입력」에서 판독합니다 '
+        +'(지금은 사용할 수 없으면 수기 입력을 써 주세요).','error',6000);
+      return;
+    }
+
     const parsed=await ExcelParser.parseFile(fi.files[0],parserCats);
     S.excelSkipped=parsed.skipped||[];
     S.excelTemp=[];
@@ -849,11 +876,10 @@ export function openReceiptModal(url, trxId, opts){
   if(!url)return;
   const large=!!(opts&&opts.large);
   const trx=trxId?[...S.transactions,...(S.reportData?.trxList||[])].find(x=>x.id===trxId):null;
-  const driveMatch=url.match(/\/d\/([^/?]+)/);
-  const isDrive=!!driveMatch;
-  const isStorage=url.includes('firebasestorage.googleapis.com');
-  const isPdf=/\.pdf/i.test(decodeURIComponent(url));
-  const isLocalImg=(/\.(jpg|jpeg|png|gif|webp|bmp)/i.test(url)||(isStorage&&!isPdf))&&!isDrive;
+  // 종류 판정은 receiptViewKind(순수 함수)에 있다 — 서명 URL 에서 전부
+  // 빗나가던 로직이고, 여기 인라인으로 있어서 테스트되지 않았다.
+  const kind=receiptViewKind(url,opts&&opts.contentType);
+  const isDrive=kind==='drive', isPdf=kind==='pdf', isLocalImg=kind==='image';
   // 기존 플로팅 패널 제거
   const existing=document.getElementById('receipt-float-panel');
   if(existing)existing.remove();

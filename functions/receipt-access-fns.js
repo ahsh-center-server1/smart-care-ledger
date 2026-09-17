@@ -37,7 +37,10 @@ module.exports = function receiptAccessFns(ctx) {
     const [url] = await file.getSignedUrl({
       version: 'v4', action: 'read', expires: Date.now() + 5 * 60 * 1000,
     });
-    return { url, expiresInSeconds: 300 };
+    // contentType 을 함께 준다. 최종 경로에 확장자가 없고 서명 URL 의 호스트도
+    // firebasestorage 가 아니라서, 화면이 URL 문자열로 종류를 추측하면 전부
+    // 빗나간다 — 실제로 미리보기가 📄 아이콘만 뜨는 원인이었다.
+    return { url, contentType: String(meta.contentType || ''), expiresInSeconds: 300 };
   });
 
   return { getReceiptAccessUrl };

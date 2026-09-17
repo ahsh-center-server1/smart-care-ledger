@@ -313,6 +313,36 @@ test('날짜·금액이 이상하면 만들지 않는다', async () => {
 // 복사 · 동시성
 // ─────────────────────────────────────────────
 
+test('복사할 때 원본 contentType 을 명시한다 — 최종 경로엔 확장자가 없다', async () => {
+  // 최종 경로는 uploadId 에서 나오므로 `receipts/c1/abc12345` 처럼 **확장자가
+  // 없다.** 브라우저가 이미지임을 아는 단서는 contentType 뿐이고, rewrite 는
+  // 본문을 주면 그 본문이 목적지 메타데이터가 되므로 명시하지 않으면 잃는다.
+  // 잃으면 미리보기가 📄 아이콘만 뜬다(실제로 그랬다).
+  const { db, bucket, fns } = build({
+    'transactions/t1': { clientId: MY, date: '2026-09-01', createdBy: '담당자', amountOut: 1000 },
+  });
+  staged(db, bucket, '담당자', 'up000001');
+
+  const seen = [];
+  const origFile = bucket.file.bind(bucket);
+  bucket.file = (name) => {
+    const f = origFile(name);
+    const origCopy = f.copy.bind(f);
+    f.copy = (dest, opts) => { seen.push(opts); return origCopy(dest, opts); };
+    return f;
+  };
+  const out = await fns.finalizeReceipts({
+    ...as('담당자'), data: { items: [{ uploadId: 'up000001', trxId: 't1' }] },
+  });
+  bucket.file = origFile;
+
+  assert.equal(out.okCount, 1, JSON.stringify(out.results));
+  assert.equal(seen.length, 1, 'copy 가 한 번 불리지 않았습니다');
+  assert.ok(seen[0].contentType,
+    'copy 옵션에 contentType 이 없습니다 — 최종 객체가 종류를 잃어 미리보기가 깨집니다');
+  assert.match(seen[0].contentType, /^image\//);
+});
+
 test('최종 객체가 이미 있으면 출처 metadata가 일치할 때만 이어 간다', async () => {
   // 두 작업자가 같은 원본을 같은 목적지로 복사하면 내용이 같다.
   const finalP = jobs.finalPath(MY, 'up000001');

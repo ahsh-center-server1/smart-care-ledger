@@ -240,6 +240,11 @@ module.exports = function receiptFns(ctx) {
     try {
       await src.copy(dest, {
         preconditionOpts: { ifGenerationMatch: 0 },
+        // 최종 경로에는 확장자가 없다(uploadId 에서 결정적으로 나온다).
+        // 그래서 브라우저가 무엇인지 아는 단서는 contentType 뿐이다.
+        // rewrite 는 본문을 주면 그 본문이 목적지 메타데이터가 되므로,
+        // 원본의 것을 명시하지 않으면 잃을 수 있다.
+        contentType: sourceMeta.contentType || job.sourceContentType || 'image/jpeg',
         // CopyOptions.metadata 는 **평평한** 커스텀 메타데이터 맵이다
         // ({[key]: string|number|boolean|null}). 한 겹 더 감싸면 값이 객체가
         // 되어 저장되지 않고, 되읽은 uploadId 가 undefined 라 **매번** 충돌로

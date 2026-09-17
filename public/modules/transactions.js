@@ -10,7 +10,7 @@ import { deleteFromStorage } from '../services/storage.js';
 import { loadTransactions, isConfirmedLocked, trxDeleteBlockReason } from './core.js';
 import { openModal, getUnpaidMandatoryItems, openReceiptModal, openReceiptUpload } from './modals.js';
 import { can, unavailableMessage } from './permissions.js';
-import { hasReceipt, receiptAccessUrl } from '../services/receipt-access.js';
+import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 
 // 필수 고정항목 미납 배너 렌더 (당월 기준)
 function renderTrxMandatoryBanner(){
@@ -233,7 +233,7 @@ export function renderHistoryTable() {
     tr.addEventListener('dragleave', ()=>tr.style.background='');
     tr.addEventListener('drop', e=>{e.preventDefault();tr.style.background='';const fromId=e.dataTransfer.getData('text/plain');if(fromId!==t.id)reorderTrx(fromId,t.id);});
     const rvBtn=tr.querySelector('.receipt-view');
-    if(rvBtn)rvBtn.addEventListener('click',async()=>{try{openReceiptModal(await receiptAccessUrl(t),t.id);}
+    if(rvBtn)rvBtn.addEventListener('click',async()=>{try{const a=await receiptAccess(t);openReceiptModal(a.url,t.id,{contentType:a.contentType});}
       catch(e){toast('증빙을 열지 못했습니다: '+(e.message||e),'error');}});
     const raBtn=tr.querySelector('.receipt-add');
     if(raBtn)raBtn.addEventListener('click',()=>openReceiptUpload(t.id));  // ★ 버그1 수정

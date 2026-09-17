@@ -23,7 +23,7 @@ import { auditLog } from '../services/audit.js';
 import { getImageUrl } from '../services/storage.js';
 import { getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
 import { isConfirmedLocked } from './core.js';
-import { hasReceipt, receiptAccessUrl } from '../services/receipt-access.js';
+import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 
 // 보고서 필수 고정항목 미납 배너
 function renderRptMandatoryBanner(clientId,year,month,trxList){
@@ -440,7 +440,7 @@ export function renderRptTrxTable(trxList){
     }
     const rvBtn=tr.querySelector('.rpt-rv');
     if(rvBtn)rvBtn.addEventListener('click',async()=>{
-      try{openReceiptModal(await receiptAccessUrl(t),t.id);}
+      try{const a=await receiptAccess(t);openReceiptModal(a.url,t.id,{contentType:a.contentType});}
       catch(e){toast('증빙을 열지 못했습니다: '+(e.message||e),'error');}
     });
     tbody.appendChild(tr);
