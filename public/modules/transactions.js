@@ -11,6 +11,7 @@ import { loadTransactions, isConfirmedLocked, trxDeleteBlockReason } from './cor
 import { openModal, getUnpaidMandatoryItems, openReceiptModal, openReceiptUpload } from './modals.js';
 import { can, unavailableMessage } from './permissions.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
+import { renderUnclassifiedBadge, isUnclassifiedTrx, resetFiltersUI } from './transactions-filters.js';
 
 // 필수 고정항목 미납 배너 렌더 (당월 기준)
 function renderTrxMandatoryBanner(){
@@ -112,8 +113,10 @@ export function applyFilters(opts) {
       &&(!sd||t.date>=sd)&&(!ed||t.date<=ed)
       &&(tf==='all'||t.type===tf)
       &&(rf==='all'||(rf==='yes'?hasReceipt(t):!hasReceipt(t)))
-      &&(!af||t.accountId===af);   // ① 계좌 필터 조건
+      &&(!af||t.accountId===af)   // ① 계좌 필터 조건
+      &&(!S.onlyUnclassified||isUnclassifiedTrx(t));
   });
+  renderUnclassifiedBadge(()=>applyFilters({resetPage:true}));
   const key=S.sortKey, dir=S.sortDir;
   S.filteredTrx.sort((a,b)=>{
     let vA, vB;
@@ -409,20 +412,9 @@ export function renderPagination(){
   el.appendChild(info);
 }
 
-// 모든 필터를 한 번에 초기화 (입주자 선택은 유지, 기간은 이번 달로 복원)
-export function resetFilters(){
-  const defaults={'h-search':'','h-type':'all','h-receipt':'all','h-account':''};
-  Object.entries(defaults).forEach(([id,v])=>{const el=document.getElementById(id);if(el)el.value=v;});
-  const now=new Date();
-  const fmt=dt=>dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
-  const s=document.getElementById('h-start'),e=document.getElementById('h-end');
-  if(s)s.value=fmt(new Date(now.getFullYear(),now.getMonth(),1));
-  if(e)e.value=fmt(new Date(now.getFullYear(),now.getMonth()+1,0));
-  document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));
-  S.page=1;
-  applyFilters();
-  toast('필터를 초기화했습니다.','success',1500);
-}
+// 필터 초기화 UI 는 transactions-filters.js 에 있다. applyFilters 를 넘겨
+// 순환을 만들지 않는다.
+export const resetFilters=()=>resetFiltersUI(()=>applyFilters());
 
 export function applyPeriod(p){
   const now=new Date(),y=now.getFullYear(),m=now.getMonth(),d=now.getDay();

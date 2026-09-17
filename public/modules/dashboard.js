@@ -46,8 +46,14 @@ export function renderDashboard() {
       :`${statsLabel} 수입 <span style="color:#10b981;">+${stats.inc.toLocaleString()}</span> / 지출 <span style="color:#ef4444;">-${stats.exp.toLocaleString()}</span>원`;
     const unpaidCount=Number(S.mandatoryUnpaid?.[client.id]||0);
     const unpaidHTML=unpaidCount>0?`<div style="font-size:11px;color:#dc2626;font-weight:700;margin-top:3px;">⚠️ 필수항목 ${unpaidCount}건 미납</div>`:'';
+    // 미분류는 월말에 몰아서 정리하는 일이라, 쌓이는 것을 미리 보여 준다.
+    // **당월 기준**임을 밝힌다 — 요약 캐시가 당월만 담으므로 과거 건은 안 잡힌다.
+    const unclassified=Number(stats.unclassified||0);
+    const unclassifiedHTML=unclassified>0
+      ?`<div style="font-size:11px;color:#b45309;font-weight:700;margin-top:3px;">🏷️ 당월 미분류 ${unclassified}건</div>`
+      :'';
     const safeName=client.name||'(이름 없음)';
-    card.innerHTML=`<div class="client-avatar">${escHtml(safeName.charAt(0))}</div><div class="client-name">${escHtml(safeName)}</div><div style="font-size:12px;font-weight:700;color:${balColor};margin-top:4px;">${totalBal.toLocaleString()}원</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">${statsText}</div>${unpaidHTML}`;
+    card.innerHTML=`<div class="client-avatar">${escHtml(safeName.charAt(0))}</div><div class="client-name">${escHtml(safeName)}</div><div style="font-size:12px;font-weight:700;color:${balColor};margin-top:4px;">${totalBal.toLocaleString()}원</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">${statsText}</div>${unpaidHTML}${unclassifiedHTML}`;
     card.addEventListener('click',()=>{
       S.activeClient=client.id;
       const hc=document.getElementById('h-client'); if(hc)hc.value=client.id;

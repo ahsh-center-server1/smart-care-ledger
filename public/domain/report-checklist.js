@@ -18,8 +18,9 @@
 
 'use strict';
 
-/** 분류가 정해지지 않은 상태. 판독·업로드가 정하지 못하면 여기로 들어온다. */
-const UNSET_CATEGORIES = new Set(['확인필요', '미분류', '']);
+// 분류 미정 판정은 monthly-summary 에 하나만 둔다. 대시보드 배지와 이 점검표가
+// 다른 숫자를 말하면 어느 쪽도 믿지 않게 된다.
+import { isUnclassified } from './monthly-summary.js';
 
 /**
  * 증빙이 필요한데 없는 지출인가.
@@ -33,10 +34,6 @@ function needsReceipt(t) {
     && Number(t.amountOut || 0) > 0
     && !t.receiptPath && !t.receiptUrl
     && !t.receiptMissing;
-}
-
-function isUnclassified(t) {
-  return UNSET_CATEGORIES.has(String(t.category || '').trim());
 }
 
 /**

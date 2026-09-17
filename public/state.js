@@ -26,6 +26,7 @@ export const S = {
   page: 1, pageSize: 100,
   trxViewMode: 'list', // 'list' | 'calendar'
   calendarYM: '',      // 달력뷰 표시 연월 (YYYY-MM, 비면 filteredTrx 기준)
+  onlyUnclassified: false,  // 미분류 배지로 켜는 필터. 배지를 다시 누르면 꺼진다
   excelTemp: [],
   settings: { expCats:[], incCats:[], rules:[] },
   rptChart: null, rptTrendChart: null,

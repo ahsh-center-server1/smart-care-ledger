@@ -79,6 +79,7 @@ const APP_SHELL = [
   '/modules/settings-shell.js',
   '/modules/setup.js',
   '/modules/transactions.js',
+  '/modules/transactions-filters.js',
   // 외부 라이브러리를 로컬로 가져왔으므로 이제 오프라인에서도 앱이 뜬다.
   // 예전에는 Firebase SDK·Chart.js·xlsx를 CDN에서 받아 망이 없으면 PWA가 아예 죽었다.
   '/vendor/firebase.js',

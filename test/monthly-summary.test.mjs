@@ -79,7 +79,7 @@ test('문자열 금액도 숫자로 더한다', () => {
 test('빈 입력·null도 0으로 끝난다', () => {
   for (const input of [[], null, undefined]) {
     const s = computeMonthlySummary(input);
-    assert.deepEqual(s, { inc: 0, exp: 0, count: 0, paidFixedIds: [] });
+    assert.deepEqual(s, { inc: 0, exp: 0, count: 0, unclassified: 0, paidFixedIds: [] });
   }
 });
 
@@ -174,7 +174,7 @@ test('처음 만들 때만 sourceVersion을 심는다', () => {
 });
 
 test('저장 → 복원이 값을 보존하고, 그 결과가 신선하다고 판정된다', () => {
-  const summary = { inc: 100, exp: 250, count: 4, paidFixedIds: ['f1', 'f2'] };
+  const summary = { inc: 100, exp: 250, count: 4, unclassified: 1, paidFixedIds: ['f1', 'f2'] };
   const stored = { ...toSummaryCacheDoc({
     clientId: 'c1', ym: '2026-09', summary, sourceVersion: 3,
   }), sourceVersion: 3 };
@@ -183,11 +183,12 @@ test('저장 → 복원이 값을 보존하고, 그 결과가 신선하다고 �
 });
 
 test('필드가 빠진 캐시를 읽어도 화면이 깨지지 않는다', () => {
-  assert.deepEqual(fromSummaryCacheDoc({}), { inc: 0, exp: 0, count: 0, paidFixedIds: [] });
-  assert.deepEqual(fromSummaryCacheDoc(null), { inc: 0, exp: 0, count: 0, paidFixedIds: [] });
+  const EMPTY = { inc: 0, exp: 0, count: 0, unclassified: 0, paidFixedIds: [] };
+  assert.deepEqual(fromSummaryCacheDoc({}), EMPTY);
+  assert.deepEqual(fromSummaryCacheDoc(null), EMPTY);
   assert.deepEqual(
     fromSummaryCacheDoc({ inc: '5', paidFixedIds: 'not-an-array' }),
-    { inc: 5, exp: 0, count: 0, paidFixedIds: [] },
+    { ...EMPTY, inc: 5 },
   );
 });
 
@@ -318,4 +319,43 @@ test('0과 없음을 구별한다', () => {
   // 반대로 0 → 1000은 반드시 무효화되어야 한다.
   assert.equal(server.affectsSummary(trx({ amountOut: 0 }), trx({ amountOut: undefined })), false);
   assert.equal(server.affectsSummary(trx({ amountOut: 0 }), trx({ amountOut: 1000 })), true);
+});
+
+// ─────────────────────────────────────────────────────────
+// 미분류 건수 — 대시보드 배지의 근거
+//
+// 카드마다 당월 거래를 다시 읽으면 캐시를 둔 이유가 사라진다. 그래서 요약이
+// 세어 둔다. 판정 기준은 domain/report-checklist.js 와 **같은 함수**다 —
+// 대시보드 배지와 제출 전 점검표가 다른 숫자를 말하면 어느 쪽도 믿지 않는다.
+// ─────────────────────────────────────────────────────────
+
+test('분류가 정해지지 않은 거래를 센다', () => {
+  const s = computeMonthlySummary([
+    trx({ category: '확인필요' }),
+    trx({ category: '미분류' }),
+    trx({ category: '' }),
+    trx({ category: '  ' }),
+    trx({ category: '식비' }),
+  ]);
+  assert.equal(s.unclassified, 4);
+});
+
+test('미분류 판정이 제출 전 점검표와 같다', async () => {
+  // 두 곳이 각자 목록을 들고 있으면 언젠가 갈라진다. 같은 함수를 쓰는지
+  // 결과로 대조한다.
+  const { reportChecklist } = await import('../public/domain/report-checklist.js');
+  const rows = [
+    trx({ category: '확인필요' }), trx({ category: '' }),
+    trx({ category: '미분류' }), trx({ category: '식비' }),
+  ];
+  assert.equal(
+    computeMonthlySummary(rows).unclassified,
+    reportChecklist({ transactions: rows }).unclassified.length,
+  );
+});
+
+test('캐시에 미분류가 없으면 0으로 읽는다 — 낡은 캐시가 화면을 깨뜨리지 않는다', () => {
+  // 스키마 1로 저장된 캐시에는 이 필드가 없다. 버전이 달라 신선하지 않다고
+  // 판정되지만, 그 사이 화면이 undefined 를 그리면 안 된다.
+  assert.equal(fromSummaryCacheDoc({ inc: 1, exp: 2, count: 3 }).unclassified, 0);
 });

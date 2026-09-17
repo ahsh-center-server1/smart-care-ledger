@@ -33,7 +33,22 @@
  * 버전이 같아도 무시하고 다시 계산한다 — 필드가 늘어났을 때
  * 낡은 캐시가 그 필드를 비운 채로 화면에 나가는 것을 막는다.
  */
-export const SUMMARY_SCHEMA_VERSION = 1;
+// 2 — 미분류 건수(unclassified)를 추가했다. 1로 저장된 캐시는 그 필드가 없어
+//     배지가 항상 0으로 보인다. 버전을 올려 다시 계산하게 한다.
+export const SUMMARY_SCHEMA_VERSION = 2;
+
+/**
+ * 분류가 정해지지 않은 상태. 판독·업로드가 정하지 못하면 여기로 들어온다.
+ *
+ * **여기 하나뿐이다.** 대시보드 배지와 제출 전 점검표가 다른 숫자를 말하면
+ * 어느 쪽도 믿지 않게 되므로, report-checklist.js 도 이것을 가져다 쓴다.
+ */
+const UNSET_CATEGORIES = new Set(['확인필요', '미분류', '']);
+
+/** 분류가 정해지지 않은 거래인가. */
+export function isUnclassified(trx) {
+  return UNSET_CATEGORIES.has(String((trx || {}).category || '').trim());
+}
 
 /** (입주자, 월) 캐시 문서 id. 서버(functions/summary-cache.cjs)와 같아야 한다. */
 export function summaryKey(clientId, ym) {
@@ -53,10 +68,10 @@ export function monthKey(date) {
  * (계좌 간 이동은 수입도 지출도 아니고, 승인취소는 없던 거래다)
  *
  * @param {Array} transactions 해당 입주자의 해당 월 거래
- * @returns {{inc:number, exp:number, count:number, paidFixedIds:string[]}}
+ * @returns {{inc:number, exp:number, count:number, unclassified:number, paidFixedIds:string[]}}
  */
 export function computeMonthlySummary(transactions) {
-  let inc = 0, exp = 0, count = 0;
+  let inc = 0, exp = 0, count = 0, unclassified = 0;
   const paidFixedIds = new Set();
 
   for (const t of (transactions || [])) {
@@ -65,11 +80,16 @@ export function computeMonthlySummary(transactions) {
     else if (t.type === '지출') exp += Number(t.amountOut || 0);
     // 자산이동 · 취소 → 집계 제외
 
+    // 분류가 정해지지 않은 건. 대시보드가 이 수를 배지로 띄운다 — 여기서
+    // 세지 않으면 카드마다 당월 거래를 다시 읽어야 하고, 그러면 캐시를 둔
+    // 이유가 사라진다.
+    if (isUnclassified(t)) unclassified++;
+
     // 필수 고정항목 미납 판정에 쓴다
     if (t.isFixed && t.fixedItemId) paidFixedIds.add(t.fixedItemId);
   }
 
-  return { inc, exp, count, paidFixedIds: [...paidFixedIds] };
+  return { inc, exp, count, unclassified, paidFixedIds: [...paidFixedIds] };
 }
 
 /**
@@ -115,6 +135,7 @@ export function toSummaryCacheDoc({
     inc: Number(summary.inc || 0),
     exp: Number(summary.exp || 0),
     count: Number(summary.count || 0),
+    unclassified: Number(summary.unclassified || 0),
     paidFixedIds: Array.isArray(summary.paidFixedIds) ? summary.paidFixedIds : [],
     schemaVersion: SUMMARY_SCHEMA_VERSION,
     computedVersion: Number(sourceVersion) || 0,
@@ -133,6 +154,7 @@ export function fromSummaryCacheDoc(cache) {
     inc: Number((cache && cache.inc) || 0),
     exp: Number((cache && cache.exp) || 0),
     count: Number((cache && cache.count) || 0),
+    unclassified: Number((cache && cache.unclassified) || 0),
     paidFixedIds: Array.isArray(cache && cache.paidFixedIds) ? cache.paidFixedIds : [],
   };
 }

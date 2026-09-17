@@ -133,9 +133,12 @@ export async function fetchBaseData(opts) {
 
       const mStats = {};
       S.clients.forEach(c => {
-        const sm = summaries[c.id] || { inc: 0, exp: 0 };
+        const sm = summaries[c.id] || { inc: 0, exp: 0, unclassified: 0 };
         // partial: 입력자가 본인 입력분만 합산한 값. 카드가 라벨을 바꿔 표시한다.
-        mStats[c.id] = { inc: sm.inc, exp: sm.exp, partial: !!sm.partial };
+        mStats[c.id] = {
+          inc: sm.inc, exp: sm.exp, partial: !!sm.partial,
+          unclassified: Number(sm.unclassified || 0),
+        };
       });
       S.monthlyStats = mStats;
 
