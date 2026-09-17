@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const {
   RECEIPT_TOOL, BANKBOOK_TOOL, SYSTEM_PROMPT, MAX_IMAGE_BYTES,
-  validateImage, geminiSchemaFromTool, extractToolInput,
+  validateImage, geminiSchemaFromTool, extractToolInput, providerError,
   ALLOWED_MEDIA, CONVERTIBLE_MEDIA,
 } = require('../functions/ai/receipt-extract.js');
 const ai = require('../functions/ai/gemini.js');
@@ -225,6 +225,67 @@ test('응답 텍스트가 비어 있어도 깨지지 않는다', () => {
     /ai-analyze-invalid-output/);
   assert.throws(() => extractToolInput({ candidates: [] }, 'extract_receipt'),
     /ai-analyze-invalid-output/);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 공급자가 거절했을 때 — 맨 500을 내보내지 않는다
+//
+// generateContent 호출에 try/catch가 없어서, Gemini가 거절하면 원래 오류가
+// 그대로 올라가고 imageErrorToHttps가 모르는 오류이므로 callable 래퍼가
+// 500으로 만들었다. 화면에는 「Internal Server Error」만 떴다 — 나머지 실패는
+// 전부 "직접 입력할 수 있습니다"로 끝나는데 이 경로만 그랬다.
+// 키를 처음 넣은 날 실제로 그렇게 드러났다.
+// ─────────────────────────────────────────────────────────────
+test('잘못된 키는 상태 코드가 400이어도 키 거부로 분류한다', () => {
+  // Gemini는 잘못된 키를 400 INVALID_ARGUMENT로도 돌려준다.
+  // 상태 코드만 보면 "입력이 잘못됐다"로 읽혀 사용자가 사진을 탓하게 된다.
+  assert.equal(
+    providerError({ status: 400, message: 'API key not valid. Please pass a valid API key.' }).message,
+    'ai-key-rejected');
+  assert.equal(providerError({ status: 403, message: 'PERMISSION_DENIED' }).message, 'ai-key-rejected');
+  assert.equal(providerError({ status: 401, message: '' }).message, 'ai-key-rejected');
+  assert.equal(providerError({ message: 'API_KEY_INVALID' }).message, 'ai-key-rejected');
+});
+
+test('할당량과 일시 장애를 구분한다 — 사용자가 할 일이 다르다', () => {
+  // 할당량은 기다리면 되고, 장애도 기다리면 된다. 키 거부만 관리자가 필요하다.
+  assert.equal(providerError({ status: 429, message: '' }).message, 'ai-quota-exceeded');
+  assert.equal(providerError({ message: 'RESOURCE_EXHAUSTED' }).message, 'ai-quota-exceeded');
+  assert.equal(providerError({ status: 503, message: '' }).message, 'ai-provider-unavailable');
+  assert.equal(providerError({ message: 'fetch failed' }).message, 'ai-provider-unavailable');
+});
+
+test('원래 오류를 cause로 남긴다 — 로그에서 추적할 수 있어야 한다', () => {
+  const cause = { status: 429, message: 'RESOURCE_EXHAUSTED: quota' };
+  assert.equal(providerError(cause).cause, cause);
+});
+
+test('분류할 수 없는 오류는 감추지 않는다', () => {
+  // 모르는 것을 아는 척 바꾸면 진짜 원인이 로그에서 사라진다.
+  assert.equal(providerError({ status: 400, message: 'Invalid JSON payload' }), null);
+  assert.equal(providerError(new Error('boom')), null);
+  assert.equal(providerError(undefined), null);
+});
+
+test('공급자 오류 이름이 전부 사용자 메시지로 번역된다', async () => {
+  // 이름만 만들고 imageErrorToHttps에 넣지 않으면 그대로 500이다 —
+  // 고치기 전과 똑같아지므로 여기서 대조한다.
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../functions/ai-fns.js', import.meta.url), 'utf8');
+  for (const name of ['ai-key-rejected', 'ai-quota-exceeded', 'ai-provider-unavailable']) {
+    assert.ok(src.includes(`m === '${name}'`),
+      `imageErrorToHttps가 ${name}을 번역하지 않습니다 — 화면에 맨 500이 뜹니다`);
+  }
+});
+
+test('키 거부 안내에 환경변수 이름을 노출하지 않는다', async () => {
+  // 이 메시지는 사회복지사 화면에 그대로 뜬다. 값은 물론이고 변수 이름도
+  // 사용자가 할 수 있는 일이 아니다 — "관리자에게"가 사용자가 할 일이다.
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../functions/ai-fns.js', import.meta.url), 'utf8');
+  const block = src.slice(src.indexOf("m === 'ai-key-rejected'"), src.indexOf("m === 'ai-quota-exceeded'"));
+  assert.ok(!/GEMINI_API_KEY/.test(block), '사용자 메시지에 환경변수 이름이 들어 있습니다');
+  assert.match(block, /관리자/, '무엇을 해야 하는지 알려 주지 않습니다');
 });
 
 // ─────────────────────────────────────────────────────────────

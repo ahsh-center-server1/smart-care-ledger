@@ -220,25 +220,64 @@ function validateImage({ base64, mediaType }) {
   return approxBytes;
 }
 
+/**
+ * 공급자가 호출을 거절했을 때 우리 오류 이름으로 바꾼다.
+ *
+ * 여기서 걸러 내지 않으면 원래 오류가 그대로 올라가고, imageErrorToHttps 가
+ * 모르는 오류이므로 callable 래퍼가 **맨 500**으로 만든다. 화면에는
+ * 「Internal Server Error」만 뜨고 사용자는 무엇을 해야 할지 알 수 없다 —
+ * 나머지 실패는 전부 "직접 입력할 수 있습니다"로 끝나는데 이 경로만 그랬다.
+ * 키를 처음 넣은 날 실제로 그렇게 드러났다.
+ *
+ * 상태 코드만 보지 않는다. Gemini 는 잘못된 키를 400(INVALID_ARGUMENT)으로도
+ * 돌려주므로 본문도 함께 본다.
+ */
+function providerError(cause) {
+  const status = Number((cause && (cause.status ?? cause.code)) || 0);
+  const text = String((cause && cause.message) || '');
+  const named = (name) => {
+    const err = new Error(name);
+    err.cause = cause;
+    return err;
+  };
+
+  if (status === 401 || status === 403
+      || /API[_ ]?KEY[_ ]?INVALID|API key not valid|PERMISSION_DENIED|UNAUTHENTICATED/i.test(text)) {
+    return named('ai-key-rejected');
+  }
+  if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(text)) {
+    return named('ai-quota-exceeded');
+  }
+  if (status >= 500 || /UNAVAILABLE|DEADLINE_EXCEEDED|fetch failed|ECONN|ETIMEDOUT/i.test(text)) {
+    return named('ai-provider-unavailable');
+  }
+  return null;
+}
+
 /** 공통 호출부. */
 async function callWithTool({ base64, mediaType, tool, userText }) {
   const client = getGeminiClient();
 
-  const response = await client.models.generateContent({
-    model: ANALYZE_MODEL,
-    contents: [{
-      role: 'user',
-      parts: [
-        { inlineData: { mimeType: mediaType, data: base64 } },
-        { text: userText },
-      ],
-    }],
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      responseMimeType: 'application/json',
-      responseSchema: geminiSchemaFromTool(tool),
-    },
-  });
+  let response;
+  try {
+    response = await client.models.generateContent({
+      model: ANALYZE_MODEL,
+      contents: [{
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: mediaType, data: base64 } },
+          { text: userText },
+        ],
+      }],
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
+        responseMimeType: 'application/json',
+        responseSchema: geminiSchemaFromTool(tool),
+      },
+    });
+  } catch (cause) {
+    throw providerError(cause) || cause;
+  }
 
   return { input: extractToolInput(response, tool.name), usage: response.usageMetadata };
 }
@@ -279,6 +318,7 @@ module.exports = {
   validateImage,
   geminiSchemaFromTool,
   extractToolInput,
+  providerError,
   extractReceipt,
   extractBankbook,
 };

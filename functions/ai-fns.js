@@ -192,6 +192,27 @@ module.exports = function aiFns(ctx) {
     if (m === 'ai-analyze-invalid-output') {
       return new HttpsError('internal', '판독 결과를 해석할 수 없습니다.' + MANUAL);
     }
+    // 공급자가 거절한 경우. 이 셋이 없으면 맨 500이 되어 화면에
+    // 「Internal Server Error」만 뜬다(무엇을 해야 할지 알 수 없다).
+    if (m === 'ai-key-rejected') {
+      // 키 자체는 물론이고 환경변수 이름도 화면에 내보내지 않는다.
+      return new HttpsError(
+        'failed-precondition',
+        '사진 자동입력 키가 거부되었습니다. 관리자에게 API 키 재설정을 요청하세요.' + MANUAL,
+      );
+    }
+    if (m === 'ai-quota-exceeded') {
+      return new HttpsError(
+        'resource-exhausted',
+        '사진 판독 사용량 한도를 넘었습니다. 잠시 뒤 다시 시도하세요.' + MANUAL,
+      );
+    }
+    if (m === 'ai-provider-unavailable') {
+      return new HttpsError(
+        'unavailable',
+        '판독 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요.' + MANUAL,
+      );
+    }
     return null;   // 알 수 없는 오류는 callable 래퍼가 처리한다
   }
 
