@@ -134,7 +134,7 @@ export const PERM_CATALOG = {
     // createdBy는 생성 시점에 본인 uid여야 한다(규칙이 요구한다).
     allowedFields: ['clientId', 'accountId', 'date', 'time', 'type', 'category',
       'subcategory', 'description', 'descRaw', 'amountIn', 'amountOut',
-      'sortOrder', 'createdBy', 'createdAt', 'isFixed', 'fixedItemId'],
+      'method', 'sortOrder', 'createdBy', 'createdAt', 'isFixed', 'fixedItemId'],
     relatedResourceChecks: [{ field: 'accountId', mustBelongTo: 'clientId' }],
   },
 
@@ -145,7 +145,8 @@ export const PERM_CATALOG = {
     scopeByRank: { 1: SCOPE.OWN, 2: SCOPE.ASSIGNED, 3: SCOPE.ALL },
     // 일반 편집 폼이 실제로 쓰는 필드만 (modals.js의 수기 입력 폼 기준).
     allowedFields: ['date', 'time', 'type', 'category', 'subcategory',
-      'description', 'amountIn', 'amountOut', 'accountId', 'receiptMissing'],
+      'description', 'amountIn', 'amountOut', 'accountId', 'receiptMissing',
+      'method'],
     // clientId를 불변으로 두고 accountId가 그 입주자 소속인지 검사하는 조합이
     // 핵심이다. 폼이 clientId를 선택한 계좌에서 파생시키므로, 이 검사가 없으면
     // 계좌를 바꿔 거래를 남의 입주자로 옮길 수 있다.

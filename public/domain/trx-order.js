@@ -92,6 +92,25 @@ export function nextOrderInDay(date, transactions, clientId) {
 }
 
 /**
+ * 여러 건을 한 번에 넣을 때 쓰는 번호 배급기 (엑셀·사진 판독).
+ *
+ * 날짜마다 그 날의 다음 자리부터 세어 나간다. 파일 전체에 이어지는 한 줄기
+ * 번호를 쓰면 안 된다 — 번호는 그 날 안에서만 뜻이 있고, 예전에 쓰던
+ * 「화면에 로드된 거래의 최대값 + i」 는 기간 필터에 따라 기준이 흔들렸다.
+ *
+ * @returns {(date:string)=>number} 부를 때마다 그 날의 다음 번호
+ */
+export function dayOrderAllocator(transactions, clientId) {
+  const next = {};
+  return (date) => {
+    const d = String(date || '');
+    if (next[d] == null) next[d] = nextOrderInDay(d, transactions, clientId);
+    next[d] += 1;
+    return next[d] - 1;
+  };
+}
+
+/**
  * 한 줄을 다른 줄의 자리로 옮긴다 — **같은 날 안에서만.**
  *
  * 예전에는 화면의 한 페이지를 통째로 0..99로 다시 매겼다. 그래서

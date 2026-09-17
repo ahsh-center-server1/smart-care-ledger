@@ -60,6 +60,7 @@ const APP_SHELL = [
   '/domain/report-session.js',
   '/domain/trx-order.js',
   '/domain/report-summary.js',
+  '/domain/payment-method.js',
   '/services/image.js',
   '/services/storage.js',
   '/modules/auth.js',

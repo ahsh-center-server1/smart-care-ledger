@@ -14,7 +14,7 @@ import { can, unavailableMessage } from './permissions.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 import {
   renderUnclassifiedBadge, isUnclassifiedTrx, resetFiltersUI,
-  openCatDropdownUI, closeCatDropdowns,
+  openCatDropdownUI, closeCatDropdowns, methodBadge, readTrxFilters,
 } from './transactions-widgets.js';
 
 // 필수 고정항목 미납 배너 렌더 (당월 기준)
@@ -98,12 +98,7 @@ export function clampPage(page, totalItems, pageSize) {
  */
 export function applyFilters(opts) {
   if (opts && opts.resetPage) S.page = 1;
-  const kw=(document.getElementById('h-search')?.value||'').toLowerCase();
-  const sd=document.getElementById('h-start')?.value||'';
-  const ed=document.getElementById('h-end')?.value||'';
-  const tf=document.getElementById('h-type')?.value||'all';
-  const rf=document.getElementById('h-receipt')?.value||'all';
-  const af=document.getElementById('h-account')?.value||'';   // ① 계좌 필터
+  const {kw,sd,ed,tf,rf,mf,af}=readTrxFilters();
   // 캐시 범위 부족 시 추가 fetch (loadTransactions 끝나면 applyFilters 자동 재호출)
   if (S.activeClient && (sd || ed) && needsBroaderRange(sd, ed, S.trxRange)) {
     const reqStart = sd || '1900-01-01';
@@ -117,8 +112,8 @@ export function applyFilters(opts) {
       &&(!sd||t.date>=sd)&&(!ed||t.date<=ed)
       &&(tf==='all'||t.type===tf)
       &&(rf==='all'||(rf==='yes'?hasReceipt(t):!hasReceipt(t)))
-      &&(!af||t.accountId===af)   // ① 계좌 필터 조건
-      &&(!S.onlyUnclassified||isUnclassifiedTrx(t));
+      &&(mf==='all'||(mf==='none'?!t.method:t.method===mf))
+      &&(!af||t.accountId===af)&&(!S.onlyUnclassified||isUnclassifiedTrx(t));
   });
   renderUnclassifiedBadge(()=>applyFilters({resetPage:true}));
   const key=S.sortKey, sign=S.sortDir==='asc'?1:-1;
@@ -174,7 +169,7 @@ export function renderHistoryTable() {
       const sub=Number(t.amountIn||0)>0?'수입':'지출';
       typeTag='<span style="font-size:10px;background:#f4f4f5;color:#71717a;padding:1px 5px;border-radius:4px;margin-left:4px;">취소('+sub+')</span>';
     }
-    const accName=S.accounts.find(a=>a.id===t.accountId)?.label||'';
+    const methodTag=methodBadge(t.method), accName=S.accounts.find(a=>a.id===t.accountId)?.label||'';
     tr.innerHTML=`
       <td style="text-align:center;width:28px;cursor:grab;color:#cbd5e1;font-size:16px;user-select:none;${isInputOnly?'display:none;':''}" class="drag-handle" title="드래그로 순서 변경">⠿</td>
       <td class="col-check" style="text-align:center;width:36px;${isInputOnly?'display:none;':''}"><input type="checkbox" class="row-check" value="${t.id}" data-acc="${t.accountId}" style="accent-color:var(--blue);width:14px;height:14px;cursor:pointer;"></td>
@@ -185,7 +180,7 @@ export function renderHistoryTable() {
         </span>
         <div class="cat-dd" id="dd-${t.id}"></div>
       </div></td>
-      <td class="trx-edit" data-label="내용" data-id="${t.id}" style="cursor:pointer;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.description||''}">${t.description||''}${typeTag}</td>
+      <td class="trx-edit" data-label="내용" data-id="${t.id}" style="cursor:pointer;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.description||''}">${t.description||''}${methodTag}${typeTag}</td>
       <td data-label="계좌" style="font-size:11px;color:var(--muted);white-space:nowrap;">${accName}</td>
       <td data-label="수입" style="text-align:right;" class="col-in">${
         t.type==='취소'&&t.amountIn>0?'<span style="color:#a1a1aa;text-decoration:line-through;">+'+t.amountIn.toLocaleString()+'원</span>':

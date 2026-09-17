@@ -637,6 +637,7 @@
         "descRaw",
         "amountIn",
         "amountOut",
+        "method",
         "sortOrder",
         "createdBy",
         "createdAt",
@@ -718,7 +719,8 @@
         "amountIn",
         "amountOut",
         "accountId",
-        "receiptMissing"
+        "receiptMissing",
+        "method"
       ],
       "immutableFields": [
         "clientId",

@@ -11,7 +11,7 @@
 import { S } from '../state.js';
 import { toast, escHtml } from '../utils/ui.js';
 import { orderedCategories } from '../domain/category-order.js';
-import { cs } from '../constants.js';
+import { cs, METHOD_COLORS } from '../constants.js';
 import { isUnclassified } from '../domain/monthly-summary.js';
 
 export { isUnclassified as isUnclassifiedTrx };
@@ -106,4 +106,25 @@ export function openCatDropdownUI(trxId, chipEl, type, onPick) {
 
 export function closeCatDropdowns() {
   document.querySelectorAll('.cat-dd.show').forEach(d => d.classList.remove('show'));
+}
+
+/**
+ * 결제수단 뱃지. 분류(무엇에 썼나)와 **다른 축**이라 색을 따로 쓴다.
+ * 모르는 값이면 아무것도 그리지 않는다 — 빈 칸이 틀린 값보다 낫다.
+ */
+export function methodBadge(method) {
+  const c = METHOD_COLORS[method];
+  if (!c) return '';
+  return `<span style="font-size:10px;background:${c.bg};color:${c.text};`
+    + `padding:1px 5px;border-radius:4px;margin-left:4px;">${escHtml(method)}</span>`;
+}
+
+/** 거래내역 필터 막대의 현재 값. 읽는 자리가 하나여야 새 필터를 빠뜨리지 않는다. */
+export function readTrxFilters() {
+  const v = (id, dflt = '') => document.getElementById(id)?.value || dflt;
+  return {
+    kw: v('h-search').toLowerCase(), sd: v('h-start'), ed: v('h-end'),
+    tf: v('h-type', 'all'), rf: v('h-receipt', 'all'),
+    mf: v('h-method', 'all'), af: v('h-account'),
+  };
 }

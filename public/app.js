@@ -331,7 +331,7 @@ function bindEvents(){
   // change와 겹쳐 필터가 두 번 실행된다.
   const onFilter=()=>Trx.applyFilters({resetPage:true});
   ['h-search'].forEach(id=>document.getElementById(id)?.addEventListener('input',onFilter));
-  ['h-account','h-type','h-receipt','h-start','h-end']
+  ['h-account','h-type','h-receipt','h-method','h-start','h-end']
     .forEach(id=>document.getElementById(id)?.addEventListener('change',onFilter));
   document.getElementById('check-all')?.addEventListener('click',e=>{
     document.querySelectorAll('.row-check').forEach(c=>c.checked=e.target.checked);

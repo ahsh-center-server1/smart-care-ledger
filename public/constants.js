@@ -80,6 +80,17 @@ export const CAT_COLORS = {
   '취소':    {bg:'#fafafa',text:'#71717a',dot:'#a1a1aa',border:'#d4d4d8'},
 };
 
+/**
+ * 결제수단 뱃지 색. 「무엇에 썼나」(분류)와 다른 축이라 색도 따로 둔다 —
+ * 같은 색을 쓰면 두 뱃지가 한 덩어리로 읽힌다.
+ */
+export const METHOD_COLORS={
+  '카드':    {bg:'#eef2ff',text:'#4338ca'},
+  '계좌이체':{bg:'#f0fdfa',text:'#0f766e'},
+  '자동이체':{bg:'#fef3c7',text:'#92400e'},
+  '현금':    {bg:'#f0fdf4',text:'#15803d'},
+};
+
 /** 카테고리 색상 반환 (없으면 기본값) */
 export function cs(cat) {
   return CAT_COLORS[cat] || {bg:'#f8fafc',text:'#475569',dot:'#94a3b8',border:'#e2e8f0'};

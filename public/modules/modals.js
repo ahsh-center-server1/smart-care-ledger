@@ -26,7 +26,8 @@ import * as ExcelParser from '../services/excel-parser.js';
 import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
 import { bankbookRowsToParsed } from '../domain/receipt.js';
 import { orderedCategories } from '../domain/category-order.js';
-import { nextOrderInDay } from '../domain/trx-order.js';
+import { dayOrderAllocator } from '../domain/trx-order.js';
+import { PAYMENT_METHODS, detectPaymentMethod, normalizePaymentMethod } from '../domain/payment-method.js';
 import { parseAmount, attachAmountInput } from '../utils/amount-input.js';
 import { classifyMerchant } from '../domain/receipt-match.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
@@ -111,6 +112,9 @@ export function renderTrxForm(t){
         <div><label class="label">분류</label><select id="f-cat" class="input" style="padding:8px 12px;"></select></div>
         <div><label class="label">내용</label><input type="text" id="f-desc" class="input" value="${isEdit?t.description||'':''}" placeholder="거래 내용"></div>
       </div>
+      <div><label class="label">결제수단 <span style="font-size:10px;color:var(--muted);">(비워 두면 내용에서 읽습니다)</span></label>
+        <select id="f-method" class="input" style="padding:8px 12px;width:100%;"><option value="">— 미지정 —</option>${
+          PAYMENT_METHODS.map(m=>`<option value="${m}"${isEdit&&t.method===m?' selected':''}>${m}</option>`).join('')}</select></div>
       <div>
         <label class="label">영수증 첨부 <span style="font-size:10px;color:var(--muted);">(선택)</span></label>
         ${isEdit&&t.receiptUrl?`<div id="trx-receipt-current" style="margin-bottom:6px;"><a href="${escAttr(t.receiptUrl)}" target="_blank" style="font-size:12px;color:var(--blue);">📎 현재 첨부파일 보기</a>${can('receipt.replace')?` <button onclick="document.getElementById('trx-receipt-current').innerHTML='<span style=\\'font-size:12px;color:#dc2626;\\'>삭제됨</span>';window._trxReceiptClear=true;" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button>`:''}</div>`:''}
@@ -199,7 +203,9 @@ export function renderTrxForm(t){
       const isCancelIn=type==='취소-수입';
       const isCancelOut=type==='취소-지출';
       const normType=(isCancelIn||isCancelOut)?'취소':type;
-      const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,
+      // 고르지 않았으면 내용에서 읽어 본다. 못 읽으면 빈 칸 — 틀린 값보다 낫다.
+      const method=normalizePaymentMethod(document.getElementById('f-method')?.value)||detectPaymentMethod(desc);
+      const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,method,
         amountIn:(type==='수입'||isCancelIn)?amount:0,
         amountOut:(type==='지출'||isCancelOut)?amount:0};
       if(existId)trxData.id=existId;
@@ -655,17 +661,8 @@ async function fileBankbookPhoto(image,accId,month,name){
  */
 async function fillExcelTempFromRows(rows,accId){
   const existSet=await fetchExistingForDup(accId,rows);
-  // 번호는 **그 날 안에서만** 뜻이 있다(domain/trx-order.js). 그래서 파일 전체에
-  // 이어지는 한 줄기 번호가 아니라 날짜마다 그 날의 다음 자리부터 센다.
-  // 예전에는 화면에 로드된 거래(기본 당월)의 최대값에 이어 붙였는데, 기간
-  // 필터를 바꾸면 기준이 달라져 번호가 엉켰다.
-  const clientId=String(S.accounts.find(a=>a.id===accId)?.clientId||'');
-  const nextInDay={};
-  const takeOrder=(date)=>{
-    const d=String(date||'');
-    if(nextInDay[d]==null)nextInDay[d]=nextOrderInDay(d,S.transactions,clientId);
-    return nextInDay[d]++;
-  };
+  // 번호는 **그 날 안에서만** 뜻이 있다 — 배급기가 날짜마다 따로 센다.
+  const takeOrder=dayOrderAllocator(S.transactions,String(S.accounts.find(a=>a.id===accId)?.clientId||''));
 
   S.excelTemp=rows.map((p)=>{
     const rawIn=p.in||0, rawOut=p.out||0;
@@ -677,6 +674,8 @@ async function fillExcelTempFromRows(rows,accId){
     const item={date:p.date,description:p.desc,descRaw:p.descRaw||p.desc,
       amountIn:amIn,amountOut:amOut,type,
       category:p.cat||'확인필요',subcategory:p.sub||'',
+      // 결제수단은 **지우기 전의 원문**에서 읽는다 (domain/payment-method.js).
+      method:detectPaymentMethod(p.descRaw||p.desc),
       sortOrder:takeOrder(p.date)};
     item._dup=existSet.has(dupKey({...item,accountId:accId}));
     return item;
@@ -799,6 +798,7 @@ export async function saveExcelData(){
     clientId:acc.clientId,accountId:accId,date:item.date,type:item.type,
     category:item.category,subcategory:item.subcategory||'',
     description:item.description,amountIn:item.amountIn||0,amountOut:item.amountOut||0,
+    method:item.method||'',
     sortOrder:item.sortOrder??null,
     createdBy:String(S.user?.userId||''),
   }})));

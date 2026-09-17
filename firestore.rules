@@ -176,7 +176,7 @@ service cloud.firestore {
       return request.resource.data.keys().hasOnly([
         'clientId', 'accountId', 'date', 'time', 'type', 'category',
         'subcategory', 'description', 'descRaw', 'amountIn', 'amountOut',
-        'sortOrder', 'createdBy', 'createdAt', 'isFixed', 'fixedItemId'
+        'method', 'sortOrder', 'createdBy', 'createdAt', 'isFixed', 'fixedItemId'
       ])
       && (!('createdAt' in request.resource.data)
           || request.resource.data.createdAt == request.time);
@@ -187,7 +187,8 @@ service cloud.firestore {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return (cap('trxEdit') && changed.hasOnly([
                 'date', 'time', 'type', 'category', 'subcategory',
-                'description', 'amountIn', 'amountOut', 'accountId', 'receiptMissing'
+                'description', 'amountIn', 'amountOut', 'accountId', 'receiptMissing',
+                'method'
               ]))
           || (cap('trxCategoryEdit') && changed.hasOnly(['category', 'subcategory']))
           || (cap('trxReorder') && changed.hasOnly(['sortOrder']));
