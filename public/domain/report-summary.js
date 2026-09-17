@@ -100,3 +100,22 @@ export function ruleBasedSummary(reportData) {
 
   return lines.join(' ');
 }
+
+/**
+ * 전월 집계 — 규칙 기반 문장과 AI 페이로드가 **같은 근거**를 쓴다.
+ * 두 벌이 되면 화면의 두 문장이 서로 다른 전월을 말한다.
+ */
+export function previousMonthFacts(prevTrx) {
+  const rows = (prevTrx || []).filter(countsInTotals);
+  const prevCatStats = {};
+  let prevTotalIn = 0, prevTotalOut = 0;
+  for (const t of rows) {
+    prevTotalIn += Number(t.amountIn || 0);
+    prevTotalOut += Number(t.amountOut || 0);
+    if (t.type === '지출') {
+      const k = t.category || '기타';
+      prevCatStats[k] = (prevCatStats[k] || 0) + Number(t.amountOut || 0);
+    }
+  }
+  return { prevTotalIn, prevTotalOut, prevCatStats };
+}

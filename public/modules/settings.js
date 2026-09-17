@@ -15,7 +15,7 @@ import { S } from '../state.js';
 import { toast, showConfirm, showLoading, escAttr, escHtml } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchMixedOps } from '../services/firestore.js';
 import { deleteManyFromStorage } from '../services/storage.js';
-import { COLS, DEFAULT_CATEGORIES } from '../constants.js';
+import { COLS, DEFAULT_CATEGORIES, cs } from '../constants.js';
 const SYSTEM_OPS = COLS.SYSTEM_OPS;
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
@@ -316,7 +316,6 @@ export function renderCatTags(type){
   const allCats=S.categories
     .filter(c=>c.keyword===''&&c.type===type&&(!c.clientId||c.clientId===settingsClientId))
     .sort((a,b)=>(a.sortOrder??999)-(b.sortOrder??999));
-  const colors=type==='지출'?['#dc2626','#ea580c','#d97706','#16a34a','#2563eb','#9333ea','#c026d3']:['#059669','#0891b2','#1d4ed8'];
   const targetLabel=settingsClientId?clientName:'공통';
   const badgeId=type==='지출'?'exp-cat-target':'inc-cat-target';
   const badge=document.getElementById(badgeId); if(badge)badge.textContent=targetLabel;
@@ -325,9 +324,9 @@ export function renderCatTags(type){
   const seen=new Set();
   allCats.forEach((catDoc,i)=>{
     const cat=catDoc.category; if(seen.has(cat+(catDoc.clientId||'')))return; seen.add(cat+(catDoc.clientId||''));
-    // 저장된 색이 있으면 그것을 쓴다. 없으면 예전처럼 팔레트에서 순서대로
-    // 배정한다 — 색을 한 번도 정하지 않은 분류가 갑자기 회색이 되지 않게.
-    const color=catDoc.color||colors[i%colors.length];
+    // 거래내역·보고서와 **같은 색**이어야 한다. 예전에는 여기만 팔레트에서
+    // 순서대로 배정해서, 설정에서 본 색과 표에서 본 색이 서로 달랐다.
+    const color=cs(cat).dot;
     const tag=document.createElement('span');
     const isPersonal=!!catDoc.clientId;
     const isCommon=!catDoc.clientId;

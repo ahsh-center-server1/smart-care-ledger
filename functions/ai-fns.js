@@ -19,8 +19,9 @@ module.exports = function aiFns(ctx) {
     db, getBucket, callable, requireCaller, HttpsError, logger, FieldValue, Timestamp,
   } = ctx;
 
-  const { isAiConfigured } = ctx.aiProvider || require('./ai/gemini');
-  const { extractReceipt, extractBankbook } = ctx.extractors || require('./ai/receipt-extract');
+  const { isAiConfigured, getGeminiClient, ANALYZE_MODEL } = ctx.aiProvider || require('./ai/gemini');
+  const { extractReceipt, extractBankbook, providerError } = ctx.extractors || require('./ai/receipt-extract');
+  const { narrateReport } = ctx.narrator || require('./ai/report-narrative');
   const { consumeRateLimits } = ctx.rateLimiter || require('./rateLimit');
   const { fixedCan } = require('./fixed-role-policy.cjs');
   const { STATES, jobPath, stagingPath, millis } = require('./receipt-jobs.cjs');
@@ -333,7 +334,71 @@ module.exports = function aiFns(ctx) {
     }
   }
 
-  return { getAiStatus, analyzeReceipt, analyzeBankbook };
+  /**
+   * analyzeReport — 보고서 「자동 분석」 문장을 모델에게 쓰게 한다.
+   *
+   * 규칙 기반 문장은 그대로 남는다. 키가 없거나 호출이 실패하면 화면이
+   * 그쪽으로 떨어진다 — 이것은 **더 나은 문장**이지 없으면 안 되는 기능이
+   * 아니다. 그래서 여기서 실패해도 보고서는 완전히 쓸 수 있어야 한다.
+   *
+   * 보내는 것은 **집계뿐이다.** 입주자 이름도 상호명도 보내지 않는다
+   * (ai/report-narrative.js 머리말에 이유). 화면이 이미 계산해 둔 숫자를
+   * 받는다 — 서버가 다시 계산하면 그 달 거래를 전부 읽어야 하고, 이 문장은
+   * 사람이 읽고 고치는 초안이라 그럴 값어치가 없다.
+   */
+  const analyzeReport = callable('analyzeReport', async (request) => {
+    const me = await requireCaller(request.auth);
+    me.require('report.own', '보고서 분석');
+    if (!isAiConfigured()) {
+      throw new HttpsError(
+        'failed-precondition',
+        'AI 분석이 설정되지 않았습니다. 규칙 기반 분석을 씁니다.',
+      );
+    }
+    const d = request.data || {};
+    const clientId = String(d.clientId || '');
+    if (!clientId) throw new HttpsError('invalid-argument', '입주자가 지정되지 않았습니다.');
+    // 담당 범위 밖의 보고서는 분석도 하지 않는다. 숫자만 보낸다 해도
+    // "그 사람의 그 달 지출 규모"는 그 자체로 알면 안 되는 정보다.
+    me.requireSees(clientId);
+
+    await consumeAiRateLimits('report-analyze', request.auth.uid);
+
+    try {
+      const { text, usage } = await narrateReport(d, {
+        client: getGeminiClient(), model: ANALYZE_MODEL,
+      });
+      if (!text) throw new Error('ai-empty-response');
+
+      await writeAiAuditLog(request, me, 'ai.reportAnalyze', {
+        clientId,
+        year: Number(d.year) || 0,
+        month: Number(d.month) || 0,
+        inputTokens: (usage && (usage.promptTokenCount ?? usage.input_tokens)) || 0,
+        outputTokens: (usage && (usage.candidatesTokenCount ?? usage.output_tokens)) || 0,
+      });
+      return { text };
+    } catch (cause) {
+      const mapped = providerError(cause) || cause;
+      const name = mapped && mapped.message;
+      // 사용자에게는 "규칙 기반으로 씁니다"까지 말해 준다 — 실패가 막다른
+      // 길이 아니라는 것을 알아야 버튼을 다시 누르지 않는다.
+      if (name === 'ai-quota-exceeded') {
+        throw new HttpsError('resource-exhausted',
+          '오늘 AI 사용량을 다 썼습니다. 규칙 기반 분석으로 대신합니다.');
+      }
+      if (name === 'ai-key-rejected' || name === 'ai-model-unavailable') {
+        logger.error('[analyzeReport] 공급자 설정 문제', { reason: name });
+        throw new HttpsError('failed-precondition',
+          'AI 분석을 쓸 수 없습니다. 규칙 기반 분석으로 대신합니다.');
+      }
+      logger.error('[analyzeReport] 실패', { message: mapped && mapped.message });
+      throw new HttpsError('unavailable',
+        'AI 분석에 실패했습니다. 규칙 기반 분석으로 대신합니다.');
+    }
+  }, AI_SECRETS);
+
+  return { getAiStatus, analyzeReceipt, analyzeBankbook, analyzeReport };
 };
 
 module.exports.AI_DEFAULTS = { userRpm: 10, projectRpm: 30 };

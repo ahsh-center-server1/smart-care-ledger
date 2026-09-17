@@ -29,7 +29,9 @@ import { rememberOpenReport, restorableReport } from '../domain/report-session.j
 import { sortTrx, planReorder } from '../domain/trx-order.js';
 import { countsInTotals } from '../domain/trx-totals.js';
 import { excludedBadge } from './transactions-widgets.js';
-import { ruleBasedSummary } from '../domain/report-summary.js';
+// 분석 칸(문장 생성·비우기)은 report-summary-panel.js 로 나갔다. 화살표는 한 방향이다.
+import { generateRuleBasedSummary, handleGenSummary, resetSummaryPanel } from './report-summary-panel.js';
+export { generateRuleBasedSummary, handleGenSummary };
 
 // 보고서 필수 고정항목 미납 배너
 function renderRptMandatoryBanner(clientId,year,month,trxList){
@@ -87,18 +89,6 @@ export function invalidateReportTrxCache(clientId) {
 // ─────────────────────────────────────────────
 // 규칙 기반 자동 분석 (API 없음)
 // ─────────────────────────────────────────────
-export function generateRuleBasedSummary(reportData) {
-  // 전월 거래는 **그 입주자의 전체 거래**(allTrx)에서 뽑는다. 예전에는
-  // S.transactions 를 봤는데 그것은 기본이 당월만이라, 전월 대비 문장이
-  // 거의 언제나 빠졌다 — 없는 것이 아니라 못 읽은 것이었다.
-  const { clientId, year, month, allTrx } = reportData;
-  let py = year, pm = month - 1;
-  if (pm === 0) { pm = 12; py -= 1; }
-  const prefix = py + '-' + String(pm).padStart(2, '0');
-  const prevTrx = (allTrx || S.transactions)
-    .filter(t => t.clientId === clientId && String(t.date || '').startsWith(prefix));
-  return ruleBasedSummary({ ...reportData, prevTrx });
-}
 
 // ─────────────────────────────────────────────
 // 연간 통계
@@ -272,6 +262,7 @@ export function renderReportView(){
   const{clientId,year,month,trxList,accs,accountRows,report,summary}=S.reportData;
   const client=S.clients.find(c=>c.id===clientId)||{name:'-'};
   const now=new Date(), curStatus=report?report.status:'';
+  resetSummaryPanel();   // 앞사람의 분석이 남지 않게 — 인쇄 영역까지 함께 지운다
   setText('rpt-period',`${year}년 ${month}월 거래 내역`);
   // 작성일은 보고서가 처음 만들어진 날. 예전에는 항상 오늘을 찍어서
   // 작년 보고서를 다시 인쇄하면 오늘 날짜가 나왔다.
@@ -688,17 +679,7 @@ export function renderTrendChart(clientId,baseYear,baseMonth){
 }
 
 // 규칙 기반 자동 분석 핸들러
-export function handleGenSummary(){
-  if(!S.reportData){toast('먼저 조회하세요.','error');return;}
-  const text=generateRuleBasedSummary(S.reportData);
-  setText('rpt-summary-text',text);
-  const printText=document.getElementById('rpt-summary-print-text');
-  const printArea=document.getElementById('rpt-summary-print-area');
-  const printCheck=document.getElementById('rpt-summary-print');
-  if(printText)printText.textContent=text;
-  if(printCheck?.checked&&printArea)printArea.style.display='block';
-  toast('분석 완료','success',2000);
-}
+
 
 // ─────────────────────────────────────────────
 // 결재

@@ -433,7 +433,7 @@ Object.assign(exports, require('./directory-fns')({
 }));
 
 // ─────────────────────────────────────────────────────────────
-// 영수증·통장 사진 자동입력 (Claude API)
+// 영수증·통장 사진 자동입력 · 보고서 분석 (Gemini API)
 //
 // 콜러블과 가드는 functions/ai-fns.js에 있다. 이 파일은 인증이 본업이고
 // 이미 상한을 넘겨 있어(test/architecture.test.mjs), 관계없는 기능은 따로 둔다.

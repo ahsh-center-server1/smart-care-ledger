@@ -17,6 +17,7 @@ import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
 import { fetchStaffDirectory, fetchCategoryDirectory } from '../services/directory.js';
 import { countUnenteredFixed } from '../domain/monthly-summary.js';
 import { sortTrx } from '../domain/trx-order.js';
+import { registerCategoryColors } from '../domain/category-color.js';
 import { fetchInScope } from '../services/scoped-fetch.js';
 import * as Dash     from './dashboard.js';
 import * as Trx      from './transactions.js';
@@ -84,6 +85,10 @@ export async function fetchBaseData(opts) {
   }
   if (snapMap.categories) {
     S.categories = snapMap.categories.rows;
+    // 색을 한 곳에 등록해 둔다. cs() 가 이름만 들고 불리는 자리가 열 곳
+    // 남짓이라, 호출부마다 분류 문서를 찾아 넘기게 하면 한 곳만 빠뜨려도
+    // 같은 분류가 화면마다 다른 색이 된다.
+    registerCategoryColors(S.categories);
   }
 
   // clients/accounts는 활성/비활성 + 권한 필터링이 함께 들어가므로 한 묶음으로 처리

@@ -36,7 +36,9 @@
  * 컬렉션을 직접 읽는다 — 필드가 늘어났을 때 낡은 명부가 그 필드를 비운 채로
  * 화면에 나가는 것을 막는다.
  */
-const DIRECTORY_SCHEMA_VERSION = 1;
+// 2 — 분류 명부에 color 를 실었다. 1로 저장된 명부에는 그 필드가 없어
+//     화면이 색을 못 찾는다. 올려서 다시 만들게 한다.
+const DIRECTORY_SCHEMA_VERSION = 2;
 
 /**
  * 명부에 실을 직원 필드. **이 목록에 없는 값은 나가지 않는다.**
@@ -47,7 +49,10 @@ const DIRECTORY_SCHEMA_VERSION = 1;
 const STAFF_FIELDS = ['userId', 'name', 'role', 'team', 'active', 'approved', 'isAdmin'];
 
 /** 명부에 실을 분류 필드. 자동분류 규칙도 같은 컬렉션에 있다. */
-const CATEGORY_FIELDS = ['keyword', 'type', 'category', 'subcategory', 'clientId', 'sortOrder'];
+// color 가 여기 없으면 사용자가 고른 색이 투영 단계에서 잘려 나간다 —
+// 설정 화면에서 색을 저장해도 표에서는 회색으로 보였다.
+const CATEGORY_FIELDS = ['keyword', 'type', 'category', 'subcategory', 'clientId',
+  'sortOrder', 'color'];
 
 /** 명부 문서 이름. */
 const DIRECTORIES = { STAFF: 'staff', CATEGORIES: 'categories' };

@@ -43,7 +43,7 @@ const MAX_LINES = 600;
  */
 const PENDING_SPLIT = {
   'public/modules/modals.js':         1593,
-  'public/modules/report.js':         1389,
+  'public/modules/report.js':         1370,
   'public/modules/settings.js':       924,
   'public/modules/transactions.js':   686,
 };
