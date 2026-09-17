@@ -1,7 +1,7 @@
 'use strict';
 
 import { S } from '../state.js';
-import { compareTrx, nextOrderInDay } from '../domain/trx-order.js';
+import { compareTrx, nextOrderInDay, planReorder } from '../domain/trx-order.js';
 import { COLS, cs } from '../constants.js';
 import { toast, toastAction, showConfirm, escAttr, emptyState } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchMixedOps } from '../services/firestore.js';
@@ -641,59 +641,48 @@ export function canReorderNow(){
 }
 
 /**
- * 드래그/버튼으로 거래 순서를 바꾼다.
+ * 드래그/버튼으로 거래 순서를 바꾼다. **그 날 안에서만.**
  *
- * 재정렬은 **현재 화면 순서를 그대로 sortOrder에 새겨 넣는 작업**이다.
- * 그래서 금액순이나 분류순으로 보고 있을 때 한 행을 옮기면 그 페이지 전체가
- * 금액순으로 **영구 저장**됐다. 사용자는 한 줄을 옮겼다고 생각하지만
- * 실제로는 그 페이지의 원래 순서가 전부 사라진다.
+ * 예전에는 화면의 한 페이지를 통째로 0..99로 다시 매겼다. 계좌 필터를 켠 채
+ * 한 줄을 옮기면 필터 밖 같은 날 거래의 번호와 충돌했고, 엑셀이 준 큰 번호가
+ * 0..99로 깎였다 — "한참 수정하다 보면 순서가 이상해진다"가 이것이다.
  *
- * 이제 sortOrder(또는 그와 사실상 같은 날짜순)로 보고 있을 때만 허용한다.
+ * 이제 판정도 대상도 domain/trx-order.js 가 정한다. 여기서는 권한과 결재
+ * 잠금만 보고 쓴다.
  */
 export async function reorderTrx(fromId,toId){
   if(!can('trx.reorder')){toast('순서 변경 권한이 없습니다.','error');return;}
   if(!canReorderNow()){
     toast('순서를 바꾸려면 날짜순으로 정렬한 상태여야 합니다.\n'
-      +'지금 정렬 상태에서 옮기면 이 페이지 전체가 그 순서로 저장됩니다.','error',5000);
+      +'지금 정렬 상태에서 옮기면 옮긴 자리가 화면과 다르게 저장됩니다.','error',5000);
     return;
   }
-  if(fromId===toId)return;
-  const fromIdx=S.filteredTrx.findIndex(x=>x.id===fromId);
-  const toIdx  =S.filteredTrx.findIndex(x=>x.id===toId);
-  if(fromIdx<0||toIdx<0)return;
-  const arr=[...S.filteredTrx];
-  const [moved]=arr.splice(fromIdx,1);
-  arr.splice(toIdx,0,moved);
-  const base=(S.page-1)*S.pageSize;
-  const pageItems=arr.slice(base,base+S.pageSize);
-
-  // 번호가 바뀌는 행을 먼저 모은다
-  const changed=[];
-  for(let i=0;i<pageItems.length;i++){
-    const t=pageItems[i];
-    const newOrder=base+i;
-    if(t.sortOrder!==newOrder)changed.push({t,newOrder});
+  const plan=planReorder(S.transactions,fromId,toId);
+  if(!plan.ok){
+    // 장부에서 3월 15일 줄을 3월 10일 앞으로 옮긴다는 것은 순서가 아니라
+    // 날짜를 고치는 일이다. 말없이 무시하면 드래그가 먹지 않는 것처럼 보인다.
+    if(plan.reason==='cross-date'){
+      toast('날짜가 다른 거래끼리는 순서를 바꿀 수 없습니다.\n'
+        +'날짜 자체가 잘못됐다면 거래를 수정하세요.','info',5000);
+    }
+    return;
   }
-  if(!changed.length)return;
+  if(!plan.changed.length)return;
 
-  // 옮긴 행만이 아니라 **번호가 바뀌는 모든 행**의 결재 잠금을 확인한다.
-  // 예전에는 옮긴 행만 확인해서, 결재 완료된 달의 거래가 같은 페이지에 있으면
-  // 그 행의 sortOrder가 말없이 덮어써졌다.
-  const locked=changed.filter(({t})=>isConfirmedLocked(t.clientId,t.date));
-  if(locked.length){
-    toast(`최종 결재 완료된 월의 거래 ${locked.length}건이 이 페이지에 있어 순서를 바꿀 수 없습니다. `
+  const client=S.transactions.find(x=>x.id===fromId)?.clientId;
+  if(isConfirmedLocked(client,plan.date)){
+    toast('최종 결재 완료된 월의 거래는 순서를 바꿀 수 없습니다. '
       +'(센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error',6000);
     return;
   }
 
-  const toUpdate=changed.map(({t,newOrder})=>{
-    t.sortOrder=newOrder;
-    const orig=S.transactions.find(x=>x.id===t.id);
-    if(orig)orig.sortOrder=newOrder;
-    return {col:COLS.TRANSACTIONS,docId:t.id,data:{sortOrder:newOrder}};
-  });
-  await batchUpdateDocs(toUpdate);
-  S.filteredTrx=arr;
+  await batchUpdateDocs(plan.changed.map(c=>
+    ({col:COLS.TRANSACTIONS,docId:c.id,data:{sortOrder:c.sortOrder}})));
+  for(const c of plan.changed){
+    for(const arr of [S.transactions,S.filteredTrx]){
+      const t=arr.find(x=>x.id===c.id); if(t)t.sortOrder=c.sortOrder;
+    }
+  }
   // 재정렬 뒤에 applyFilters를 부르지 않으면, 다음 필터 입력·저장 때
   // 정렬이 다시 적용되면서 방금 바꾼 순서가 원래대로 돌아간다.
   applyFilters();

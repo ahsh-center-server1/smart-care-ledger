@@ -15,7 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { compareTrx, sortTrx, orderOf, nextOrderInDay } from '../public/domain/trx-order.js';
+import { sortTrx, orderOf, nextOrderInDay, planReorder } from '../public/domain/trx-order.js';
 
 const t = (date, sortOrder, extra = {}) => ({ date, sortOrder, ...extra });
 const dates = (list) => sortTrx(list).map(x => x.id);
@@ -110,6 +110,73 @@ test('번호 없는 거래는 세지 않는다', () => {
   assert.equal(nextOrderInDay('2026-03-05', trx, 'c1'), 4);
 });
 
+// ── 드래그 재정렬 ───────────────────────────────────────────
+
+const DAY = [
+  { id: 'a', clientId: 'c1', date: '2026-03-05', sortOrder: 0 },
+  { id: 'b', clientId: 'c1', date: '2026-03-05', sortOrder: 1 },
+  { id: 'c', clientId: 'c1', date: '2026-03-05', sortOrder: 2 },
+];
+
+test('한 줄을 다른 줄의 자리로 옮긴다', () => {
+  const plan = planReorder(DAY, 'c', 'a');
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.order.map(t => t.id), ['c', 'a', 'b']);
+  assert.deepEqual(plan.changed, [
+    { id: 'c', sortOrder: 0 }, { id: 'a', sortOrder: 1 }, { id: 'b', sortOrder: 2 },
+  ]);
+});
+
+test('날짜를 건너뛰는 이동은 거절한다', () => {
+  // 장부에서 3월 15일 줄을 3월 10일 앞으로 옮긴다는 것은 순서가 아니라
+  // 날짜를 고치는 일이다.
+  const rows = [...DAY, { id: 'z', clientId: 'c1', date: '2026-03-06', sortOrder: 0 }];
+  assert.deepEqual(planReorder(rows, 'z', 'a'), { ok: false, reason: 'cross-date' });
+});
+
+test('그 날 전부를 다시 매긴다 — 화면에 보이는 것만이 아니라', () => {
+  // 예전 버그의 핵심. 계좌 필터를 켠 채 옮기면 필터 밖 같은 날 거래의 번호와
+  // 충돌했다. 계획은 언제나 그 날 전부를 대상으로 삼아야 한다.
+  const rows = [
+    { id: 'a', clientId: 'c1', date: '2026-03-05', accountId: 'A', sortOrder: 0 },
+    { id: 'b', clientId: 'c1', date: '2026-03-05', accountId: 'B', sortOrder: 1 },
+    { id: 'c', clientId: 'c1', date: '2026-03-05', accountId: 'A', sortOrder: 2 },
+  ];
+  const plan = planReorder(rows, 'c', 'a');
+  assert.deepEqual(plan.order.map(t => t.id), ['c', 'a', 'b'],
+    '다른 계좌의 같은 날 거래가 대상에서 빠졌습니다');
+});
+
+test('다른 날·다른 입주자의 번호는 건드리지 않는다', () => {
+  const rows = [
+    ...DAY,
+    { id: 'other-day', clientId: 'c1', date: '2026-03-06', sortOrder: 0 },
+    { id: 'other-client', clientId: 'c2', date: '2026-03-05', sortOrder: 0 },
+  ];
+  const plan = planReorder(rows, 'c', 'a');
+  const touched = plan.changed.map(c => c.id);
+  assert.ok(!touched.includes('other-day') && !touched.includes('other-client'),
+    '그 날·그 입주자 밖의 거래를 다시 매깁니다');
+});
+
+test('제자리로 옮기면 쓸 것이 없다', () => {
+  assert.deepEqual(planReorder(DAY, 'a', 'a'), { ok: false, reason: 'same' });
+  assert.deepEqual(planReorder(DAY, 'a', 'x'), { ok: false, reason: 'notfound' });
+});
+
+test('번호 없는 거래를 옮기면 그 날에 번호가 생긴다', () => {
+  const rows = [
+    { id: 'a', clientId: 'c1', date: '2026-03-05', sortOrder: 0 },
+    { id: 'm1', clientId: 'c1', date: '2026-03-05' },
+    { id: 'm2', clientId: 'c1', date: '2026-03-05' },
+  ];
+  const plan = planReorder(rows, 'm2', 'a');
+  assert.deepEqual(plan.order.map(t => t.id), ['m2', 'a', 'm1']);
+  assert.deepEqual(plan.changed, [
+    { id: 'm2', sortOrder: 0 }, { id: 'a', sortOrder: 1 }, { id: 'm1', sortOrder: 2 },
+  ]);
+});
+
 // ── 집행 지점 ───────────────────────────────────────────────
 
 test('장부 순서 비교기가 한 벌뿐이다', () => {
@@ -139,4 +206,13 @@ test('수기 입력이 자리를 받는다', () => {
   const create = code.slice(code.indexOf('export async function saveTrx'));
   assert.ok(/nextOrderInDay\(/.test(create.slice(0, 2500)),
     '새 거래에 그 날의 순서를 주지 않습니다 — 목록 맨 아래로 몰립니다');
+});
+
+test('두 화면이 같은 재정렬 규칙을 쓴다', () => {
+  // 거래내역 탭과 보고서가 따로 계산하면 같은 거래가 두 화면에서 다른 자리에
+  // 앉는다. 그 중 하나는 인쇄해서 결재에 올리는 보고서다.
+  for (const f of ['public/modules/transactions.js', 'public/modules/report.js']) {
+    const code = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+    assert.ok(/planReorder\(/.test(code), `${f} 가 재정렬 규칙을 따로 씁니다`);
+  }
 });

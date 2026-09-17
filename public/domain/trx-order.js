@@ -90,3 +90,54 @@ export function nextOrderInDay(date, transactions, clientId) {
   }
   return max + 1;
 }
+
+/**
+ * 한 줄을 다른 줄의 자리로 옮긴다 — **같은 날 안에서만.**
+ *
+ * 예전에는 화면의 한 페이지를 통째로 0..99로 다시 매겼다. 그래서
+ *   · 계좌 필터를 켠 채 한 줄을 옮기면 필터 밖 거래의 번호와 충돌했고,
+ *   · 엑셀이 준 큰 번호(예: 1..300)가 0..99로 깎여 그 뒤의 저장과 어긋났다.
+ * "한참 수정하다 보면 순서가 이상해진다"가 이것이다.
+ *
+ * 이제 그 **날** 하나만 0..N으로 다시 매긴다. 날짜가 다른 거래의 번호와는
+ * 겹쳐도 무해하므로(compareTrx 가 날짜를 먼저 본다) 충돌할 곳이 없다.
+ * 대상은 화면에 보이는 것이 아니라 **그 날 전부**다 — 필터 안만 매기면
+ * 필터 밖 같은 날 거래와 번호가 어긋난다.
+ *
+ * 날짜를 건너뛰는 이동은 거절한다. 장부에서 3월 15일 줄을 3월 10일 앞으로
+ * 옮긴다는 것은 순서가 아니라 날짜를 고치는 일이다.
+ *
+ * @param {Array} transactions 같은 입주자의 거래들 (필터 이전의 것)
+ * @returns {{ok:true, date:string, order:Array, changed:Array<{id:string,sortOrder:number}>}
+ *          |{ok:false, reason:'notfound'|'same'|'cross-date'}}
+ */
+export function planReorder(transactions, fromId, toId) {
+  const list = transactions || [];
+  const from = list.find(t => t && t.id === fromId);
+  const to = list.find(t => t && t.id === toId);
+  if (!from || !to) return { ok: false, reason: 'notfound' };
+  if (fromId === toId) return { ok: false, reason: 'same' };
+  if (String(from.date || '') !== String(to.date || '')) return { ok: false, reason: 'cross-date' };
+
+  const day = sortTrx(list.filter(t =>
+    String(t.date || '') === String(from.date || '')
+    && String(t.clientId || '') === String(from.clientId || '')));
+  const fi = day.findIndex(t => t.id === fromId);
+  const ti = day.findIndex(t => t.id === toId);
+  if (fi < 0 || ti < 0) return { ok: false, reason: 'notfound' };
+  const [moved] = day.splice(fi, 1);
+  day.splice(ti, 0, moved);
+  return { ok: true, date: String(from.date || ''), order: day, changed: renumberDay(day) };
+}
+
+/**
+ * 그 날 거래에 0..N을 새로 매긴다.
+ * @returns {Array<{id:string, sortOrder:number}>} 값이 실제로 바뀌는 것만
+ */
+function renumberDay(dayTrx) {
+  const out = [];
+  (dayTrx || []).forEach((t, i) => {
+    if (t && t.sortOrder !== i) out.push({ id: t.id, sortOrder: i });
+  });
+  return out;
+}

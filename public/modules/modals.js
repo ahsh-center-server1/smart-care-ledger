@@ -26,6 +26,7 @@ import * as ExcelParser from '../services/excel-parser.js';
 import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
 import { bankbookRowsToParsed } from '../domain/receipt.js';
 import { orderedCategories } from '../domain/category-order.js';
+import { nextOrderInDay } from '../domain/trx-order.js';
 import { parseAmount, attachAmountInput } from '../utils/amount-input.js';
 import { classifyMerchant } from '../domain/receipt-match.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
@@ -532,39 +533,14 @@ export async function analyzeXlFile(){
       reset(); return;
     }
 
-    const existSet=await fetchExistingForDup(accId,parsed.rows);
-    const existingMaxOrder=S.transactions.length>0
-      ? Math.max(...S.transactions.map(t=>t.sortOrder??0)) : 0;
-
-    S.excelTemp=parsed.rows.map((p,i)=>{
-      const rawIn=p.in||0, rawOut=p.out||0;
-      let amIn=0, amOut=0, type='지출';
-      if(rawIn>0){amIn=rawIn;type='수입';}
-      else if(rawOut>0){amOut=rawOut;type='지출';}
-      else if(rawOut<0){amOut=rawOut;type='지출';}       // 음수 지출 = 환불
-      else if(rawIn<0){amOut=Math.abs(rawIn);type='취소';}
-      const item={date:p.date,description:p.desc,descRaw:p.descRaw||p.desc,
-        amountIn:amIn,amountOut:amOut,type,
-        category:p.cat||'확인필요',subcategory:p.sub||'',
-        sortOrder:existingMaxOrder+i+1};
-      item._dup=existSet.has(dupKey({...item,accountId:accId}));
-      return item;
-    });
-
-    // 가장 빈번한 연월 자동 감지
-    const mCount={};
-    parsed.rows.forEach(p=>{const m=(p.date||'').substring(0,7);if(m)mCount[m]=(mCount[m]||0)+1;});
-    S.excelMonth=Object.entries(mCount).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
-
-    const dupCount=S.excelTemp.filter(x=>x._dup).length;
+    // 파일과 사진이 **같은 변환**을 지난다. 주석만 그렇게 적혀 있고 실제로는
+    // 두 벌이었다 — 한쪽만 고치면 같은 거래가 경로에 따라 다르게 저장된다.
+    await fillExcelTempFromRows(parsed.rows,accId);
     btn.disabled=false; btn.textContent=`분석 완료 (${S.excelTemp.length}건)`;
     if(parsed.encoding&&parsed.encoding!=='utf-8')
       toast(`${parsed.encoding} 인코딩으로 읽었습니다.`,'info',3000);
-    if(dupCount>0)
-      toast(`⚠️ ${dupCount}건이 이미 등록된 거래와 같습니다. 저장 시 제외됩니다.`,'info',5000);
     if(S.excelSkipped.length)
       toast(`${S.excelSkipped.length}건이 제외되었습니다. 아래 "제외된 행"을 확인하세요.`,'info',5000);
-    renderXlPreview();
   }catch(err){
     reset(); toast('파싱 오류: '+err.message,'error',5000);
   }
@@ -679,10 +655,19 @@ async function fileBankbookPhoto(image,accId,month,name){
  */
 async function fillExcelTempFromRows(rows,accId){
   const existSet=await fetchExistingForDup(accId,rows);
-  const existingMaxOrder=S.transactions.length>0
-    ? Math.max(...S.transactions.map(t=>t.sortOrder??0)) : 0;
+  // 번호는 **그 날 안에서만** 뜻이 있다(domain/trx-order.js). 그래서 파일 전체에
+  // 이어지는 한 줄기 번호가 아니라 날짜마다 그 날의 다음 자리부터 센다.
+  // 예전에는 화면에 로드된 거래(기본 당월)의 최대값에 이어 붙였는데, 기간
+  // 필터를 바꾸면 기준이 달라져 번호가 엉켰다.
+  const clientId=String(S.accounts.find(a=>a.id===accId)?.clientId||'');
+  const nextInDay={};
+  const takeOrder=(date)=>{
+    const d=String(date||'');
+    if(nextInDay[d]==null)nextInDay[d]=nextOrderInDay(d,S.transactions,clientId);
+    return nextInDay[d]++;
+  };
 
-  S.excelTemp=rows.map((p,i)=>{
+  S.excelTemp=rows.map((p)=>{
     const rawIn=p.in||0, rawOut=p.out||0;
     let amIn=0, amOut=0, type='지출';
     if(rawIn>0){amIn=rawIn;type='수입';}
@@ -692,7 +677,7 @@ async function fillExcelTempFromRows(rows,accId){
     const item={date:p.date,description:p.desc,descRaw:p.descRaw||p.desc,
       amountIn:amIn,amountOut:amOut,type,
       category:p.cat||'확인필요',subcategory:p.sub||'',
-      sortOrder:existingMaxOrder+i+1};
+      sortOrder:takeOrder(p.date)};
     item._dup=existSet.has(dupKey({...item,accountId:accId}));
     return item;
   });

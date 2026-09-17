@@ -8,7 +8,7 @@
 import { S } from '../state.js';
 import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml } from '../utils/ui.js';
-import { fb, fdb } from '../services/firestore.js';
+import { fb, fdb, batchUpdateDocs } from '../services/firestore.js';
 import { chunkForInQuery } from '../services/in-query.js';
 import { can, unavailableMessage } from './permissions.js';
 import { calcAccountBalanceAsOf, sumIncomeExpense } from '../services/balance.js';
@@ -26,7 +26,8 @@ import { getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } fro
 import { isConfirmedLocked } from './core.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 import { rememberOpenReport, restorableReport } from '../domain/report-session.js';
-import { sortTrx } from '../domain/trx-order.js';
+import { sortTrx, planReorder } from '../domain/trx-order.js';
+import { ruleBasedSummary } from '../domain/report-summary.js';
 
 // 보고서 필수 고정항목 미납 배너
 function renderRptMandatoryBanner(clientId,year,month,trxList){
@@ -85,90 +86,16 @@ export function invalidateReportTrxCache(clientId) {
 // 규칙 기반 자동 분석 (API 없음)
 // ─────────────────────────────────────────────
 export function generateRuleBasedSummary(reportData) {
-  const { year, month, trxList, summary } = reportData;
-  const { totalOut, balance } = summary;
-  const catStats = summary.catStats || {};
-  const fmt = n => Number(n).toLocaleString();
-
-  // 전월 데이터 계산
-  let prevMonth = month - 1, prevYear = year;
-  if (prevMonth === 0) { prevMonth = 12; prevYear--; }
-  const prevStr   = prevYear+'-'+String(prevMonth).padStart(2,'0');
-  const prevTrxList = S.transactions.filter(t=>t.clientId===reportData.clientId&&(t.date||'').startsWith(prevStr)&&t.type!=='자산이동'&&t.type!=='취소');
-  const prevOut   = prevTrxList.reduce((s,t)=>s+Number(t.amountOut||0),0);
-  const prevCat   = {};
-  prevTrxList.forEach(t=>{ if(t.type==='지출'){const k=t.category||'기타'; prevCat[k]=(prevCat[k]||0)+Number(t.amountOut||0);} });
-
-  // 카테고리 순위
-  const catKeys = Object.keys(catStats).sort((a,b)=>catStats[b].total-catStats[a].total);
-  const top1    = catKeys[0], top2=catKeys[1], top3=catKeys[2];
-  const top1Pct = totalOut>0?Math.round(catStats[top1]?.total/totalOut*100):0;
-
-  // 문장 구성
-  const lines = [];
-
-  // ① 기본 요약
-  if (totalOut > 0) {
-    lines.push(`${year}년 ${month}월 총 지출은 ${fmt(totalOut)}원입니다.`);
-  } else {
-    lines.push(`${year}년 ${month}월 지출 내역이 없습니다.`);
-  }
-
-  // ② 주요 지출 카테고리
-  if (top1) {
-    let catSummary = `주요 지출 항목은 ${top1}(${fmt(catStats[top1].total)}원, ${top1Pct}%)`;
-    if (top2) catSummary += `, ${top2}(${fmt(catStats[top2].total)}원)`;
-    if (top3) catSummary += `, ${top3}(${fmt(catStats[top3].total)}원)`;
-    catSummary += ' 순이었습니다.';
-    lines.push(catSummary);
-  }
-
-  // ③ 전월 대비
-  if (prevOut > 0 && totalOut > 0) {
-    const diff = totalOut - prevOut;
-    const pct  = Math.abs(Math.round(diff/prevOut*100));
-    if (diff > 0)      lines.push(`전월 대비 지출이 ${fmt(diff)}원(${pct}%) 증가하였습니다.`);
-    else if (diff < 0) lines.push(`전월 대비 지출이 ${fmt(Math.abs(diff))}원(${pct}%) 감소하였습니다.`);
-    else               lines.push(`전월과 지출 규모가 동일합니다.`);
-
-    // 카테고리별 전월 대비 특이사항
-    const notable = catKeys.find(k => {
-      const cur=catStats[k]?.total||0, prev=prevCat[k]||0;
-      if (!prev) return cur>50000;
-      return Math.abs(cur-prev)/prev > 0.3 && Math.abs(cur-prev) > 20000;
-    });
-    if (notable) {
-      const cur=catStats[notable].total, prev=prevCat[notable]||0;
-      const notablePct = prev>0?Math.abs(Math.round((cur-prev)/prev*100)):100;
-      if (cur>prev) lines.push(`특히 ${notable} 항목이 전월 대비 ${notablePct}% 증가하였습니다.`);
-      else          lines.push(`${notable} 항목은 전월 대비 ${notablePct}% 감소하였습니다.`);
-    }
-  }
-
-  // ④ 잔액 상태
-  if (balance >= 0) {
-    lines.push(`이달 잔액은 ${fmt(balance)}원입니다.`);
-  } else {
-    lines.push(`이달 잔액이 ${fmt(Math.abs(balance))}원 부족합니다. 지출 관리가 필요합니다.`);
-  }
-
-  // ⑤ 확인필요 항목
-  const uncat = catStats['확인필요']?.total||0;
-  if (uncat > 0) {
-    lines.push(`미분류(확인필요) 항목이 ${fmt(uncat)}원 있습니다. 카테고리 확인이 필요합니다.`);
-  }
-
-  // ⑥ 10만원 초과 단건 지출 상위 3건
-  const bigTrx=(trxList||[])
-    .filter(t=>t.type!=='자산이동'&&t.type!=='취소'&&Number(t.amountOut||0)>=100000)
-    .sort((a,b)=>Number(b.amountOut||0)-Number(a.amountOut||0))
-    .slice(0,3);
-  if(bigTrx.length){
-    const items=bigTrx.map(t=>`${t.description||'(내용없음)'}(${fmt(t.amountOut)}원)`).join(', ');
-    lines.push(`10만원 이상 단건 지출 상위 ${bigTrx.length}건: ${items}.`);
-  }
-
-  return lines.join(' ');
+  // 전월 거래는 **그 입주자의 전체 거래**(allTrx)에서 뽑는다. 예전에는
+  // S.transactions 를 봤는데 그것은 기본이 당월만이라, 전월 대비 문장이
+  // 거의 언제나 빠졌다 — 없는 것이 아니라 못 읽은 것이었다.
+  const { clientId, year, month, allTrx } = reportData;
+  let py = year, pm = month - 1;
+  if (pm === 0) { pm = 12; py -= 1; }
+  const prefix = py + '-' + String(pm).padStart(2, '0');
+  const prevTrx = (allTrx || S.transactions)
+    .filter(t => t.clientId === clientId && String(t.date || '').startsWith(prefix));
+  return ruleBasedSummary({ ...reportData, prevTrx });
 }
 
 // ─────────────────────────────────────────────
@@ -541,20 +468,34 @@ export function syncReportTrxList(){
   updateRptSortArrows();
 }
 
+/**
+ * 보고서 거래내역의 순서 변경. 거래내역 탭과 **같은 규칙**(domain/trx-order.js)을
+ * 쓴다 — 근거가 갈라지면 같은 거래가 두 화면에서 다른 자리에 앉고, 그 중
+ * 하나는 인쇄해서 결재에 올리는 보고서다. 예전에는 그 달 전체를 0..N으로
+ * 다시 매기며 한 건씩 순차로 썼다(100건이면 쓰기 100번, 끊기면 절반만 반영).
+ */
 export async function reorderRptTrx(fromId,toId){
   if(!S.reportData)return;
   const rd=S.reportData;
   if(isConfirmedLocked(rd.clientId,`${rd.year}-${String(rd.month).padStart(2,'0')}-01`)){toast('최종 결재 완료된 월의 거래는 순서를 변경할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
-  const arr=[...S.reportData.trxList];
-  const fi=arr.findIndex(x=>x.id===fromId), ti=arr.findIndex(x=>x.id===toId);
-  if(fi<0||ti<0)return;
-  const[moved]=arr.splice(fi,1); arr.splice(ti,0,moved);
-  const{doc,updateDoc}=fb();
-  for(let i=0;i<arr.length;i++){
-    const t=arr[i]; if(t.sortOrder!==i){t.sortOrder=i;await updateDoc(doc(fdb(),COLS.TRANSACTIONS,t.id),{sortOrder:i});}
+  const plan=planReorder(rd.trxList,fromId,toId);
+  if(!plan.ok){
+    if(plan.reason==='cross-date'){
+      toast('날짜가 다른 거래끼리는 순서를 바꿀 수 없습니다.\n'
+        +'날짜 자체가 잘못됐다면 거래를 수정하세요.','info',5000);
+    }
+    return;
   }
-  S.reportData.trxList=arr;
-  renderRptTrxTable(arr);
+  if(!plan.changed.length)return;
+  await batchUpdateDocs(plan.changed.map(c=>
+    ({col:COLS.TRANSACTIONS,docId:c.id,data:{sortOrder:c.sortOrder}})));
+  for(const c of plan.changed){
+    for(const arr of [rd.trxList,S.transactions]){
+      const t=(arr||[]).find(x=>x.id===c.id); if(t)t.sortOrder=c.sortOrder;
+    }
+  }
+  rd.trxList=sortTrx(rd.trxList);
+  renderRptTrxTable(rd.trxList);
   toast('순서 저장됨','success',1500);
 }
 
