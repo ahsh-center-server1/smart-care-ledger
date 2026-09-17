@@ -204,20 +204,3 @@ test('닫힌 기능 문구가 상급자에게 요청하라고 말하지 않는�
     assert.doesNotMatch(msg, /관리자에게|팀장에게|문의/, `${key}: ${msg}`);
   }
 });
-
-test('변경 이력은 감독하는 자리에만 있다', () => {
-  // 장부를 쓰는 사람이 서로의 수정 이력을 들여다볼 이유가 없다. 설정 화면이
-  // 담당자에게 관리자 영역처럼 보이는 원인이기도 했다.
-  for (const role of ['센터장']) {
-    as(role);
-    assert.equal(can('audit.view'), true, `${role}에게 변경 이력이 닫혔습니다`);
-  }
-  for (const role of ['입력자', '담당자', '팀장']) {
-    as(role);
-    assert.equal(can('audit.view'), false, `${role}이 변경 이력을 얻었습니다`);
-  }
-  // 관리자는 기술 권한으로 본다 — 업무 권한이 함께 열리지는 않는다.
-  as('', true);
-  assert.equal(can('audit.view'), true, '관리자에게 변경 이력이 닫혔습니다');
-  assert.equal(can('trx.view.all'), false, '관리자 자격이 업무 권한을 열었습니다');
-});

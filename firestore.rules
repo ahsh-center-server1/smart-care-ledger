@@ -65,7 +65,7 @@ service cloud.firestore {
           'trxCategoryEdit', 'trxReorder', 'trxTransfer', 'trxCsv', 'excelUpload',
           'bankbookUpload', 'receiptUpload', 'receiptAttachOwn', 'receiptAttachAny',
           'receiptReplace', 'receiptPrint', 'reportOwn', 'reportDraft', 'reportSubmit',
-          'reportRecall', 'settingsCategory', 'settingsFixed', 'settingsBudget',
+          'reportRecall', 'settingsCategory', 'settingsFixed', 'settingsBudget', 'auditView',
           'trxDelete', 'trxDeleteBulk', 'reportDelete',
           // 담당 입주자의 계좌. 범위는 아래 accounts 규칙의 seesClient 가 잡는다.
           'settingsAccount'
@@ -73,7 +73,7 @@ service cloud.firestore {
         || (role == '팀장' && name in [
           'navReport', 'navSettings', 'navStaff', 'trxViewAll', 'trxCsv',
           'receiptPrint', 'reportOwn', 'reportApproveTeam', 'reportReject',
-          'assignmentsManage',
+          'auditView', 'assignmentsManage',
           'settingsClient', 'settingsAccount', 'settingsCategoryCommon'
         ])
         || (role == '센터장' && name in [
@@ -84,8 +84,7 @@ service cloud.firestore {
           'settingsClient', 'settingsAccount', 'settingsCategoryCommon'
         ])
         || (me().get('isAdmin', false) == true && name in [
-          'navSettings', 'navStaff', 'settingsStaff',
-          'auditView', 'systemAudit', 'systemAi', 'systemBackup'
+          'navSettings', 'navStaff', 'settingsStaff', 'systemAudit', 'systemAi', 'systemBackup'
         ])
       );
     }

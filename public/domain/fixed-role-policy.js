@@ -9,7 +9,7 @@ const grants = {
     'excel.upload', 'bankbook.upload', 'receipt.upload', 'receipt.attachOwn',
     'receipt.attachAny', 'receipt.replace', 'receipt.print', 'report.own',
     'report.draft', 'report.submit', 'report.recall', 'settings.category',
-    'settings.fixed', 'settings.budget',
+    'settings.fixed', 'settings.budget', 'audit.view',
     // 담당 입주자의 계좌를 직접 만들고 고친다. 계좌 개설·정정은 장부를 쓰는
     // 사람의 일상 업무이고, 팀장을 거치면 입력이 멈춘다.
     // **범위는 권한이 아니라 규칙이 잡는다** — accounts 규칙의 seesClient 가
@@ -36,7 +36,7 @@ const grants = {
   '팀장': [
     'nav.report', 'nav.settings', 'nav.staff', 'trx.view.all', 'trx.csv',
     'receipt.print', 'report.own', 'report.approve.team', 'report.reject',
-    'assignments.manage',
+    'audit.view', 'assignments.manage',
     'settings.client', 'settings.account', 'settings.category.common',
   ],
   '센터장': [
@@ -47,17 +47,7 @@ const grants = {
     'settings.client', 'settings.account', 'settings.category.common',
   ],
 };
-// 관리자(플래그)의 기술 권한. 업무 권한과 **직교**한다 — 이 목록에 업무 키를
-// 넣으면 안 된다.
-//
-// audit.view 는 "누가 무엇을 언제 바꿨나"를 보는 감독 권한이다. 한때
-// 담당자·팀장에게도 있었는데, 장부를 쓰는 사람이 서로의 수정 이력을 들여다볼
-// 이유가 없고 설정 화면이 관리자 영역처럼 보이게 만들었다. 감독하는 자리
-// (센터장·관리자)에만 둔다.
-const technical = [
-  'nav.settings', 'nav.staff', 'settings.staff',
-  'audit.view', 'system.audit', 'system.ai', 'system.backup',
-];
+const technical = ['nav.settings', 'nav.staff', 'settings.staff', 'system.audit', 'system.ai', 'system.backup'];
 // 아무에게도 주지 않는 권한. **두 부류이고, 구분이 중요하다.**
 //
 // 한때 둘이 한 배열에 섞여 있었고, 그래서 "절차가 없어서 잠시 닫은 것"이
