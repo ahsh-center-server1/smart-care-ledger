@@ -251,10 +251,12 @@ describe('clients · accounts', () => {
       await assertFails(getDoc(doc(as(ACTORS.팀장), `${col}/${otherId}`)));
     });
 
-    it(`${col}: 담당자는 변경할 수 없다`, async () => {
-      await assertFails(updateDoc(doc(as(ACTORS.담당자), `${col}/${mineId}`), { memo: 'x' }));
-    });
   }
+
+  it('clients: 담당자는 변경할 수 없다', async () => {
+    // 입주자 등록·수정은 담당 배정을 함께 정하는 일이라 콜러블만 한다.
+    await assertFails(updateDoc(doc(as(ACTORS.담당자), `clients/${MY_CLIENT}`), { memo: 'x' }));
+  });
 
   it('clients: 관리자조차 직접 쓸 수 없다 — saveClient 콜러블만', async () => {
     // 브라우저가 clients 를 쓰면 담당 배정만 바뀌고 규칙이 읽는 투영본
@@ -302,8 +304,36 @@ describe('clients · accounts', () => {
     }));
   });
 
-  it('accounts: 담당자는 계좌를 만들 수 없다', async () => {
-    await assertFails(setDoc(doc(as(ACTORS.담당자), "accounts/nope-acc"), {
+  // 계좌 관리는 담당자부터다 — 통장 하나 늘 때마다 팀장을 거치면 입력이 멈춘다.
+  // **범위는 권한이 아니라 규칙이 잡는다**: settings.account 키 자체에는 범위가
+  // 없고, seesClient 가 담당 배정 밖을 막는다. 아래 두 쌍이 그 대조다.
+  it('accounts: 담당자는 담당 입주자의 계좌를 만들 수 있다', async () => {
+    await assertSucceeds(setDoc(doc(as(ACTORS.담당자), 'accounts/new-acc'), {
+      clientId: MY_CLIENT, label: '생활비2', initialBalance: 0,
+    }));
+  });
+
+  it('accounts: 담당자는 담당 밖 입주자의 계좌를 만들 수 없다', async () => {
+    await assertFails(setDoc(doc(as(ACTORS.담당자), 'accounts/nope-acc'), {
+      clientId: OTHER_CLIENT, label: '안됨', initialBalance: 0,
+    }));
+  });
+
+  it('accounts: 담당자는 담당 입주자의 계좌를 고칠 수 있다', async () => {
+    await assertSucceeds(updateDoc(doc(as(ACTORS.담당자), 'accounts/a1'), { label: '생활비(정정)' }));
+  });
+
+  it('accounts: 담당자는 담당 밖 계좌를 고칠 수 없다', async () => {
+    await assertFails(updateDoc(doc(as(ACTORS.담당자), 'accounts/a9'), { label: '안됨' }));
+  });
+
+  it('accounts: 담당자도 계좌를 남의 입주자에게 옮길 수 없다', async () => {
+    // clientId 는 불변이다 — 바꾸면 거래와 잔액이 통째로 따라간다.
+    await assertFails(updateDoc(doc(as(ACTORS.담당자), 'accounts/a1'), { clientId: OTHER_CLIENT }));
+  });
+
+  it('accounts: 입력자는 계좌를 만들 수 없다', async () => {
+    await assertFails(setDoc(doc(as(ACTORS.입력자), 'accounts/nope-acc2'), {
       clientId: MY_CLIENT, label: '안됨', initialBalance: 0,
     }));
   });

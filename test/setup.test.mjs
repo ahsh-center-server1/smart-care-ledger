@@ -52,14 +52,16 @@ test('계좌 단계는 입주자 단계에 막혀 있다', () => {
   assert.equal(steps.find(s => s.key === 'accounts').blockedBy, 'clients');
 });
 
-test('담당자는 어느 개설 단계도 진행할 수 없다', () => {
+test('담당자는 시설을 열 수 없다 — 계좌만 담당 범위에서 다룬다', () => {
   const { steps } = stateAs('담당자');
   // 기본 분류는 clientId 가 없는 **공통 분류**라 settings.category.common 이
   // 필요하다. 담당자가 가진 settings.category(입주자 전용)로는 못 만든다 —
   // 예전에는 여기서 settings.category 를 보고 버튼을 띄운 뒤 규칙이 거부했다.
   assert.equal(steps.find(s => s.key === 'categories').can, false);
   assert.equal(steps.find(s => s.key === 'clients').can, false);
-  assert.equal(steps.find(s => s.key === 'accounts').can, false);
+  // 계좌는 열려 있다. 다만 **입주자가 있어야** 만들 수 있으므로 부팅을 혼자
+  // 끝내지는 못한다 — 앞 두 단계가 막혀 있는 한 이 단계도 진행되지 않는다.
+  assert.equal(steps.find(s => s.key === 'accounts').can, true);
 });
 
 // ─────────────────────────────────────────────

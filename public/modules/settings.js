@@ -222,7 +222,9 @@ export async function loadSettings(){
   const expCats=[...new Set(S.categories.filter(c=>c.keyword===''&&c.type==='지출'&&(!c.clientId||c.clientId===settingsClientId)).map(c=>c.category))];
   const incCats=[...new Set(S.categories.filter(c=>c.keyword===''&&c.type==='수입'&&(!c.clientId||c.clientId===settingsClientId)).map(c=>c.category))];
   const rules=S.categories.filter(c=>c.keyword&&c.keyword!==''&&(!c.clientId||c.clientId===settingsClientId));
-  S.settings={expCats,incCats,rules,settingsClientId};
+  S.settings={...S.settings,expCats,incCats,rules,settingsClientId};
+  // 입주자 목록이 늦게 도착해도 대상자 선택이 따라가게 한다.
+  renderCategoryTarget();
   renderCatTags('지출'); renderCatTags('수입'); renderRuleTags(); updateRuleCatSel();
   const fixedClientSel=document.getElementById('fixed-client-sel');
   if(fixedClientSel){
@@ -252,12 +254,23 @@ export async function loadSettings(){
 // ─────────────────────────────────────────────
 // 카테고리 관리
 // ─────────────────────────────────────────────
+/**
+ * 「카테고리 관리 대상」 선택.
+ *
+ * 두 가지를 지킨다.
+ *   · 다시 그려도 **고르던 대상자를 잃지 않는다.** 예전에는 innerHTML 로
+ *     select 를 통째로 새로 만들면서 선택값을 복원하지 않아, 다시 그릴 때마다
+ *     「공통」으로 돌아갔다 — 고르는 것이 안 먹는 것처럼 보였다.
+ *     (바로 아래 고정항목 선택은 처음부터 prevFixed 로 복원하고 있었다.)
+ *   · 입주자 목록이 **나중에 도착해도** 따라간다. loadSettings 가 이 함수를
+ *     부르므로, 데이터가 늦게 오는 경우에도 목록이 비어 있는 채로 굳지 않는다.
+ */
 export function renderCategoryTarget(){
   const el=document.getElementById('category-target-content');
   if(!el)return;
   const isAdmin=can('settings.category.common');
   const cSel=document.getElementById('settings-client-sel');
-  const clientId=cSel?.value||'';
+  const clientId=cSel?.value||S.settings?.settingsClientId||'';
   const isCommon=clientId==='';
   let html=`<div class="card" style="padding:20px;">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
@@ -276,7 +289,10 @@ export function renderCategoryTarget(){
   html+=`</div>`;
   el.innerHTML=html;
   const newSel=document.getElementById('settings-client-sel');
-  if(newSel&&!newSel.dataset.bound){
+  if(!newSel)return;
+  // 고르던 대상자를 되돌려 놓는다. 담당에서 빠진 입주자면 공통으로 떨어진다.
+  if(clientId&&S.clients.some(c=>c.id===clientId))newSel.value=clientId;
+  if(!newSel.dataset.bound){
     newSel.dataset.bound='1';
     newSel.addEventListener('change',loadSettings);
   }

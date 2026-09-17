@@ -124,15 +124,39 @@ export function hasLoadedIdentity() {
 }
 
 let permissionLoadSeq = 0;
-export async function initPermissions() {
-  const seq = ++permissionLoadSeq;
-  const uid = String(S.user?.userId || '');
+/** 권한 상태를 fail-closed 로 비운다. 화면의 can() 은 전부 false 가 된다. */
+function clearAuthzState() {
   S.permOverride = {};
   S.authz = null;
-  S.authzStatus = 'loading';
   S.caps = null;
   S.accessibleClientIds = [];
   S.leaderClientIds = [];
+}
+
+export async function initPermissions() {
+  const seq = ++permissionLoadSeq;
+  const uid = String(S.user?.userId || '');
+
+  /**
+   * **이미 서 있는 권한은 비우지 않는다.**
+   *
+   * 예전에는 무조건 맨 앞에서 caps 를 null 로 만들었다. 새로 세울 때는 맞는
+   * 선택이지만(권한을 모르는 동안 버튼을 보이면 안 된다), 이미 서 있는 것을
+   * 새로 고치는 경우에는 그 사이 can() 이 전부 false 가 된다.
+   *
+   * 로그인 때 그 순간이 하필 화면 그리는 중에 떨어졌다 —
+   * signInWithCustomToken 이 onAuthStateChanged 를 깨우고, 그 관찰자가
+   * 세션 복원으로 initPermissions 를 한 번 더 부르는데, 그 비우기가
+   * _enterApp 한가운데 들어와 **빈 화면**이 됐다. 새로고침하면 관찰자만
+   * 도니까 정상으로 보여서 원인이 가려졌다.
+   *
+   * 성공하면 통째로 갈아 끼우고, 실패하면 그때 비운다 — 중간 상태가 없다.
+   */
+  const refreshing = uid && S.authzStatus === 'ready' && S.authz?.uid === uid;
+  if (!refreshing) {
+    clearAuthzState();
+    S.authzStatus = 'loading';
+  }
   try {
     if (!uid) throw new Error('로그인 정보가 없습니다.');
     const { getDoc, doc } = fb();
@@ -155,6 +179,9 @@ export async function initPermissions() {
     S.authzStatus = 'ready';
   } catch (err) {
     if (seq !== permissionLoadSeq || S.user?.userId !== uid) return;
+    // 실패는 여기서 비운다 — 새로 고치다 실패했는데 옛 권한이 남으면
+    // 강등·퇴사가 반영되지 않는다.
+    clearAuthzState();
     S.authzStatus = 'error';
     console.warn('권한 정보 로드 실패 — 접근을 차단합니다:', err);
     throw err;

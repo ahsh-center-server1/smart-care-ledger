@@ -10,6 +10,12 @@ const grants = {
     'receipt.attachAny', 'receipt.replace', 'receipt.print', 'report.own',
     'report.draft', 'report.submit', 'report.recall', 'settings.category',
     'settings.fixed', 'settings.budget', 'audit.view',
+    // 담당 입주자의 계좌를 직접 만들고 고친다. 계좌 개설·정정은 장부를 쓰는
+    // 사람의 일상 업무이고, 팀장을 거치면 입력이 멈춘다.
+    // **범위는 권한이 아니라 규칙이 잡는다** — accounts 규칙의 seesClient 가
+    // 담당 배정 밖 입주자의 계좌를 막으므로, 이 키는 자동으로 담당 범위다.
+    // 계좌는 물리 삭제가 아니라 비활성으로 다루므로 거래가 끊기지 않는다.
+    'settings.account',
     // 삭제는 **제출 전에만** 가능하다. 권한이 아니라 상태가 막는다 —
     // config/lockedMonths.submittedMonths 색인을 규칙이 함께 본다.
     // 실제 삭제 수요(엑셀 중복 업로드·입력 오타)는 전부 제출 전에 드러나고,

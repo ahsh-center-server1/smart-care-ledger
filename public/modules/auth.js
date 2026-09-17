@@ -20,6 +20,18 @@ import { fnErrorMessage } from '../services/fn-errors.js';
 // ─────────────────────────────────────────────
 // 로그인 / 로그아웃
 // ─────────────────────────────────────────────
+/**
+ * 명시적 로그인이 세션을 세우는 동안 참.
+ *
+ * signInWithCustomToken 은 onAuthStateChanged 를 깨운다. 그 관찰자는 **세션
+ * 복원**용이라 같은 일(사용자 문서 읽기 + 권한 로드)을 한 번 더 하는데,
+ * 그때 화면은 이미 _enterApp 으로 그려지는 중이다. 겹치면 읽기만 낭비되는
+ * 것이 아니라 그리는 도중 상태가 흔들린다.
+ *
+ * 로그인이 끝난 뒤의 관찰자 호출(토큰 갱신 등)은 그대로 복원 경로를 탄다.
+ */
+let loginInProgress = false;
+
 export async function handleLogin() {
   const id    = (document.getElementById('login-id').value||'').trim();
   const pw    = (document.getElementById('login-pw').value||'').trim();
@@ -28,6 +40,7 @@ export async function handleLogin() {
   if (!id||!pw) { errEl.textContent='아이디와 비밀번호를 입력하세요.'; errEl.style.display='block'; return; }
   const btn=document.getElementById('login-btn');
   btn.disabled=true; btn.textContent='접속 중...';
+  loginInProgress = true;
   try {
     // 비밀번호 검증은 서버(Cloud Functions)에서 한다.
     // 예전에는 users 문서의 평문 비밀번호를 브라우저가 직접 비교했다.
@@ -51,6 +64,8 @@ export async function handleLogin() {
     errEl.textContent = fnErrorMessage(e, '로그인 실패. 다시 시도하세요.', fnEndpoint('login'));
     errEl.style.display='block';
     btn.disabled=false; btn.textContent='시스템 접속';
+  } finally {
+    loginInProgress = false;
   }
 }
 
@@ -206,6 +221,8 @@ export function watchAuthState(onReady) {
       if (!handled) { handled = true; onReady(false); }
       return;
     }
+    // handleLogin 이 이미 같은 세션을 세우고 있으면 관여하지 않는다.
+    if (loginInProgress) return;
     try {
       // 토큰 클레임이 아니라 Firestore를 다시 읽는다 —
       // 퇴사 처리(active:false)나 역할 변경이 즉시 반영되도록.

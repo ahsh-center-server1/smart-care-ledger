@@ -58,18 +58,18 @@ test('팀장과 센터장은 검토 권한만 받고 입력 권한을 상속하�
   assert.equal(can('report.approve.team'), false);
 });
 
-test('시설 개설·운영 권한은 검토 역할에 있고 그 아래에는 없다', () => {
-  // settings.client · settings.account · settings.category.common 은 입력 권한이
-  // 아니라 **시설을 열고 유지하는 관리 권한**이다. 한때 아무에게도 없었고,
-  // 그래서 빈 DB 에 첫 관리자가 들어가면 분류·입주자·계좌를 하나도 만들 수 없어
-  // 시스템이 기동되지 않았다(부팅 회귀 테스트는 test/setup.test.mjs).
-  const OPS = ['settings.client', 'settings.account', 'settings.category.common'];
+test('시설 개설 권한은 검토 역할에 있고 그 아래에는 없다', () => {
+  // settings.client · settings.category.common 은 입력 권한이 아니라 **시설을
+  // 열고 유지하는 관리 권한**이다. 한때 아무에게도 없었고, 그래서 빈 DB 에 첫
+  // 관리자가 들어가면 분류·입주자를 하나도 만들 수 없어 시스템이 기동되지
+  // 않았다(부팅 회귀 테스트는 test/setup.test.mjs).
+  const OPS = ['settings.client', 'settings.category.common'];
   for (const role of ['팀장', '센터장']) {
     as(role);
     for (const key of OPS) assert.equal(can(key), true, `${role}에게 ${key}가 닫혔습니다`);
   }
   // 담당자 이하로는 내려가지 않는다. 공통 분류는 전 입주자에게 영향을 주고,
-  // 계좌의 기초잔액은 그 사람 장부 전체의 출발점이다.
+  // 입주자 등록은 담당 배정을 함께 정하는 일이다.
   for (const role of ['담당자', '입력자']) {
     as(role);
     for (const key of OPS) assert.equal(can(key), false, `${role}이 ${key}를 얻었습니다`);
@@ -77,6 +77,24 @@ test('시설 개설·운영 권한은 검토 역할에 있고 그 아래에는 �
   // 관리자 자격만으로는 열리지 않는다 — 기술 권한과 업무 권한은 직교한다.
   as('', true);
   for (const key of OPS) assert.equal(can(key), false, `관리자 자격이 ${key}를 열었습니다`);
+});
+
+test('계좌 관리는 담당자부터 — 범위는 규칙이 잡는다', () => {
+  // 계좌 개설·정정은 장부를 쓰는 사람의 일상 업무다. 팀장을 거치게 하면
+  // 통장 하나 늘 때마다 입력이 멈춘다.
+  //
+  // **이 키에는 범위가 들어 있지 않다.** accounts 규칙의 seesClient 가 담당
+  // 배정 밖 입주자의 계좌를 막으므로, 담당자에게 주면 자동으로 담당 범위다.
+  // 그 대조는 test/rules/firestore-rules.test.mjs 가 에뮬레이터에서 본다.
+  for (const role of ['담당자', '팀장', '센터장']) {
+    as(role);
+    assert.equal(can('settings.account'), true, `${role}에게 계좌 관리가 닫혔습니다`);
+  }
+  // 입력자는 수기 입력만 한다 — 계좌를 만들 일이 없다.
+  as('입력자');
+  assert.equal(can('settings.account'), false);
+  as('', true);
+  assert.equal(can('settings.account'), false, '관리자 자격이 업무 권한을 열었습니다');
 });
 
 test('통제 우회 권한은 여전히 아무에게도 없다', () => {
