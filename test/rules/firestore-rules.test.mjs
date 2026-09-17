@@ -972,13 +972,18 @@ describe('auditLogs — 추가 전용', () => {
     });
   }
 
-  it('담당자는 업무 감사 기록을 조회할 수 있다', async () => {
-    await assertSucceeds(getDoc(doc(as(ACTORS.담당자), 'auditLogs/existing')));
+  // 변경 이력은 **감독** 권한이다. 장부를 쓰는 사람(담당자·팀장)이 서로의
+  // 수정 이력을 들여다볼 이유가 없고, 설정 화면이 담당자에게 관리자 영역처럼
+  // 보이는 원인이기도 했다. 감독하는 자리에만 둔다.
+  it('장부를 쓰는 사람은 감사 기록을 조회할 수 없다', async () => {
+    await assertFails(getDoc(doc(as(ACTORS.담당자), 'auditLogs/existing')));
+    await assertFails(getDoc(doc(as(ACTORS.팀장), 'auditLogs/existing')));
   });
 
-  it('팀장 이상은 조회할 수 있다', async () => {
-    await assertSucceeds(getDoc(doc(as(ACTORS.팀장), 'auditLogs/existing')));
+  it('센터장과 관리자는 조회할 수 있다', async () => {
+    await assertSucceeds(getDoc(doc(as(ACTORS.센터장), 'auditLogs/existing')));
     await assertSucceeds(getDocs(collection(as(ACTORS.센터장), 'auditLogs')));
+    await assertSucceeds(getDoc(doc(as(ACTORS.관리자), 'auditLogs/existing')));
   });
 });
 

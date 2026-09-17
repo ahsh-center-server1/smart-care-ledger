@@ -22,7 +22,10 @@ test('system admin is technical, not an inherited business role', () => {
   const admin = user(null, { isAdmin: true });
   assert.equal(can(admin, 'settings.staff'), true);
   assert.equal(can(admin, 'system.audit'), true);
-  for (const key of ['trx.view.all', 'trx.create', 'report.approve.center', 'audit.view']) {
+  // 변경 이력은 **감독** 권한이다 — 장부를 쓰는 사람이 서로의 수정 이력을
+  // 들여다볼 이유가 없다. 감독하는 자리(센터장·관리자)에만 둔다.
+  assert.equal(can(admin, 'audit.view'), true);
+  for (const key of ['trx.view.all', 'trx.create', 'report.approve.center']) {
     assert.equal(can(admin, key), false);
     assert.equal(scope(admin, key), 'none');
   }
