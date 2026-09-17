@@ -111,8 +111,12 @@ before(async () => {
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     const mine = [MY_CLIENT];
-    for (const [role, a] of Object.entries(ACTORS)) {
-      await setDoc(doc(db, 'authz/' + a.uid), authzDoc(a.uid, role, a.isAdmin, mine));
+    // ⚠️ a.role 이다. 예전에는 Object.entries 의 **키**를 넣어서 관리자 문서에
+    // role:'관리자' 가 들어갔다 — 유효한 역할이 아니라 validPrincipal 이 거짓이
+    // 되고, cap() 이 전부 false 였다. 관리자 단언은 대부분 assertFails 라
+    // **엉뚱한 이유로** 통과하고 있었다(권한이 없어서가 아니라 주체가 깨져서).
+    for (const a of Object.values(ACTORS)) {
+      await setDoc(doc(db, 'authz/' + a.uid), authzDoc(a.uid, a.role, a.isAdmin, mine));
     }
     // 퇴사자 — authz 는 있지만 enabled:false
     await setDoc(doc(db, 'authz/' + NO_ROLE_CLAIM.uid), {
@@ -968,13 +972,18 @@ describe('auditLogs — 추가 전용', () => {
     });
   }
 
-  it('담당자는 업무 감사 기록을 조회할 수 있다', async () => {
-    await assertSucceeds(getDoc(doc(as(ACTORS.담당자), 'auditLogs/existing')));
+  // 변경 이력은 **감독** 권한이다. 장부를 쓰는 사람(담당자·팀장)이 서로의
+  // 수정 이력을 들여다볼 이유가 없고, 설정 화면이 담당자에게 관리자 영역처럼
+  // 보이는 원인이기도 했다. 감독하는 자리에만 둔다.
+  it('장부를 쓰는 사람은 감사 기록을 조회할 수 없다', async () => {
+    await assertFails(getDoc(doc(as(ACTORS.담당자), 'auditLogs/existing')));
+    await assertFails(getDoc(doc(as(ACTORS.팀장), 'auditLogs/existing')));
   });
 
-  it('팀장 이상은 조회할 수 있다', async () => {
-    await assertSucceeds(getDoc(doc(as(ACTORS.팀장), 'auditLogs/existing')));
+  it('센터장과 관리자는 조회할 수 있다', async () => {
+    await assertSucceeds(getDoc(doc(as(ACTORS.센터장), 'auditLogs/existing')));
     await assertSucceeds(getDocs(collection(as(ACTORS.센터장), 'auditLogs')));
+    await assertSucceeds(getDoc(doc(as(ACTORS.관리자), 'auditLogs/existing')));
   });
 });
 
