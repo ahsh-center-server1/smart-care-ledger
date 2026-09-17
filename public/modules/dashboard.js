@@ -44,8 +44,13 @@ export function renderDashboard() {
     const statsText=stats.inc===0&&stats.exp===0
       ?(stats.partial?'당월 본인 입력분 없음':'당월 거래 없음')
       :`${statsLabel} 수입 <span style="color:#10b981;">+${stats.inc.toLocaleString()}</span> / 지출 <span style="color:#ef4444;">-${stats.exp.toLocaleString()}</span>원`;
-    const unpaidCount=Number(S.mandatoryUnpaid?.[client.id]||0);
-    const unpaidHTML=unpaidCount>0?`<div style="font-size:11px;color:#dc2626;font-weight:700;margin-top:3px;">⚠️ 필수항목 ${unpaidCount}건 미납</div>`:'';
+    // 고정항목은 필수와 그 밖의 것을 나눠 보여 준다 — 할 일의 무게가 다르다.
+    // 한 숫자로 합치면 급한 것(필수 미납)이 안 급한 것에 묻힌다.
+    const fixedGap=S.fixedGap?.[client.id]||{mandatory:0,optional:0};
+    const parts=[];
+    if(fixedGap.mandatory>0)parts.push(`<div style="font-size:11px;color:#dc2626;font-weight:700;margin-top:3px;">⚠️ 필수항목 ${fixedGap.mandatory}건 미납</div>`);
+    if(fixedGap.optional>0)parts.push(`<div style="font-size:11px;color:#b45309;font-weight:700;margin-top:3px;">🔁 고정항목 ${fixedGap.optional}건 미입력</div>`);
+    const unpaidHTML=parts.join('');
     // 미분류는 월말에 몰아서 정리하는 일이라, 쌓이는 것을 미리 보여 준다.
     // **당월 기준**임을 밝힌다 — 요약 캐시가 당월만 담으므로 과거 건은 안 잡힌다.
     const unclassified=Number(stats.unclassified||0);

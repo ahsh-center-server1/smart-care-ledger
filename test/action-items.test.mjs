@@ -26,7 +26,7 @@ function healthy(over = {}) {
       { id: 'a1', clientId: 'c1', active: true, initialBalanceDate: '2026-01-01' },
     ],
     fixedItems: [{ id: 'f1', clientId: 'c1', accountId: 'a1', isMandatory: true }],
-    mandatoryUnpaid: { c1: 0 },
+    fixedGap: { c1: { mandatory: 0, optional: 0 } },
     reportList: null,
     can: () => true,
     ...over,
@@ -151,7 +151,7 @@ test('당월 필수 고정항목 미납을 합산한다', () => {
       { id: 'a1', clientId: 'c1', active: true, initialBalanceDate: '2026-01-01' },
       { id: 'a2', clientId: 'c2', active: true, initialBalanceDate: '2026-01-01' },
     ],
-    mandatoryUnpaid: { c1: 2, c2: 3, cGone: 99 },   // 퇴소자 건은 제외
+    fixedGap: { c1: { mandatory: 2 }, c2: { mandatory: 3 }, cGone: { mandatory: 99 } },   // 퇴소자 건은 제외
   }));
   assert.equal(items.find(i => i.id === 'unpaidFixed').count, 5);
 });
@@ -190,7 +190,7 @@ test('권한이 없는 항목은 내지 않는다 — 갈 수 없는 곳으로 �
     users: [{ id: 'b', approved: false }],
     clients: [{ id: 'c1', active: true, userIds: '', teamLeader: '' }],
     accounts: [{ id: 'a1', clientId: 'c1', active: true, initialBalanceDate: '' }],
-    mandatoryUnpaid: { c1: 3 },
+    fixedGap: { c1: { mandatory: 3 } },
     can: (key) => key === 'settings.fixed',    // 고정항목 권한만 있다
   }));
   assert.deepEqual(ids(items).sort(), ['unpaidFixed']);

@@ -50,5 +50,7 @@ export const S = {
   // 이것으로 판정하므로 조회도 같은 목록으로 좁힌다.
   accessibleClientIds: [],
   monthlyStats: {},        // 당월 입주자별 수입/지출 집계 { clientId: {inc, exp} }
-  mandatoryUnpaid: {},     // 당월 필수 고정항목 미납 카운트 { clientId: number }
+  // 당월 고정항목 미입력 { clientId: {mandatory, optional, total} }.
+  // 필수와 그 밖의 것을 나눠 담는다 — 한 숫자로 합치면 급한 것이 묻힌다.
+  fixedGap: {},
 };

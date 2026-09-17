@@ -166,8 +166,29 @@ export function fromSummaryCacheDoc(cache) {
  * @param {string[]} paidFixedIds 당월에 입력된 fixedItemId 목록
  */
 export function countUnpaidMandatory(fixedItems, paidFixedIds) {
+  return countUnenteredFixed(fixedItems, paidFixedIds).mandatory;
+}
+
+/**
+ * 이번 달에 들어오지 않은 고정항목.
+ *
+ * 필수(`isMandatory`)와 그 밖의 것을 나눠 센다 — 할 일의 무게가 다르다.
+ * 필수는 빠지면 안 되는 것이고, 나머지는 이번 달만 건너뛸 수도 있다.
+ * 한 숫자로 합치면 급한 것이 안 급한 것에 묻힌다.
+ *
+ * 판정 근거는 거래의 `fixedItemId` 다 — 월별 중복 방지와 제출 전 점검표가
+ * 쓰는 것과 같은 표식이라 세 화면이 갈라지지 않는다.
+ *
+ * @param {Array} fixedItems  해당 입주자의 고정항목
+ * @param {string[]} paidFixedIds 당월에 입력된 fixedItemId 목록
+ * @returns {{mandatory:number, optional:number, total:number}}
+ */
+export function countUnenteredFixed(fixedItems, paidFixedIds) {
   const paid = new Set(paidFixedIds || []);
-  return (fixedItems || [])
-    .filter(f => f && f.isMandatory && !paid.has(f.id))
-    .length;
+  let mandatory = 0, optional = 0;
+  for (const f of (fixedItems || [])) {
+    if (!f || !f.id || paid.has(f.id)) continue;
+    if (f.isMandatory) mandatory += 1; else optional += 1;
+  }
+  return { mandatory, optional, total: mandatory + optional };
 }

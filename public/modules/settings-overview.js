@@ -19,7 +19,7 @@ export function currentActionItems() {
     clients: S.allClients,
     accounts: S.allAccounts,
     fixedItems: S.allFixedItems,
-    mandatoryUnpaid: S.mandatoryUnpaid,
+    fixedGap: S.fixedGap,
     reportList: S.reportList,
     can,
   });

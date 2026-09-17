@@ -359,3 +359,39 @@ test('캐시에 미분류가 없으면 0으로 읽는다 — 낡은 캐시가 �
   // 판정되지만, 그 사이 화면이 undefined 를 그리면 안 된다.
   assert.equal(fromSummaryCacheDoc({ inc: 1, exp: 2, count: 3 }).unclassified, 0);
 });
+
+// ─────────────────────────────────────────────────────────
+// 고정항목 미입력 — 필수와 그 밖의 것을 나눈다
+//
+// 할 일의 무게가 다르다. 필수는 빠지면 안 되는 것이고, 나머지는 이번 달만
+// 건너뛸 수도 있다. 한 숫자로 합치면 급한 것이 안 급한 것에 묻힌다.
+// ─────────────────────────────────────────────────────────
+
+test('필수와 그 밖의 고정항목을 나눠 센다', async () => {
+  const { countUnenteredFixed } = await import('../public/domain/monthly-summary.js');
+  const items = [
+    { id: 'f1', isMandatory: true },
+    { id: 'f2', isMandatory: true },
+    { id: 'f3' },
+    { id: 'f4' },
+  ];
+  const gap = countUnenteredFixed(items, ['f2']);
+  assert.deepEqual(gap, { mandatory: 1, optional: 2, total: 3 });
+});
+
+test('id 가 없는 고정항목은 세지 않는다 — 어느 것이 들어왔는지 대조할 수 없다', async () => {
+  const { countUnenteredFixed } = await import('../public/domain/monthly-summary.js');
+  assert.deepEqual(
+    countUnenteredFixed([{ isMandatory: true }, null, undefined], []),
+    { mandatory: 0, optional: 0, total: 0 },
+  );
+});
+
+test('countUnpaidMandatory 는 새 계산의 필수 몫이다', async () => {
+  // 옛 이름을 쓰는 곳이 남아 있어도 같은 답을 준다 — 두 계산이 갈라지지 않게
+  // 하나를 다른 하나로 구현했다.
+  const { countUnenteredFixed } = await import('../public/domain/monthly-summary.js');
+  const items = [{ id: 'f1', isMandatory: true }, { id: 'f2' }];
+  assert.equal(countUnpaidMandatory(items, []), countUnenteredFixed(items, []).mandatory);
+  assert.equal(countUnpaidMandatory(items, []), 1);
+});

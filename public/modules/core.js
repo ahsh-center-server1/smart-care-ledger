@@ -15,7 +15,7 @@ import { toast, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
 import { fetchStaffDirectory, fetchCategoryDirectory } from '../services/directory.js';
-import { countUnpaidMandatory } from '../domain/monthly-summary.js';
+import { countUnenteredFixed } from '../domain/monthly-summary.js';
 import { fetchInScope } from '../services/scoped-fetch.js';
 import * as Dash     from './dashboard.js';
 import * as Trx      from './transactions.js';
@@ -149,14 +149,14 @@ export async function fetchBaseData(opts) {
         const unpaid = {};
         S.clients.forEach(c => {
           const mine = S.allFixedItems.filter(f => f.clientId === c.id);
-          unpaid[c.id] = countUnpaidMandatory(mine, (summaries[c.id] || {}).paidFixedIds);
+          unpaid[c.id] = countUnenteredFixed(mine, (summaries[c.id] || {}).paidFixedIds);
         });
-        S.mandatoryUnpaid = unpaid;
-      } catch (e) { S.allFixedItems = []; S.mandatoryUnpaid = {}; }
+        S.fixedGap = unpaid;
+      } catch (e) { S.allFixedItems = []; S.fixedGap = {}; }
     } catch (e) {
       // 집계 실패가 로그인을 막지는 않는다 — 카드에 0이 보이고 나머지는 동작한다.
       console.warn('[core] 당월 집계 실패:', e);
-      S.monthlyStats = {}; S.mandatoryUnpaid = {};
+      S.monthlyStats = {}; S.fixedGap = {};
     }
   }
 

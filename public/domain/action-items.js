@@ -13,7 +13,7 @@
 //
 // 읽기 비용
 //   **추가 읽기가 없다.** 전부 이미 메모리에 있는 값(S.users·allClients·
-//   allAccounts·allFixedItems·mandatoryUnpaid)으로만 계산한다.
+//   allAccounts·allFixedItems·fixedGap)으로만 계산한다.
 //   진단 화면을 만들려고 컬렉션을 새로 조회하면 그 자체가 할당량을 먹는다.
 
 'use strict';
@@ -26,7 +26,7 @@
  * @param {Array}  data.clients         입주자 전체(비활성 포함)
  * @param {Array}  data.accounts        계좌 전체(비활성 포함)
  * @param {Array}  data.fixedItems      고정항목 전체
- * @param {Object} data.mandatoryUnpaid { clientId: 미납건수 }
+ * @param {Object} data.fixedGap { clientId: {mandatory, optional, total} }
  * @param {Array|null} data.reportList  보고서 목록 (아직 안 읽었으면 null)
  * @param {Function} data.can           권한 판정 (권한 없는 항목은 내지 않는다)
  * @returns {Array<{id,label,count,tab,severity}>} severity: 'warn' | 'info'
@@ -34,7 +34,7 @@
 export function computeActionItems(data) {
   const {
     users = [], clients = [], accounts = [], fixedItems = [],
-    mandatoryUnpaid = {}, reportList = null, can = () => true,
+    fixedGap = {}, reportList = null, can = () => true,
   } = data || {};
 
   const items = [];
@@ -89,9 +89,11 @@ export function computeActionItems(data) {
 
   // ── 당월 필수 고정항목 미납 ──
   if (can('settings.fixed')) {
-    const unpaid = Object.entries(mandatoryUnpaid)
+    // 필수만 센다. 그 밖의 고정항목은 이번 달만 건너뛸 수도 있어 조치 목록에
+    // 올리면 목록이 영영 0이 되지 않는다(대시보드 카드에는 따로 보인다).
+    const unpaid = Object.entries(fixedGap)
       .filter(([cid]) => activeClientIds.has(cid))
-      .reduce((sum, [, n]) => sum + Number(n || 0), 0);
+      .reduce((sum, [, gap]) => sum + Number((gap || {}).mandatory || 0), 0);
     push('unpaidFixed', '이번 달 아직 입력되지 않은 필수 고정항목', unpaid, 'fixed');
 
     // ── 계좌가 사라진 고정항목 ── 「고정항목 입력」이 그 건만 조용히 실패한다.

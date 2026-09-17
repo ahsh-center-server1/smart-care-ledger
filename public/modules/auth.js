@@ -155,7 +155,7 @@ function clearSessionState() {
   S.reportList=null; S.rptTrxCache=null; S.rptListAllYears=false;
   S.permOverride=null; S.caps=null; S.accessibleClientIds=[];
   S.authz=null; S.authzStatus='idle'; S.leaderClientIds=[]; S.settingsGuideOnly=false;
-  S.monthlyStats={}; S.mandatoryUnpaid={};
+  S.monthlyStats={}; S.fixedGap={};
   S.fixedItems=[]; S.allFixedItems=[];
   S.excelTemp=[]; S.excelRawRows=[]; S.excelFile=null; S.excelMonth='';
   S.settings={ expCats:[], incCats:[], rules:[] };
