@@ -1163,6 +1163,32 @@
                   <button id="btn-rebuild-derived" class="ui-btn ui-btn--primary">🔁 다시 만들기</button>
                   <div id="rebuild-derived-result" style="margin-top:12px;font-size:13px;"></div>
                 </div>
+
+                <!-- 잔액 색인 다시 만들기 -->
+                <div class="ui-card" style="padding:20px;">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                    <span style="font-size:20px;">💰</span>
+                    <h3 style="margin:0;font-size:15px;font-weight:800;">잔액 색인 다시 만들기</h3>
+                    <span class="ui-badge" style="margin-left:auto;">관리자 전용</span>
+                  </div>
+                  <p style="margin:0 0 8px 0;color:var(--muted-foreground);font-size:13px;line-height:1.6;">
+                    계좌마다 <strong>현재 잔액</strong>과 <strong>월말 잔액 색인</strong>을
+                    전체 거래에서 다시 계산합니다. <strong>배포 직후에 한 번 눌러 주세요.</strong>
+                  </p>
+                  <p style="margin:0 0 8px 0;color:var(--muted-foreground);font-size:13px;line-height:1.6;">
+                    안 눌러도 <strong>금액은 맞습니다.</strong> 다만 색인이 빈 계좌는 보고서가
+                    그 입주자의 거래를 처음부터 다 읽으므로, 읽기 비용만 예전으로 돌아갑니다
+                    — 화면으로는 티가 나지 않습니다.
+                  </p>
+                  <p style="margin:0 0 15px 0;color:#b45309;font-size:13px;line-height:1.6;">
+                    ⚠️ <strong>계좌마다 그 계좌의 거래를 전부 읽습니다.</strong> 1년치가 쌓여
+                    있으면 계좌당 수백 건이라, 이 버튼 한 번이 하루치 읽기 할당량에 가까울 수
+                    있습니다. 업무 시간이 아닐 때 한 번만 누르세요. 이미 끝난 계좌는 다시
+                    읽지 않으므로 중간에 멈춰도 이어서 누르면 됩니다.
+                  </p>
+                  <button id="btn-rebuild-balances" class="ui-btn ui-btn--primary">💰 잔액 색인 다시 만들기</button>
+                  <div id="rebuild-balances-result" style="margin-top:12px;font-size:13px;"></div>
+                </div>
               </div>
 
               <!-- 권한 탭 -->

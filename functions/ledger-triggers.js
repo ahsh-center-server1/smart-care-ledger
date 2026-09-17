@@ -72,8 +72,13 @@ module.exports = function ledgerTriggers(ctx) {
   // 읽는다. 열 때마다, 그리고 해가 갈수록 더. 색인은 accounts 문서에 실려
   // 로그인할 때 이미 오므로 보고서는 그 달 거래만 읽으면 된다.
   const monthEndBalances = buildMonthEndBalances(account, transactions);
-  const same = Number(account.currentBalance || 0) === balance
-    && JSON.stringify(account.monthEndBalances || {}) === JSON.stringify(monthEndBalances);
+  // 색인이 **아예 없던** 계좌는 값이 같아도 한 번은 써야 한다. 거래가 하나도
+  // 없는 계좌는 색인이 {} 라, 안 쓰면 필드가 영원히 없는 채로 남고 백필이
+  // "아직 안 된 계좌"로 계속 집어 든다(무한 반복).
+  const hadIndex = account.monthEndBalances !== undefined;
+  const same = hadIndex
+    && Number(account.currentBalance || 0) === balance
+    && JSON.stringify(account.monthEndBalances) === JSON.stringify(monthEndBalances);
   if (same) return;                                   // 변화 없으면 쓰지 않는다
   await accRef.update({ currentBalance: balance, monthEndBalances });
   }
@@ -210,8 +215,61 @@ module.exports = function ledgerTriggers(ctx) {
   return { count: Object.keys(months).length, submitted: Object.keys(submittedMonths).length };
   });
 
+  /**
+   * rebuildBalances — 잔액과 월말 색인을 계좌 전체에 대해 다시 만든다.
+   *
+   * 왜 버튼이 필요한가
+   *   월말 색인(accounts.monthEndBalances)은 syncAccountBalance 가 유지하는데,
+   *   **트리거는 배포 이후의 변경만 본다.** 배포 직후 조용한 계좌는 색인이
+   *   비어 있고, 보고서는 그 계좌 때문에 예전처럼 전체 이력을 읽는다.
+   *   값은 맞으므로 아무도 눈치채지 못한 채 비용만 예전으로 돌아간다.
+   *
+   *   tools/recalc-balances.mjs 로도 되지만 그것은 서비스 계정 키와 터미널이
+   *   있어야 한다. 이 시스템을 운영하는 사람은 사회복지사다 — 배포할 때마다
+   *   개발자를 불러야 한다면 결국 아무도 안 누른다.
+   *
+   * 나눠서 도는 이유
+   *   계좌 하나를 다시 계산하려면 그 계좌의 거래를 전부 읽어야 한다. 전 계좌를
+   *   한 호출에 처리하면 콜러블 제한 시간에 걸린다. 그래서 한 번에 limit 개만
+   *   하고 남은 수를 돌려준다 — 화면이 0이 될 때까지 이어서 부른다.
+   *
+   * 멱등하다
+   *   **색인이 아직 없는 계좌만** 고른다. 그래서 다시 눌러도 이미 끝난 계좌를
+   *   again 읽지 않는다(읽기가 비싼 작업이라 이 성질이 중요하다).
+   */
+  const rebuildBalances = callable('rebuildBalances', async (request) => {
+    const me = await requireCaller(request.auth);
+    if (!me.can('settings.archive') && !me.can('system.backup')) {
+      throw new HttpsError('permission-denied', '잔액 색인 재생성 권한이 없습니다.');
+    }
+    const asked = Number((request.data || {}).limit) || 20;
+    const limit = Math.min(Math.max(asked, 1), 50);
+
+    const snap = await db.collection(ACCOUNTS).get();
+    const pending = snap.docs.filter((d) => d.data().monthEndBalances === undefined);
+
+    let done = 0;
+    const failed = [];
+    for (const d of pending.slice(0, limit)) {
+      try {
+        await recalcAccount(d.id);
+        done += 1;
+      } catch (err) {
+        // 계좌 하나가 실패해도 나머지는 진행한다. 다음 호출에서 다시 집힌다.
+        console.error(`[rebuildBalances] 계좌 ${d.id} 실패:`, err);
+        failed.push(d.id);
+      }
+    }
+    return {
+      done,
+      failed: failed.length,
+      remaining: Math.max(0, pending.length - done),
+      total: snap.size,
+    };
+  });
+
   return {
     syncAccountBalance, syncAccountOnSettingsChange,
-    rebuildLockedMonths,
+    rebuildLockedMonths, rebuildBalances,
   };
 };

@@ -207,3 +207,60 @@ test('월말 색인은 서버만 쓴다 — 규칙이 막는다', () => {
   assert.match(block, /request\.resource\.data\.get\('monthEndBalances', \{\}\)[\s\S]{0,80}==[\s\S]{0,80}resource\.data\.get\('monthEndBalances', \{\}\)/,
     '색인을 수정으로 덮어쓸 수 있습니다 — 결재 문서에 지어낸 잔액이 찍힙니다');
 });
+
+// ── 배포 직후 백필 — 터미널 없이 ─────────────────────────────
+
+test('색인이 없던 계좌는 값이 같아도 한 번은 쓴다', () => {
+  // 거래가 하나도 없는 계좌는 색인이 {} 다. 「값이 같으면 안 쓴다」를 그대로
+  // 적용하면 필드가 영원히 생기지 않고, 백필이 그 계좌를 "아직 안 됨"으로
+  // 계속 집어 든다 — 화면이 무한히 돈다.
+  const src = read('functions/ledger-triggers.js');
+  const fn = src.slice(src.indexOf('async function recalcAccount'));
+  const body = fn.slice(0, fn.indexOf('\n  }'));
+  assert.match(body, /hadIndex\s*=\s*account\.monthEndBalances !== undefined/,
+    '색인이 처음 만들어지는 경우를 구분하지 않습니다');
+  assert.match(body, /const same = hadIndex/, 'hadIndex 가 판정에 쓰이지 않습니다');
+});
+
+test('백필을 터미널 없이 누를 수 있다', () => {
+  // 이 시스템을 운영하는 사람은 사회복지사다. 서비스 계정 키와 node 가 있어야
+  // 하는 스크립트만 두면, 배포할 때마다 개발자를 불러야 하고 결국 아무도 안 누른다.
+  const srv = read('functions/ledger-triggers.js');
+  assert.match(srv, /callable\('rebuildBalances'/, '백필 콜러블이 없습니다');
+  assert.match(srv, /rebuildLockedMonths, rebuildBalances/, '콜러블을 내보내지 않습니다');
+
+  const ui = read('public/modules/settings-derived.js');
+  assert.match(ui, /export async function rebuildBalanceIndex/, '화면 쪽 함수가 없습니다');
+  const app = read('public/app.js');
+  assert.match(app, /btn-rebuild-balances[^\n]*rebuildBalanceIndex/,
+    '버튼이 함수에 연결되지 않았습니다 — 눌러도 아무 일도 없습니다');
+  assert.ok(read('public/index.html').includes('id="btn-rebuild-balances"'),
+    '설정 화면에 버튼이 없습니다');
+});
+
+test('백필은 같은 권한을 요구한다 — 화면과 서버가 갈리지 않게', () => {
+  // 화면에서만 막고 서버가 열려 있으면 콘솔로 부를 수 있고, 반대면 버튼이
+  // 보이는데 서버가 거부한다. 마감 색인 재생성과 같은 기준(연도 마감·백업 운영)이다.
+  const srv = read('functions/ledger-triggers.js');
+  const at = srv.indexOf("callable('rebuildBalances'");
+  const block = srv.slice(at, at + 600);
+  assert.match(block, /settings\.archive/, '서버가 권한을 확인하지 않습니다');
+  assert.match(block, /system\.backup/, '서버 권한 기준이 마감 색인과 다릅니다');
+
+  const ui = read('public/modules/settings-derived.js');
+  const uiAt = ui.indexOf('export async function rebuildBalanceIndex');
+  const uiBlock = ui.slice(uiAt, uiAt + 400);
+  assert.match(uiBlock, /can\('settings\.archive'\)/, '화면이 권한을 확인하지 않습니다');
+  assert.match(uiBlock, /can\('system\.backup'\)/, '화면 권한 기준이 서버와 다릅니다');
+});
+
+test('끝난 계좌를 다시 읽지 않는다 — 멱등해야 눌러도 안 무섭다', () => {
+  // 계좌 하나당 그 계좌의 거래를 전부 읽는다. 이미 끝난 것을 또 읽으면
+  // 두 번째 누름이 첫 번째와 같은 값을 치른다.
+  const srv = read('functions/ledger-triggers.js');
+  const at = srv.indexOf("callable('rebuildBalances'");
+  const block = srv.slice(at, at + 1400);
+  assert.match(block, /monthEndBalances === undefined/,
+    '이미 색인이 있는 계좌를 걸러내지 않습니다');
+  assert.match(block, /remaining/, '남은 수를 돌려주지 않아 이어서 부를 수 없습니다');
+});

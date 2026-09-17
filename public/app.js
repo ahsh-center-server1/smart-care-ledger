@@ -399,6 +399,7 @@ function bindEvents(){
   document.getElementById('btn-archive')?.addEventListener('click',Settings.confirmArchive);
   document.getElementById('btn-archive-refresh')?.addEventListener('click',Settings.loadArchiveHistory);
   document.getElementById('btn-rebuild-derived')?.addEventListener('click',SettingsDerived.rebuildDerivedDocs);
+  document.getElementById('btn-rebuild-balances')?.addEventListener('click',SettingsDerived.rebuildBalanceIndex);
   document.getElementById('new-rule-type')?.addEventListener('change',Settings.updateRuleCatSel);
   ['new-exp-cat','new-inc-cat','new-rule-kw'].forEach(id=>{
     document.getElementById(id)?.addEventListener('keydown',e=>{

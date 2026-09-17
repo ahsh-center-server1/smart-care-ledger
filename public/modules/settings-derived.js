@@ -74,3 +74,67 @@ export async function rebuildDerivedDocs() {
     if (btn) { btn.disabled = false; btn.textContent = '🔁 다시 만들기'; }
   }
 }
+
+/**
+ * 잔액·월말 색인 백필 — 터미널 없이 누르는 쪽.
+ *
+ * 왜 위 버튼과 나눠 두나
+ *   위 버튼은 문서 몇 건만 읽는다. 이쪽은 **계좌마다 그 계좌의 거래를 전부**
+ *   읽는다(1년치면 계좌당 수백 건). 한 버튼에 묶어 두면 가벼운 줄 알고 눌렀다가
+ *   하루치 읽기 할당량을 쓴다. 비용이 다르면 버튼도 달라야 한다.
+ *
+ * 왜 이어서 부르나
+ *   한 호출에 전 계좌를 처리하면 콜러블 제한 시간에 걸린다. 서버가 남은 수를
+ *   돌려주므로 0이 될 때까지 이어 부른다. 이미 끝난 계좌는 다시 읽지 않는다.
+ */
+export async function rebuildBalanceIndex() {
+  if (!can('settings.archive') && !can('system.backup')) {
+    toast('잔액 색인 재생성 권한이 없습니다.', 'error', 5000); return;
+  }
+
+  const btn = document.getElementById('btn-rebuild-balances');
+  const out = document.getElementById('rebuild-balances-result');
+  const { call } = window._fbFn || {};
+  if (!call) { toast('서버에 연결할 수 없습니다.', 'error'); return; }
+
+  if (btn) { btn.disabled = true; btn.textContent = '다시 만드는 중…'; }
+  if (out) out.textContent = '';
+
+  let done = 0, failed = 0, total = 0;
+  try {
+    // 남은 계좌가 0이 될 때까지. 상한을 두는 이유: 서버가 어떤 이유로 같은
+    // 수를 계속 돌려주면 여기서 무한히 돈다.
+    for (let round = 0; round < 200; round += 1) {
+      const res = await call('rebuildBalances')({ limit: 20 });
+      const d = (res && res.data) || {};
+      done += Number(d.done || 0);
+      failed += Number(d.failed || 0);
+      total = Number(d.total || total);
+      const remaining = Number(d.remaining || 0);
+      if (out) {
+        out.innerHTML = '<div style="color:var(--muted-foreground);">'
+          + `계좌 ${escHtml(done)}/${escHtml(total)} 처리… 남은 ${escHtml(remaining)}개</div>`;
+      }
+      if (!remaining) break;
+      if (!d.done && !d.failed) break;        // 진척이 없으면 멈춘다
+    }
+
+    if (out) {
+      out.innerHTML =
+        '<div style="color:#15803d;font-weight:700;">✅ 완료</div>'
+        + '<div style="color:var(--muted-foreground);margin-top:4px;">'
+        + `계좌 ${escHtml(done)}개 다시 계산`
+        + (failed ? ` · <span style="color:#c62828;">실패 ${escHtml(failed)}개</span>` : '')
+        + '</div>';
+    }
+    toast('잔액 색인을 다시 만들었습니다.', 'success');
+    await auditLog('archive.run', { summary: { target: 'balances', done, failed } });
+  } catch (e) {
+    const msg = fnErrorMessage(e);
+    if (out) out.innerHTML = `<div style="color:#c62828;">❌ ${escHtml(msg)}</div>`;
+    toast('다시 만들기 실패: ' + msg, 'error', 5000);
+    await auditLog('archive.failed', { summary: { target: 'balances', message: msg } });
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💰 잔액 색인 다시 만들기'; }
+  }
+}
