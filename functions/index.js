@@ -22,6 +22,7 @@ const admin = require('firebase-admin');
 const { FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { randomBytes } = require('node:crypto');
 const { hashPassword, verifyPassword } = require('./password');
+const { randomInt } = require('crypto');
 const { diagnose } = require('./errors');
 
 admin.initializeApp();
@@ -150,6 +151,18 @@ exports.login = callable('login', async (request) => {
     throw new HttpsError('unauthenticated', GENERIC);
   }
 
+  // 임시 비밀번호는 유효 시간이 지나면 쓸 수 없다. 여기서 막지 않으면
+  // 한 번 발급된 값이 영영 살아 있는 두 번째 비밀번호가 된다.
+  const tempExpired = secret.mustChangePassword === true
+    && secret.tempExpiresAt && typeof secret.tempExpiresAt.toMillis === 'function'
+    && secret.tempExpiresAt.toMillis() <= Date.now();
+  if (tempExpired) {
+    throw new HttpsError(
+      'deadline-exceeded',
+      '임시 비밀번호의 유효 시간이 지났습니다. 관리자에게 다시 요청하세요.',
+    );
+  }
+
   // 승인·재직 확인 — 여기서는 구체적 사유를 알려도 안전하다(비밀번호를 이미 통과했으므로).
   if (user.approved === false) {
     throw new HttpsError('permission-denied', '관리자 승인 대기 중입니다. 담당자에게 문의하세요.');
@@ -180,6 +193,8 @@ exports.login = callable('login', async (request) => {
   return {
     token,
     user: { userId, name: user.name || userId, role, isAdmin, team: user.team || '' },
+    // 임시 비밀번호로 들어왔다. 화면이 바꾸기 전에는 앱에 들여보내지 않는다.
+    mustChangePassword: secret.mustChangePassword === true,
   };
 });
 
@@ -335,6 +350,17 @@ Object.assign(exports, require('./staff-fns')({
   randomId: () => randomBytes(16).toString('base64url'),
 }));
 
+// 비밀번호 분실 — 관리자가 임시 비밀번호를 발급한다. 다만 결재에 닿는 계정
+// (팀장·센터장·관리자)은 다른 관리자의 승인이 한 번 더 필요하다. 관리자 자격은
+// 업무 권한과 직교한다는 전제를 지키기 위해서다.
+// 콜러블만 꺼낸다(팩토리 반환값에 테스트용 순수 함수가 함께 들어 있다).
+const passwordResetFns = require('./password-reset-fns')({
+  db, callable, requireCaller, HttpsError, logger, FieldValue, Timestamp,
+  hashPassword, validUserId, randomInt,
+});
+exports.requestPasswordReset = passwordResetFns.requestPasswordReset;
+exports.approvePasswordReset = passwordResetFns.approvePasswordReset;
+
 // ─────────────────────────────────────────────────────────────
 // changePassword — 본인만 변경
 // ─────────────────────────────────────────────────────────────
@@ -373,6 +399,10 @@ exports.changePassword = callable('changePassword', async (request) => {
       ...record,
       failedCount: 0,
       lockedUntil: FieldValue.delete(),
+      // 임시 비밀번호로 들어온 경우 여기서 그 표식이 사라진다 — 바꾸기 전에는
+      // 앱을 쓸 수 없고, 바꾸고 나면 평범한 계정으로 돌아간다.
+      mustChangePassword: FieldValue.delete(),
+      tempExpiresAt: FieldValue.delete(),
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true }

@@ -198,6 +198,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ── 비밀번호 재설정 대기 요청 ──
+    //
+    // 누가 누구의 재설정을 요청했는지 담는다. 브라우저가 읽을 수 있으면
+    // 요청자를 보고 "내가 아닌 사람"을 골라 단독으로 2인을 흉내 낼 수 있고,
+    // 쓸 수 있으면 승인 절차 자체가 무의미해진다. 콜러블만 다룬다.
+    match /passwordResets/{uid} {
+      allow read, write: if false;
+    }
+
     // ── 직원 ──
     // 비밀번호가 userSecrets로 분리되었으므로 남는 값은 이름·역할·팀뿐인 내부 인명부다.
     // 쓰기는 Cloud Functions 전용 — 역할 변경·승인·비밀번호를 클라이언트가 못 건드린다.

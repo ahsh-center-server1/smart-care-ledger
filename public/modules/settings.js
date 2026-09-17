@@ -35,6 +35,7 @@ import { can, unavailableMessage } from './permissions.js';
 // app.js 의 전역 등록과 설정 탭 전환이 이 모듈을 통해 부르기 때문이다.
 import { renderPermissionPanel } from './settings-permissions.js';
 import { openCategoryEdit } from './settings-category.js';
+import { resetStaffPassword } from './password.js';
 export { renderPermissionPanel };
 
 // ─────────────────────────────────────────────
@@ -125,7 +126,14 @@ export function renderManagement(){
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'재직':'퇴사'}</span>
       </div>`:'';
       const editButton=canManageStaff&&isActive?`<button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button>`:'';
-      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${escHtml(u.name||u.userId)}</div><div style="font-size:12px;color:var(--muted);">${escHtml(u.role||'')} ${u.team?'· '+escHtml(u.team):''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${editButton}</div>`;
+      // 비밀번호 재설정 — 관리자만. 결재에 닿는 계정은 서버가 2인을 요구한다.
+      const pwButton=canManageStaff&&isActive&&String(u.id)!==String(S.user?.userId||'')
+        ?`<button class="icon-btn pw-reset" data-id="${escAttr(u.id)}" data-name="${escAttr(u.name||u.userId)}" title="비밀번호 재설정(임시 비밀번호 발급)" style="color:#b45309;">🔑</button>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${escHtml(u.name||u.userId)}</div><div style="font-size:12px;color:var(--muted);">${escHtml(u.role||'')} ${u.team?'· '+escHtml(u.team):''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${pwButton}${editButton}</div>`;
+      d.querySelector('.pw-reset')?.addEventListener('click',ev=>{
+        const b=ev.currentTarget;
+        resetStaffPassword(b.dataset.id,b.dataset.name);
+      });
       sl.appendChild(d);
     });
   }

@@ -6,6 +6,7 @@
 'use strict';
 
 import { S } from '../state.js';
+import { openChangePassword } from './password.js';
 import { COLS } from '../constants.js';
 import { fb, fdb } from '../services/firestore.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
@@ -59,6 +60,13 @@ export async function handleLogin() {
 
     await initPermissions();
     btn.disabled=false; btn.textContent='시스템 접속';
+    // 임시 비밀번호로 들어왔으면 **앱에 들여보내기 전에** 바꾸게 한다.
+    // 바꾸기 전에는 아무것도 할 수 없으므로, 발급한 사람이 그 계정으로
+    // 조용히 일할 수 없다 — 주인이 이 화면을 보게 되어 발급 사실이 드러난다.
+    if (res.data && res.data.mustChangePassword) {
+      openChangePassword({ forced: true, onDone: () => _enterApp() });
+      return;
+    }
     await _enterApp();
   } catch(e) {
     errEl.textContent = fnErrorMessage(e, '로그인 실패. 다시 시도하세요.', fnEndpoint('login'));

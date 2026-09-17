@@ -65,6 +65,7 @@ const APP_SHELL = [
   '/modules/font-scale.js',
   '/modules/modals.js',
   '/modules/permissions.js',
+  '/modules/password.js',
   '/modules/receipt-intake.js',
   '/modules/receipt-learn.js',
   '/modules/receipt-fields.js',

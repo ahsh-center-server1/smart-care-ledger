@@ -22,6 +22,7 @@
 // 모듈 import
 // ─────────────────────────────────────────────
 import { S } from './state.js';
+import * as Pw from './modules/password.js';
 import {
   COLS, CAT_COLORS, cs,
   STATUS_LABELS, STATUS_CLASSES,
@@ -122,6 +123,7 @@ Object.assign(window, {
   renderPagination: Trx.renderPagination,
   applyPeriod: Trx.applyPeriod,
   resetFilters: Trx.resetFilters,
+  openChangePassword: Pw.openChangePassword,
   moveTrxRow: Trx.moveTrxRow,
   saveTrx: Trx.saveTrx,
   delTrx: Trx.delTrx,
