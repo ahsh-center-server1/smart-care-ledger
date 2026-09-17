@@ -16,6 +16,7 @@ import { fb, fdb } from '../services/firestore.js';
 import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
 import { fetchStaffDirectory, fetchCategoryDirectory } from '../services/directory.js';
 import { countUnenteredFixed } from '../domain/monthly-summary.js';
+import { sortTrx } from '../domain/trx-order.js';
 import { fetchInScope } from '../services/scoped-fetch.js';
 import * as Dash     from './dashboard.js';
 import * as Trx      from './transactions.js';
@@ -273,14 +274,9 @@ export async function loadTransactions(clientId, opts) {
     // 내가 시작한 조회가 더 이상 최신이 아니면 결과를 버린다
     if (mySeq !== trxLoadSeq) return;
     const allTrx = snap.docs.map(d=>({id:d.id,...d.data()}));
-    S.transactions = allTrx.sort((a,b)=>{
-      const oA=a.sortOrder!=null?a.sortOrder:99999;
-      const oB=b.sortOrder!=null?b.sortOrder:99999;
-      if(oA!==oB)return oA-oB;
-      const dtA=(a.date||'')+(a.time?' '+a.time:'');
-      const dtB=(b.date||'')+(b.time?' '+b.time:'');
-      return dtA.localeCompare(dtB);
-    });
+    // 장부 순서는 domain/trx-order.js 하나다 — 세 벌로 흩어져 있었고,
+    // 한 곳만 고치면 같은 거래가 화면마다 다른 자리에 나타났다.
+    S.transactions = sortTrx(allTrx);
     S.activeClient=clientId; S.trxRange=range; S.page=1; S.sortKey='date'; S.sortDir='asc';
     Trx.rebuildAccountFilter();
     Trx.applyFilters();

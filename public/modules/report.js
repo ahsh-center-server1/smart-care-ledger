@@ -26,6 +26,7 @@ import { getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } fro
 import { isConfirmedLocked } from './core.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 import { rememberOpenReport, restorableReport } from '../domain/report-session.js';
+import { sortTrx } from '../domain/trx-order.js';
 
 // 보고서 필수 고정항목 미납 배너
 function renderRptMandatoryBanner(clientId,year,month,trxList){
@@ -258,17 +259,7 @@ export async function loadReport(){
     const mStr=year+'-'+String(month).padStart(2,'0');
     // B002: 전체 거래 목록 보존 (계좌 현황 잔액 계산용) — 캐시 우선 사용
     const allTrx=await getClientTrxAll(clientId);
-    const trxList=allTrx
-      .filter(t=>t.date&&t.date.startsWith(mStr))
-      .sort((a,b)=>{
-        // ⑧ sortOrder 우선, 같으면 날짜+시간 오름차순
-        const oA = a.sortOrder!=null ? a.sortOrder : 99999;
-        const oB = b.sortOrder!=null ? b.sortOrder : 99999;
-        if(oA!==oB) return oA-oB;
-        const dtA=(a.date||'')+(a.time?' '+a.time:'');
-        const dtB=(b.date||'')+(b.time?' '+b.time:'');
-        return dtA.localeCompare(dtB);
-      });
+    const trxList=sortTrx(allTrx.filter(t=>t.date&&t.date.startsWith(mStr)));
     const accs=S.accounts.filter(a=>a.clientId===clientId);
     const rSnap=await getDocs(query(collection(fdb(),COLS.REPORTS),where('clientId','==',clientId),where('year','==',year),where('month','==',month)));
     const report=rSnap.empty?null:{id:rSnap.docs[0].id,...rSnap.docs[0].data()};
@@ -526,15 +517,8 @@ export function syncReportTrxList(){
   const mStr=year+'-'+(String(month).padStart(2,'0'));
   // S.transactions(방금 재로드)에서 해당 월 거래 추출
   const newTrxList=S.transactions.filter(t=>t.clientId===clientId&&(t.date||'').startsWith(mStr));
-  // sortOrder 기준 기본 정렬 후 현재 보고서 정렬키 적용
-  const baseSort=newTrxList.sort((a,b)=>{
-    const oA=a.sortOrder!=null?a.sortOrder:99999;
-    const oB=b.sortOrder!=null?b.sortOrder:99999;
-    if(oA!==oB)return oA-oB;
-    const dtA=(a.date||'')+(a.time?' '+a.time:'');
-    const dtB=(b.date||'')+(b.time?' '+b.time:'');
-    return dtA.localeCompare(dtB);
-  });
+  // 장부 순서로 먼저 세우고, 사용자가 고른 정렬키가 따로 있으면 그것을 얹는다
+  const baseSort=sortTrx(newTrxList);
   S.reportData.trxList=baseSort;
   S.reportData.accountRows=getReportAccountRows(year,month,S.reportData.accs,S.transactions);  
   // 현재 보고서 정렬이 날짜 기본이 아니면 정렬 적용

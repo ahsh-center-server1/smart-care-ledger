@@ -1,6 +1,7 @@
 'use strict';
 
 import { S } from '../state.js';
+import { compareTrx, nextOrderInDay } from '../domain/trx-order.js';
 import { COLS, cs } from '../constants.js';
 import { toast, toastAction, showConfirm, escAttr, emptyState } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchMixedOps } from '../services/firestore.js';
@@ -120,23 +121,16 @@ export function applyFilters(opts) {
       &&(!S.onlyUnclassified||isUnclassifiedTrx(t));
   });
   renderUnclassifiedBadge(()=>applyFilters({resetPage:true}));
-  const key=S.sortKey, dir=S.sortDir;
+  const key=S.sortKey, sign=S.sortDir==='asc'?1:-1;
+  const accLabel=t=>S.accounts.find(ac=>ac.id===t.accountId)?.label||'';
   S.filteredTrx.sort((a,b)=>{
-    let vA, vB;
-    // 계좌명 기준 정렬
-    if(key==='_accLabel'){
-      vA=S.accounts.find(ac=>ac.id===a.accountId)?.label||'';
-      vB=S.accounts.find(ac=>ac.id===b.accountId)?.label||'';
-      if(vA<vB)return dir==='asc'?-1:1; if(vA>vB)return dir==='asc'?1:-1; return 0;
-    }
-    vA=a[key]; vB=b[key];
-    // 숫자 필드는 숫자로 비교
-    if(key==='amountIn'||key==='amountOut'){
-      vA=Number(vA||0); vB=Number(vB||0);
-      return dir==='asc'?vA-vB:vB-vA;
-    }
-    vA=String(vA||''); vB=String(vB||'');
-    if(vA<vB)return dir==='asc'?-1:1; if(vA>vB)return dir==='asc'?1:-1; return 0;
+    // 날짜순은 곧 장부 순서다 — 같은 날 안에서는 통장에 찍힌 순서를 따른다.
+    // 예전에는 날짜 문자열만 비교하고 그 날 안의 순서는 정렬 안정성에 기댔다.
+    if(key==='date')return sign*compareTrx(a,b);
+    if(key==='amountIn'||key==='amountOut')return sign*(Number(a[key]||0)-Number(b[key]||0));
+    const vA=key==='_accLabel'?accLabel(a):String(a[key]||'');
+    const vB=key==='_accLabel'?accLabel(b):String(b[key]||'');
+    return sign*vA.localeCompare(vB);
   });
   S.page=clampPage(S.page,S.filteredTrx.length,S.pageSize);
   renderHistoryTable(); renderPagination();
@@ -440,6 +434,9 @@ export async function saveTrx(data){
     await updateAccBalance(data.accountId);
     applyFilters();   // 전체 재로드 없이 필터/정렬 유지
   } else {
+    // 그 날의 맨 뒤에 놓는다. 예전에는 수기 입력에 sortOrder를 **아예 붙이지
+    // 않아서** 전부 목록 맨 아래로 몰렸다(비교기가 값 없는 것을 99999로 봤다).
+    if(data.sortOrder==null)data.sortOrder=nextOrderInDay(data.date,S.transactions,data.clientId);
     // 입력자: createdBy 필드 추가
     if(!data.createdBy&&S.user?.userId)data.createdBy=S.user.userId;
     data.id=(await addDoc(collection(fdb(),COLS.TRANSACTIONS),data)).id;
