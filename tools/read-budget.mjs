@@ -66,6 +66,14 @@ const cfg = {
   sessions: num('sessions', 2),
   // 세션당 입주자 전환 횟수 (거래내역을 몇 명 열어보는가)
   clientSwitchesPerSession: num('clientSwitchesPerSession', 3),
+  // ── 월초 마감 정리 (1~closingDays 일) ──
+  //
+  // 이 장부의 일은 월초에 몰린다: 지난달을 정리해서 보고서를 올린다. 평상시
+  // 세션보다 이쪽이 한도를 결정하므로 따로 센다.
+  closingDays: num('closingDays', 10),
+  closingManual: num('closingManual', 5),        // 입주자 1명당 수기 입력 건수
+  closingReportOpens: num('closingReportOpens', 4), // 초안 → 고치고 다시 → 확인
+  historyMonths: num('historyMonths', 12),       // 쌓인 이력 (색인이 없으면 이만큼 읽는다)
   // 대시보드 진입 시점에 요약 캐시가 낡아 있는 (입주자, 월)의 비율.
   //
   // 캐시는 그 입주자의 당월 거래가 바뀔 때만 무효화된다. 하루 종일 아무도
@@ -163,6 +171,37 @@ function reportListReads(role) {
   return Math.ceil(cfg.reports * share);
 }
 
+/**
+ * 입주자 한 명을 마감하는 한 주기의 읽기.
+ *
+ * 네 가지가 이 숫자를 정한다. 넷 다 소스에서 확인한다(assertSourceShape).
+ *   · 기본 조회 범위 — 월초에는 지난달부터 읽는다. 아니면 사용자가 곧바로
+ *     기간을 넓혀 같은 조회를 한 번 더 한다.
+ *   · 수기 입력 — 저장 뒤 로컬에 끼워 넣는다. 예전에는 건마다 월 전체를 되읽었다.
+ *   · 보고서 캐시 — 쓰기가 버린다. 읽기가 버리면 열 때마다 다시 읽는다.
+ *   · 월말 잔액 색인 — 보고서가 두 달만 읽는다. 없으면 전체 이력이고,
+ *     그 값은 **해가 갈수록 커진다.**
+ */
+function closingReads() {
+  const m = cfg.trxPerClientMonth;
+  const openWindow = m * 2;            // 지난달 + 당월(마감 기간이라 일부지만 상한으로)
+  const reportWindow = m * 2;          // 보고서도 전월 대비 때문에 두 달
+  return (
+    openWindow                         // 거래내역 열기 — 한 번이면 된다
+    + openWindow                       // 엑셀 업로드 후 재조회
+    + 0 * cfg.closingManual            // 수기 입력 — 로컬에 끼워 넣는다
+    + reportWindow                     // 보고서 — 캐시가 살아 있어 열기 횟수와 무관
+    + 0 * cfg.closingReportOpens
+  );
+}
+
+/** 색인·캐시가 없을 때(예전 동작)의 같은 주기 — 비교용. */
+function closingReadsUnindexed() {
+  const m = cfg.trxPerClientMonth;
+  const history = m * cfg.historyMonths;
+  return m + m * 2 + m * 2 + cfg.closingManual * m + cfg.closingReportOpens * history;
+}
+
 /** 결재 대기 뱃지 — status in [...] 쿼리. */
 function pendingBadgeReads() {
   return 10;   // 대기 중인 보고서 수 정도
@@ -243,6 +282,40 @@ function assertSourceShape() {
       + '담당 입주자 30명 초과 시 전 입주자 스캔으로 흘러내릴 수 있습니다');
   }
 
+  // ── 월초 마감 모델이 기대는 네 가지 ──
+  const trx = read('../public/modules/transactions.js');
+  const rptSrc = read('../public/modules/report-trx-source.js');
+  const fs = read('../public/services/firestore.js');
+  const trigger = read('../functions/ledger-triggers.js');
+
+  if (!/defaultTrxRange\(\)/.test(core)) {
+    problems.push('core.js가 기본 조회 범위를 달력에서 정하지 않습니다 — '
+      + '월초에 지난달을 다시 조회하게 되어 마감 비용이 두 배가 됩니다');
+  }
+  if (/await loadTransactions\(data\.clientId\)/.test(trx)) {
+    problems.push('transactions.js가 거래 생성 뒤 월 전체를 다시 읽습니다 — '
+      + '이 모델은 수기 입력이 읽기를 쓰지 않는다고 가정합니다');
+  }
+  if (!/noteBatch\(/.test(fs)) {
+    problems.push('services/firestore.js가 쓰기 시점에 보고서 캐시를 버리지 않습니다 — '
+      + '읽기 시점에 버리면 보고서를 열 때마다 다시 읽습니다');
+  }
+  // 색인은 **트리거가 쓰고 보고서가 읽어야** 뜻이 있다. 한쪽만 있으면
+  // 보고서가 조용히 전체 이력을 읽는 예전 길로 돌아간다 — 느려지는 것이
+  // 아니라 비싸지는 것이라 아무도 눈치채지 못한다.
+  if (!/monthEndBalances\s*\}\)/.test(trigger)) {
+    problems.push('트리거가 월말 잔액 색인을 계좌에 쓰지 않습니다 — '
+      + '색인이 비어 보고서가 전체 이력을 읽습니다');
+  }
+  if (!/monthEndBalanceOf\(/.test(read('../public/modules/report.js'))) {
+    problems.push('보고서가 월말 잔액 색인을 읽지 않습니다 — '
+      + '전체 이력을 읽게 되어 해가 갈수록 비싸집니다');
+  }
+  if (!/reportWindow\(/.test(rptSrc)) {
+    problems.push('보고서가 읽는 창을 좁히지 않습니다 — '
+      + '이 모델은 보고서가 두 달만 읽는다고 가정합니다');
+  }
+
   const html = read('../public/index.html');
   if (!/persistentLocalCache/.test(html)) {
     problems.push('영속 캐시가 켜져 있지 않습니다 — 반복 세션의 읽기가 전량 과금됩니다');
@@ -282,6 +355,31 @@ if (JSON_OUT) {
     + `  / 무료 한도 ${n(FREE_TIER_DAILY_READS)}`);
   const pct = Math.round((total / FREE_TIER_DAILY_READS) * 100);
   console.log(`사용률 ${pct}%`);
+
+  // ── 월초 마감 정리 ──
+  const perClient = closingReads();
+  const perClientOld = closingReadsUnindexed();
+  const closingDaily = Math.round((perClient * cfg.clients) / cfg.closingDays);
+  const closingDailyOld = Math.round((perClientOld * cfg.clients) / cfg.closingDays);
+  console.log('\n월초 마감 정리 (1~' + cfg.closingDays + '일, 이력 '
+    + cfg.historyMonths + '개월 가정)');
+  console.log('─'.repeat(64));
+  console.log('입주자 1명 마감'.padEnd(26) + n(perClient).padStart(10)
+    + '   (색인·캐시 없이 ' + n(perClientOld) + ')');
+  console.log('월초 하루 평균'.padEnd(27) + n(closingDaily).padStart(10)
+    + '   (없이 ' + n(closingDailyOld) + ')');
+  const peak = total + closingDaily;
+  console.log('평상시와 합치면'.padEnd(26) + n(peak).padStart(10)
+    + `  / 무료 한도 ${n(FREE_TIER_DAILY_READS)}  →  `
+    + Math.round((peak / FREE_TIER_DAILY_READS) * 100) + '%');
+  if (peak > FREE_TIER_DAILY_READS) {
+    console.log('  ✘ 월초에 한도를 넘는다');
+  } else if (peak > WARN_THRESHOLD) {
+    console.log('  ⚠ 월초에 여유가 없다');
+  }
+  console.log('\n보고서 비용은 이력과 무관하다 — 색인이 없으면 '
+    + n(cfg.closingReportOpens * cfg.trxPerClientMonth * cfg.historyMonths)
+    + '건이고 해마다 늘어난다.');
 
   if (problems.length) {
     console.log('\n⚠️ 모델과 코드가 어긋납니다:');

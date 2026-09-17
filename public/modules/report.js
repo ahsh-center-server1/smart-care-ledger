@@ -11,7 +11,9 @@ import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml } from
 import { fb, fdb, batchUpdateDocs } from '../services/firestore.js';
 import { chunkForInQuery } from '../services/in-query.js';
 import { can, unavailableMessage } from './permissions.js';
-import { calcAccountBalanceAsOf, sumIncomeExpense } from '../services/balance.js';
+import {
+  calcAccountBalanceAsOf, sumIncomeExpense, monthEndBalanceOf,
+} from '../services/balance.js';
 import { planTransition, availableActions, normalizeStatus } from '../domain/report-workflow.js';
 // 신원 컨텍스트와 결재 문구 표는 report-actor.js 로 나갔다. 화살표는 한 방향이다.
 import {
@@ -61,29 +63,10 @@ function renderRptMandatoryBanner(clientId,year,month,trxList){
  * 대신 보고서 전용 캐시를 쓴다. 거래내역 탭이 마침 같은 입주자의 전체 이력을
  * 들고 있으면 그것을 재사용하지만, 쓰지는 않는다.
  */
-async function getClientTrxAll(clientId) {
-  // 거래내역 탭이 이미 같은 입주자의 전체 이력을 갖고 있으면 그대로 쓴다(읽기 절약)
-  if (S.activeClient === clientId
-      && S.trxRange === 'all'
-      && Array.isArray(S.transactions)
-      && S.transactions.length) {
-    return S.transactions;
-  }
-  // 보고서 전용 캐시
-  if (S.rptTrxCache && S.rptTrxCache.clientId === clientId
-      && Array.isArray(S.rptTrxCache.rows)) {
-    return S.rptTrxCache.rows;
-  }
-  const { getDocs, collection, query, where } = fb();
-  const snap = await getDocs(query(collection(fdb(),COLS.TRANSACTIONS), where('clientId','==',clientId)));
-  const trx = snap.docs.map(d => ({ id:d.id, ...d.data() }));
-  S.rptTrxCache = { clientId, rows: trx };
-  return trx;
-}
-
 // 거래가 바뀌면 보고서 캐시를 버린다 — 구현은 services/firestore.js 하나다.
 // 배치 헬퍼가 자기 안에서 부를 수 있어야 해서 그쪽에 둔다(여기에 두면 순환).
 export { invalidateReportTrxCache } from '../services/firestore.js';
+import { reportWindow, getClientTrx } from './report-trx-source.js';
 
 // ─────────────────────────────────────────────
 // 규칙 기반 자동 분석 (API 없음)
@@ -100,7 +83,8 @@ export async function loadAnnual(){
   const{getDocs,collection,query,where}=fb();
   // 거래는 캐시 우선, 예산은 항상 fetch (작은 데이터)
   const [trxAll,budgetSnap]=await Promise.all([
-    getClientTrxAll(clientId),
+    // 연간 통계는 그 해만 본다 — 전체 이력을 읽고 나서 버릴 이유가 없다.
+    getClientTrx(clientId, { from: `${year}-01`, to: `${year}-12` }),
     getDocs(query(collection(fdb(),COLS.BUDGETS),where('clientId','==',clientId),where('year','==',year))),
   ]);
   const budgetMap={};
@@ -154,8 +138,11 @@ function getReportAccountRows(year,month,accs,allTrx){
   const prevEnd=prevYM+'-31';
   return (accs||[]).map(a=>{
     // 잔액은 services/balance.js 하나만 쓴다 (대시보드·설정과 값이 어긋나지 않도록)
-    const prevBal=calcAccountBalanceAsOf(a,allTrx,prevEnd);
-    const bal=calcAccountBalanceAsOf(a,allTrx,endDate);
+    // 말잔은 계좌 문서의 월말 색인에서 읽는다 — 서버 트리거가 잔액을 다시
+    // 만들 때 함께 적어 둔 것이라 **추가 읽기가 없다.** 색인이 없거나
+    // (백필 전) 구멍이 있으면 null 이 오고, 그때만 거래를 더해 계산한다.
+    const prevBal=monthEndBalanceOf(a,prevYM)??calcAccountBalanceAsOf(a,allTrx,prevEnd);
+    const bal=monthEndBalanceOf(a,mStr)??calcAccountBalanceAsOf(a,allTrx,endDate);
     // 당월 수입/지출 집계 — 자산이동·취소는 제외
     const monthTrx=(allTrx||[]).filter(t=>t.accountId===a.id&&(t.date||'').startsWith(mStr));
     const {totalIn:monthlyIn,totalOut:monthlyOut}=sumIncomeExpense(monthTrx);
@@ -175,10 +162,15 @@ export async function loadReport(){
   try{
     const{getDocs,collection,query,where}=fb();
     const mStr=year+'-'+String(month).padStart(2,'0');
-    // B002: 전체 거래 목록 보존 (계좌 현황 잔액 계산용) — 캐시 우선 사용
-    const allTrx=await getClientTrxAll(clientId);
-    const trxList=sortTrx(allTrx.filter(t=>t.date&&t.date.startsWith(mStr)));
     const accs=S.accounts.filter(a=>a.clientId===clientId);
+    // 계좌마다 이번 달·지난달 말잔을 색인이 들고 있으면 **두 달만** 읽는다.
+    // 하나라도 모르면 예전처럼 전체 이력을 읽어 직접 계산한다 — 읽기를
+    // 아끼려다 결재 문서에 틀린 잔액이 찍히면 안 된다.
+    const prevYM0=month===1?`${year-1}-12`:`${year}-${String(month-1).padStart(2,'0')}`;
+    const indexed=accs.length>0&&accs.every(a=>
+      monthEndBalanceOf(a,mStr)!=null&&monthEndBalanceOf(a,prevYM0)!=null);
+    const allTrx=await getClientTrx(clientId,indexed?reportWindow(year,month):null);
+    const trxList=sortTrx(allTrx.filter(t=>t.date&&t.date.startsWith(mStr)));
     const rSnap=await getDocs(query(collection(fdb(),COLS.REPORTS),where('clientId','==',clientId),where('year','==',year),where('month','==',month)));
     const report=rSnap.empty?null:{id:rSnap.docs[0].id,...rSnap.docs[0].data()};
     let totalIn=0,totalOut=0; const catStats={};

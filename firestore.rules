@@ -253,9 +253,14 @@ service cloud.firestore {
 
       // 소속 입주자가 실재해야 한다 — 없는 입주자의 계좌는 어느 화면에도
       // 나타나지 않으면서 잔액 트리거만 계속 돈다.
+      // monthEndBalances 는 **서버만 쓴다.** 보고서 「계좌 현황」이 인쇄하는
+      // 전월·당월 말잔이 이 색인에서 나오므로, 브라우저가 심을 수 있으면
+      // 결재 문서에 지어낸 잔액이 찍힌다. 트리거는 Admin SDK 라 규칙을 지나지
+      // 않으므로 여기서 막아도 갱신은 계속 된다.
       allow create: if cap('settingsAccount')
                     && seesClient(request.resource.data.get('clientId', ''))
                     && exists(/databases/$(database)/documents/clients/$(request.resource.data.get('clientId', '')))
+                    && !('monthEndBalances' in request.resource.data)
                     && accountFieldsOk(request.resource.data);
 
       // clientId 는 불변이다. 바꿀 수 있으면 계좌를 통째로 남의 입주자에게
@@ -264,6 +269,8 @@ service cloud.firestore {
                     && seesClient(resource.data.get('clientId', ''))
                     && request.resource.data.get('clientId', '')
                        == resource.data.get('clientId', '')
+                    && request.resource.data.get('monthEndBalances', {})
+                       == resource.data.get('monthEndBalances', {})
                     && accountFieldsOk(request.resource.data);
 
       allow delete: if cap('settingsAccount')

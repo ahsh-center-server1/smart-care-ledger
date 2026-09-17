@@ -42,6 +42,7 @@ users:        { userId, password, name, role, team }
 clients:      { clientId, name, userIds, teamLeader, contact, memo }
 accounts:     { accountId, clientId, label, accountNumber,
                 initialBalance, initialBalanceDate, currentBalance,
+                monthEndBalances: { 'YYYY-MM': 말잔 },   // 서버 전용 (§14)
                 bankStatements: [{url, thumbUrl, month}] }
 transactions: { trxId, clientId, accountId, date, type, category,
                 subcategory, description, amountIn, amountOut,
@@ -597,6 +598,49 @@ https://smart-care-ledger.web.app
 - [ ] git 커밋 완료
 - [ ] `firebase deploy` 실행
 - [ ] 배포된 앱 확인
+
+---
+
+## 12-1. 읽기 비용 — 월초가 한도를 정한다
+
+이 장부의 일은 **1~10일에 몰린다.** 지난달을 정리해서 보고서를 올린다.
+그래서 평상시 세션이 아니라 그 열흘이 무료 한도(하루 읽기 5만)를 정한다.
+
+`node tools/read-budget.mjs` 가 모델을 출력하고, 코드가 아래 넷 중 하나라도
+어기면 **모델과 코드가 어긋난다고 알리며 실패한다**(CI에 걸 수 있다).
+
+| 지키는 것 | 어기면 |
+|---|---|
+| 기본 조회 범위를 달력이 정한다 (`defaultTrxRange`) | 월초에 지난달을 다시 조회 — 마감 비용 두 배 |
+| 거래 생성 뒤 로컬에 끼워 넣는다 | 수기 입력 한 건마다 월 전체 재조회 |
+| 보고서 캐시는 **쓰기가** 버린다 | 보고서를 열 때마다 다시 읽는다 |
+| 보고서는 두 달만 읽는다 (월말 색인) | 전체 이력 — 해가 갈수록 비싸진다 |
+
+### 월말 잔액 색인 (`accounts.monthEndBalances`)
+
+보고서 「계좌 현황」의 전월 말·당월 말 잔액은 기준일부터의 누적이라, 예전에는
+그 두 숫자를 구하려고 **그 입주자의 전체 이력**을 읽었다. 보고서를 열 때마다,
+그리고 해가 갈수록 더 — 쓰지도 않는데 비용만 자란다.
+
+이제 계좌 문서가 `{ 'YYYY-MM': 말잔 }` 을 들고 있다. `syncAccountBalance`
+트리거가 `currentBalance` 를 다시 만들 때 **같은 거래 목록에서** 함께 적으므로
+추가 읽기가 없고, 색인은 로그인할 때 계좌와 함께 이미 온다.
+
+- 만드는 곳은 `buildMonthEndBalances()` 하나다 (`services/balance.js` +
+  서버 사본 `functions/balance.cjs` — 값이 어긋나면 테스트가 잡는다).
+- 기준일의 달부터 마지막 거래의 달까지 **빠짐없이** 적는다. 거래 없는 달도
+  앞 달 값으로 채운다 — 빈칸이 "거래가 없었다"인지 "계산하지 않았다"인지
+  구분되지 않으면 폴백 판정을 할 수 없다.
+- `monthEndBalanceOf()` 는 **모르면 `null`** 을 준다. 0으로 답하면 백필 전
+  계좌의 결재 문서에 「잔액 0원」이 그대로 인쇄된다. 보고서는 계좌 **전부**가
+  두 달을 다 알 때만 창을 좁히고, 하나라도 모르면 예전처럼 전체를 읽는다.
+- 규칙이 브라우저 쓰기를 막는다(생성 시 금지, 수정 시 불변). 트리거는 Admin
+  SDK 라 규칙을 지나지 않으므로 갱신은 계속 된다.
+
+> ⚠️ **배포 뒤 백필**: 색인은 그 계좌에 거래가 쓰일 때 채워진다. 배포 직후
+> 조용한 계좌는 비어 있고, 보고서는 그 계좌 때문에 전체 이력으로 떨어진다
+> (값은 맞지만 비용이 예전과 같다). `node tools/recalc-balances.mjs`(먼저
+> 드라이런)로 한 번에 채운다 — 잔액이 맞는 계좌도 색인이 없으면 갱신 대상이다.
 
 ---
 

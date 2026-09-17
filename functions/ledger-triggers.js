@@ -13,7 +13,9 @@
  */
 
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
-const { calcAccountBalance, affectsBalance } = require('./balance.cjs');
+const {
+  calcAccountBalance, affectsBalance, buildMonthEndBalances,
+} = require('./balance.cjs');
 
 module.exports = function ledgerTriggers(ctx) {
   const { db, callable, requireCaller, HttpsError } = ctx;
@@ -45,6 +47,9 @@ module.exports = function ledgerTriggers(ctx) {
    *   기준일(initialBalanceDate)이 있으면 그 이후 거래만 읽는다. 잔액식이 어차피
    *   `date <= base`를 버리므로 결과는 동일하고, 과거 연도가 쌓인 계좌에서
    *   읽는 문서 수가 크게 줄어든다. (복합 인덱스 accountId+date 사용)
+   *
+   *   월말 잔액 색인도 같은 목록에서 만든다 — 색인의 첫 달이 기준일의 달인
+   *   것이 이 때문이고, 그 앞 달을 물으면 기초잔액으로 답한다.
    */
   async function recalcAccount(accountId) {
   if (!accountId) return;
@@ -60,8 +65,17 @@ module.exports = function ledgerTriggers(ctx) {
   const transactions = trxSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   const balance = calcAccountBalance(account, transactions);
-  if (Number(account.currentBalance || 0) === balance) return;   // 변화 없으면 쓰지 않는다
-  await accRef.update({ currentBalance: balance });
+  // 월말 잔액 색인을 함께 만든다 — **추가 읽기가 없다.** 이 거래 목록을
+  // 이미 손에 들고 있기 때문이다.
+  //
+  // 이게 없으면 보고서가 전월 말 잔액을 구하려고 그 입주자의 전체 이력을
+  // 읽는다. 열 때마다, 그리고 해가 갈수록 더. 색인은 accounts 문서에 실려
+  // 로그인할 때 이미 오므로 보고서는 그 달 거래만 읽으면 된다.
+  const monthEndBalances = buildMonthEndBalances(account, transactions);
+  const same = Number(account.currentBalance || 0) === balance
+    && JSON.stringify(account.monthEndBalances || {}) === JSON.stringify(monthEndBalances);
+  if (same) return;                                   // 변화 없으면 쓰지 않는다
+  await accRef.update({ currentBalance: balance, monthEndBalances });
   }
 
   const syncAccountBalance = onDocumentWritten(

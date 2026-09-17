@@ -234,7 +234,7 @@ test('결재 완료 월 잠금을 연도 제한된 목록에서 다시 만들지
 test('보고서 거래 캐시가 거래내역 탭 캐시를 덮어쓰지 않는다', () => {
   // 보고서를 한 번 열면 거래내역 탭의 조회 범위가 조용히 'all'로 바뀌고
   // 데이터가 다른 입주자 것으로 교체됐다.
-  const body = bodyOf(src('public/modules/report.js'), 'async function getClientTrxAll(');
+  const body = bodyOf(src('public/modules/report-trx-source.js'), 'async function getClientTrx(');
   // 비교(===)가 아니라 **대입**만 잡는다
   assert.ok(!/S\.transactions\s*=(?!=)/.test(body), '아직 거래내역 탭 캐시에 씁니다');
   assert.ok(!/S\.trxRange\s*=(?!=)/.test(body), '아직 거래내역 탭 조회 범위를 바꿉니다');

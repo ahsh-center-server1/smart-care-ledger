@@ -288,6 +288,24 @@ describe('clients · accounts', () => {
       updateDoc(doc(as(ACTORS.센터장), 'accounts/a1'), { clientId: OTHER_CLIENT }));
   });
 
+  // 보고서 「계좌 현황」이 인쇄하는 전월·당월 말잔은 이 색인에서 나온다.
+  // 브라우저가 심을 수 있으면 결재 문서에 지어낸 잔액이 찍힌다.
+  it('accounts: 월말 잔액 색인은 서버만 쓴다', async () => {
+    await assertFails(updateDoc(doc(as(ACTORS.센터장), 'accounts/a1'),
+      { monthEndBalances: { '2026-01': 99999999 } }));
+  });
+
+  it('accounts: 색인을 건드리지 않는 수정은 그대로 된다', async () => {
+    // 막는 방식이 지나쳐서 계좌 이름조차 못 바꾸게 되면 안 된다.
+    await assertSucceeds(updateDoc(doc(as(ACTORS.센터장), 'accounts/a1'), { label: '생활비3' }));
+  });
+
+  it('accounts: 새 계좌에 색인을 심을 수 없다', async () => {
+    await assertFails(setDoc(doc(as(ACTORS.센터장), 'accounts/aNew'),
+      { clientId: MY_CLIENT, label: '새계좌', initialBalance: 0,
+        monthEndBalances: { '2026-01': 1 } }));
+  });
+
   it('accounts: 기초잔액이 숫자가 아니면 거부한다', async () => {
     // 문자열이 들어가면 balance.js 의 합산이 조용히 NaN 이 되고,
     // 화면에는 잔액이 비어 보일 뿐 이유가 남지 않는다.

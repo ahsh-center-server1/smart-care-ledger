@@ -80,6 +80,7 @@ const APP_SHELL = [
   '/domain/report-workflow.js',
   '/modules/report-actor.js',
   '/modules/report-summary-panel.js',
+  '/modules/report-trx-source.js',
   '/modules/settings.js',
   '/modules/settings-category.js',
   '/modules/settings-audit.js',

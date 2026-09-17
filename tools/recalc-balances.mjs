@@ -17,11 +17,18 @@
  *   export GOOGLE_APPLICATION_CREDENTIALS=/경로/serviceAccountKey.json
  *   node tools/recalc-balances.mjs            # 드라이런 — 변경될 값만 출력
  *   node tools/recalc-balances.mjs --apply    # 실제 반영 (백업 JSON 자동 저장)
+ *
+ * 월말 잔액 색인 백필
+ *   보고서 「계좌 현황」의 전월·당월 말잔은 accounts.monthEndBalances 에서 읽고,
+ *   없으면 그 입주자의 전체 이력을 읽어 직접 계산한다(느려지는 것이 아니라
+ *   **비싸진다** — 읽기가 늘 뿐이라 아무도 눈치채지 못한다). 평소에는 거래
+ *   트리거가 채우지만, 배포 직후에는 아직 거래가 바뀌지 않은 계좌가 비어 있다.
+ *   이 스크립트가 한 번에 채운다. 잔액이 맞는 계좌도 색인이 없으면 갱신 대상이다.
  */
 
 import { writeFileSync } from 'node:fs';
 import admin from 'firebase-admin';
-import { calcAccountBalance } from '../public/services/balance.js';
+import { calcAccountBalance, buildMonthEndBalances } from '../public/services/balance.js';
 
 const APPLY = process.argv.includes('--apply');
 const won = (n) => Number(n || 0).toLocaleString('ko-KR') + '원';
@@ -55,6 +62,8 @@ for (const a of accounts) {
   const mine = byAccount.get(a.id) || [];
   const stored = Number(a.currentBalance || 0);
   const correct = calcAccountBalance(a, mine);
+  const index = buildMonthEndBalances(a, mine);
+  const indexStale = JSON.stringify(a.monthEndBalances || {}) !== JSON.stringify(index);
 
   // 기존 코드의 해석(기준일 당일 포함)으로도 계산해 차이를 확인한다
   const base = a.initialBalanceDate || '';
@@ -66,7 +75,7 @@ for (const a of accounts) {
   rows.push({
     id: a.id,
     label: `${clientName.get(a.clientId) || '?'} / ${a.label || a.id}`,
-    stored, correct,
+    stored, correct, index, indexStale,
     diff: correct - stored,
     trxCount: mine.length,
     base,
@@ -76,10 +85,15 @@ for (const a of accounts) {
 }
 
 rows.sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff));
-const changed = rows.filter((r) => r.diff !== 0);
+// 잔액이 맞아도 색인이 비었으면 갱신 대상이다 — 그것이 백필의 요점이다.
+const changed = rows.filter((r) => r.diff !== 0 || r.indexStale);
+const balanceChanged = rows.filter((r) => r.diff !== 0);
+const indexOnly = changed.length - balanceChanged.length;
 
-console.log(`\n변경 대상 ${changed.length}개 / 전체 ${rows.length}개\n`);
-for (const r of changed) {
+console.log(`\n변경 대상 ${changed.length}개 / 전체 ${rows.length}개`);
+console.log(`  · 잔액이 달라지는 계좌 ${balanceChanged.length}개`);
+console.log(`  · 월말 색인만 채우는 계좌 ${indexOnly}개\n`);
+for (const r of balanceChanged) {
   const sign = r.diff > 0 ? '+' : '';
   console.log(
     `  ${r.label}\n` +
@@ -126,7 +140,10 @@ let n = 0;
 for (let i = 0; i < changed.length; i += 400) {
   const batch = db.batch();
   for (const r of changed.slice(i, i + 400)) {
-    batch.update(db.collection('accounts').doc(r.id), { currentBalance: r.correct });
+    batch.update(db.collection('accounts').doc(r.id), {
+      currentBalance: r.correct,
+      monthEndBalances: r.index,
+    });
     n++;
   }
   await batch.commit();

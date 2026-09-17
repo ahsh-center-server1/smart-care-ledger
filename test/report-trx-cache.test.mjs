@@ -94,7 +94,7 @@ test('서버가 거래를 쓰는 경로도 버린다', () => {
 });
 
 test('보고서가 여전히 캐시를 쓴다 — 버리기만 하면 의미가 없다', () => {
-  const rpt = read('public/modules/report.js');
-  const fn = rpt.slice(rpt.indexOf('async function getClientTrxAll'));
+  const rpt = read('public/modules/report-trx-source.js');
+  const fn = rpt.slice(rpt.indexOf('async function getClientTrx('));
   assert.match(fn.slice(0, 900), /S\.rptTrxCache/, '보고서가 캐시를 읽지 않습니다');
 });
