@@ -1,7 +1,7 @@
 {
   "indexes": [
     {
-      "_comment": "core.js loadTransactions(range=month|기간) 및 monthlyStats의 clientId in + date 범위 쿼리용. 이 인덱스가 없으면 거래내역 조회가 통째로 실패하고 core.js:133이 예외를 삼켜 대시보드가 조용히 0원을 표시한다.",
+      "_comment": "clientId(in) + date 범위. 세 곳이 이 하나에 의존한다 — core.js loadTransactions(기본 범위·기간 필터), monthlyStats(당월 요약 재계산), 그리고 report-trx-source.js getClientTrx(보고서·연간 통계가 읽는 창). 없으면 거래내역 조회가 통째로 실패하고, core.js는 예외를 삼켜 대시보드가 조용히 0원을 표시한다. 보고서 쪽은 전체 이력을 읽던 것을 두 달로 좁히면서 이 인덱스를 쓰기 시작했으니, 지우면 보고서도 함께 죽는다.",
       "collectionGroup": "transactions",
       "queryScope": "COLLECTION",
       "fields": [
