@@ -33,6 +33,7 @@ const APP_SHELL = [
   '/styles/tokens.css',
   '/styles/components.css',
   '/utils/ui.js',
+  '/utils/amount-input.js',
   '/services/balance.js',
   '/services/excel-parser.js',
   '/services/firestore.js',

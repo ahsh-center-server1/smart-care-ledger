@@ -14,6 +14,7 @@
 'use strict';
 
 import { S } from '../state.js';
+import { parseAmount, attachAmountInput } from '../utils/amount-input.js';
 import { COLS } from '../constants.js';
 import { toast, showConfirm } from '../utils/ui.js';
 import { fb, fdb, batchAddDocs } from '../services/firestore.js';
@@ -147,7 +148,7 @@ export function renderFixedItemForm(item){
       </div>
       <div><label class="label">카테고리</label><select id="fi-cat" class="input" style="padding:8px 12px;"></select></div>
       <div><label class="label">내용</label><input type="text" id="fi-desc" class="input" value="${isEdit?item.description||'':''}" placeholder="예: 국민연금, 복지관 이용료"></div>
-      <div><label class="label">금액</label><input type="number" id="fi-amt" class="input" value="${isEdit?item.amount||0:0}" style="text-align:right;"></div>
+      <div><label class="label">금액</label><input type="text" inputmode="numeric" id="fi-amt" class="input" value="${isEdit?item.amount||0:0}" style="text-align:right;"></div>
       <div style="display:flex;align-items:center;gap:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;">
         <input type="checkbox" id="fi-mandatory" ${isEdit&&item.isMandatory?'checked':''} style="width:16px;height:16px;cursor:pointer;accent-color:#dc2626;">
         <label for="fi-mandatory" style="font-size:13px;color:#991b1b;cursor:pointer;">필수 항목 (미납 시 알림 표시)</label>
@@ -158,11 +159,12 @@ export function renderFixedItemForm(item){
   accs.forEach(a=>accSel.add(new Option(a.label,a.id)));
   if(isEdit&&item.accountId)accSel.value=item.accountId;
   const catSel=document.getElementById('fi-cat');
+  attachAmountInput(document.getElementById('fi-amt'));
   const fillCats=()=>{const type=document.getElementById('fi-type').value;catSel.innerHTML='';const cats=[...new Map(S.categories.filter(c=>c.keyword===''&&c.type===type).sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)).map(c=>[c.category,c.category])).keys()];cats.forEach(c=>catSel.add(new Option(c,c)));if(isEdit&&item.category)catSel.value=item.category;};
   fillCats();
   document.getElementById('fi-type').addEventListener('change',fillCats);
   document.getElementById('fi-save').addEventListener('click',async()=>{
-    const data={clientId:S.activeClient,accountId:document.getElementById('fi-acc').value,type:document.getElementById('fi-type').value,day:Number(document.getElementById('fi-day').value)||1,category:document.getElementById('fi-cat').value,description:document.getElementById('fi-desc').value,amount:Number(document.getElementById('fi-amt').value)||0,isMandatory:!!document.getElementById('fi-mandatory')?.checked};
+    const data={clientId:S.activeClient,accountId:document.getElementById('fi-acc').value,type:document.getElementById('fi-type').value,day:Number(document.getElementById('fi-day').value)||1,category:document.getElementById('fi-cat').value,description:document.getElementById('fi-desc').value,amount:parseAmount(document.getElementById('fi-amt').value),isMandatory:!!document.getElementById('fi-mandatory')?.checked};
     if(isEdit)data.id=item.id;
     await saveFixedItem(data); shell.close();
   });

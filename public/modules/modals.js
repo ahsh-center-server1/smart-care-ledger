@@ -26,6 +26,7 @@ import * as ExcelParser from '../services/excel-parser.js';
 import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
 import { bankbookRowsToParsed } from '../domain/receipt.js';
 import { orderedCategories } from '../domain/category-order.js';
+import { parseAmount, attachAmountInput } from '../utils/amount-input.js';
 import { classifyMerchant } from '../domain/receipt-match.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
 import { hasReceipt, receiptAccess, receiptAccessUrl, receiptViewKind } from '../services/receipt-access.js';
@@ -98,7 +99,7 @@ export function renderTrxForm(t){
           <option value="취소-지출"${editTypeUI==='취소-지출'?' selected':''}>취소(지출, 카드승인취소)</option>
           <option value="취소-수입"${editTypeUI==='취소-수입'?' selected':''}>취소(수입 환수)</option>
         </select></div>
-        <div><label class="label">금액</label><input type="number" id="f-amount" class="input" value="${editAmount}" placeholder="0" min="0" style="text-align:right;"></div>
+        <div><label class="label">금액</label><input type="text" inputmode="numeric" id="f-amount" class="input" value="${editAmount}" placeholder="0" style="text-align:right;"></div>
       </div>
       <div id="f-type-hint" style="font-size:12px;color:var(--sub);background:#f1f5f9;border-radius:8px;padding:8px 11px;line-height:1.5;"></div>
       <div id="f-to-acc-row" style="display:none;">
@@ -149,13 +150,14 @@ export function renderTrxForm(t){
   const toAccRow=document.getElementById('f-to-acc-row');
   const showToAcc=()=>{const type=document.getElementById('f-type').value;if(toAccRow)toAccRow.style.display=type==='자산이동'?'block':'none';};
   showToAcc();
+  attachAmountInput(document.getElementById('f-amount'));
   updateTrxCatSel();
   updateTrxTypeHint();
   if(isEdit&&t.category)document.getElementById('f-cat').value=t.category;
   document.getElementById('f-type').addEventListener('change',()=>{updateTrxCatSel();showToAcc();updateTrxTypeHint();});
   document.getElementById('f-save-btn').addEventListener('click',async()=>{
     const accId=document.getElementById('f-acc').value;
-    const amount=Number(document.getElementById('f-amount').value);
+    const amount=parseAmount(document.getElementById('f-amount').value);
     if(!accId){toast('계좌를 선택하세요.','error');return;}
     if(!amount){toast('금액을 입력하세요.','error');return;}
     const acc=S.accounts.find(a=>a.id===accId);
@@ -233,7 +235,7 @@ export function renderTrxForm(t){
   document.getElementById('f-copy-btn').addEventListener('click',async()=>{
     if(!isEdit){toast('수정 중인 거래가 없습니다.','error');return;}
     const accId=document.getElementById('f-acc').value;
-    const amount=Number(document.getElementById('f-amount').value);
+    const amount=parseAmount(document.getElementById('f-amount').value);
     if(!accId){toast('계좌를 선택하세요.','error');return;}
     if(!amount){toast('금액을 입력하세요.','error');return;}
     const acc=S.accounts.find(a=>a.id===accId);
