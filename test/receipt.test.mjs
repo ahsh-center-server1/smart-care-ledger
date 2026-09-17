@@ -9,6 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   normalizeReceiptDate, normalizeAmount, normalizeMerchant,
   merchantTokens, toReceiptDraft,
@@ -281,4 +282,29 @@ test('연도 없는 통장 날짜도 추론한다', () => {
     rows: [{ dateRaw: '09/01', description: 'x', withdraw: '1,000', deposit: '', balance: '' }],
   }, { today: TODAY });
   assert.equal(rows[0].date, '2026-09-01');
+});
+
+// ── 판독한 통장 사진은 그 달의 통장 사진이 된다 ──────────────
+
+test('판독한 통장 사진을 읽고 버리지 않는다', () => {
+  // 사진을 올려 거래를 읽고 나면 그 사진 자체가 그 달의 통장이다. 그런데
+  // 예전에는 읽고 버려서, 보고서에서 그 달 통장을 보려면 「계좌 관리 →
+  // 통장 사진 관리」에서 같은 사진을 한 번 더 올려야 했다.
+  const src = readFileSync(new URL('../public/modules/modals.js', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('export async function analyzeBankbookPhoto'));
+  const body = fn.slice(0, fn.indexOf('\n}\n'));
+  assert.ok(/fileBankbookPhoto\(/.test(body),
+    '판독한 사진을 통장 사진으로 남기지 않습니다');
+
+  const filer = src.slice(src.indexOf('async function fileBankbookPhoto'));
+  const filerBody = filer.slice(0, filer.indexOf('\n}\n'));
+  // 어느 달인지 모르는 사진은 갤러리에 쌓여도 나중에 아무도 못 찾는다.
+  assert.ok(/if\(!month/.test(filerBody),
+    '연월을 모르는 사진까지 보관합니다');
+  // 통장은 한 달에 여러 장이 정상이다. 덮어쓰면 앞 장이 사라진다.
+  assert.ok(/\.\.\.existing,/.test(filerBody),
+    '같은 달의 기존 사진을 덮어씁니다');
+  // 판독은 이미 성공했다. 보관 실패로 읽은 거래를 버리면 안 된다.
+  assert.ok(/catch/.test(filerBody) && /return false/.test(filerBody),
+    '보관이 실패하면 판독 결과까지 잃습니다');
 });

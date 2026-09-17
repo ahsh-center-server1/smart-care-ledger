@@ -624,13 +624,52 @@ export async function analyzeBankbookPhoto(file){
     }
 
     await fillExcelTempFromRows(rows,accId);
+    // 판독한 사진은 그 달의 통장 사진으로도 남긴다. 예전에는 읽고 버려서,
+    // 나중에 보고서에서 그 달 통장을 보려면 같은 사진을 다시 올려야 했다.
+    const filed=await fileBankbookPhoto(compressed,accId,S.excelMonth,file.name);
     toast(`사진에서 ${rows.length}건을 읽었습니다. 저장 전에 확인하세요.`
-      +(skipped.length?` (제외 ${skipped.length}건)`:''),'success',6000);
+      +(skipped.length?` (제외 ${skipped.length}건)`:'')
+      +(filed?`\n📸 ${S.excelMonth} 통장 사진으로도 보관했습니다.`:''),'success',6000);
   }catch(err){
     // 서버가 이미 사용자용 문장으로 바꿔 보낸다(끝이 "직접 입력할 수 있습니다").
     toast(err.message||'판독에 실패했습니다. 직접 입력할 수 있습니다.','error',6000);
   }finally{
     setBusy(false);
+  }
+}
+
+/**
+ * 판독한 통장 사진을 그 달의 통장 사진으로 보관한다.
+ *
+ * 왜 여기서 하나
+ *   사진을 올려 거래를 읽고 나면, 그 사진 자체가 그 달의 통장이다. 그런데
+ *   예전에는 읽고 버렸다. 보고서에서 그 달 통장을 보려면 「계좌 관리 →
+ *   통장 사진 관리」에서 **같은 사진을 한 번 더** 올려야 했다.
+ *
+ * 어느 달인지 모르면 남기지 않는다 — 날짜 없는 사진이 갤러리에 쌓이면
+ * 나중에 어느 달 것인지 아무도 모른다. 그럴 때는 손으로 올리는 편이 낫다.
+ *
+ * 실패해도 거래는 살린다. 판독은 이미 성공했고, 사진 보관은 덤이다.
+ * @returns {Promise<boolean>} 보관했는가
+ */
+async function fileBankbookPhoto(image,accId,month,name){
+  const acc=S.accounts.find(a=>a.id===accId);
+  if(!month||!acc)return false;
+  try{
+    const{url,thumbUrl}=await uploadImageWithThumb(image,
+      `bankbooks/${acc.clientId}/${accId}/${month}_${Date.now()}_${name}`);
+    const{getDoc,doc,updateDoc}=fb();
+    const ref=doc(fdb(),COLS.ACCOUNTS,accId);
+    const snap=await getDoc(ref);
+    const raw=(snap.exists()?snap.data().bankStatements:[])||[];
+    // 구형 기록은 URL 문자열이었다. 형태를 맞춰 두지 않으면 갤러리가 깨진다.
+    const existing=raw.map(x=>typeof x==='string'?{url:x,month:''}:x);
+    // 같은 달에 이미 있어도 덮지 않는다 — 통장은 여러 장이 정상이다.
+    await updateDoc(ref,{bankStatements:[...existing,{url,thumbUrl,month}]});
+    return true;
+  }catch(e){
+    toast('거래는 읽었지만 통장 사진 보관에 실패했습니다: '+(e.message||e),'error',5000);
+    return false;
   }
 }
 
