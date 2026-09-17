@@ -65,6 +65,8 @@ const APP_SHELL = [
   '/modules/modals.js',
   '/modules/permissions.js',
   '/modules/receipt-intake.js',
+  '/modules/receipt-learn.js',
+  '/modules/receipt-fields.js',
   '/modules/report.js',
   '/domain/report-workflow.js',
   '/modules/report-actor.js',

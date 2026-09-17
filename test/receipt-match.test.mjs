@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  matchReceipt, classifyMerchant, dayDiff, DATE_TOLERANCE_DAYS,
+  matchReceipt, classifyMerchant, dayDiff, DATE_TOLERANCE_DAYS, ruleLearnCandidates,
 } from '../public/domain/receipt-match.js';
 
 const trx = (over = {}) => ({
@@ -193,4 +193,84 @@ test('keyword가 없는 규칙은 무시한다', () => {
   // 함께 들어 있다. 분류 정의를 규칙으로 쓰면 아무 상호명에나 걸린다.
   const rules = [{ keyword: '', category: '식비' }, { category: '기타' }];
   assert.equal(classifyMerchant('아무거나', rules), null);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 「이 가맹점을 항상 이 분류로」 제안
+//
+// 같은 가맹점을 매달 같은 분류로 고치고 있다면 규칙 하나로 대체할 수 있다.
+// 다만 **이미 잘 되고 있는 건까지 물어보면** 사용자는 창을 닫는 법만 배운다.
+// ─────────────────────────────────────────────────────────────
+
+test('규칙이 없던 가맹점을 제안한다', () => {
+  const out = ruleLearnCandidates({
+    rows: [{ merchant: '행복마트', category: '식비' }], clientId: 'c1', rules: [],
+  });
+  assert.deepEqual(out, [{ keyword: '행복마트', category: '식비', existing: null }]);
+});
+
+test('규칙이 이미 같은 답을 내면 제안하지 않는다', () => {
+  const out = ruleLearnCandidates({
+    rows: [{ merchant: '행복마트', category: '식비' }],
+    clientId: 'c1',
+    rules: [{ keyword: '행복마트', category: '식비' }],
+  });
+  assert.deepEqual(out, []);
+});
+
+test('규칙이 다른 답을 내면 제안한다 — 사용자가 고친 것이다', () => {
+  const out = ruleLearnCandidates({
+    rows: [{ merchant: '행복마트', category: '생활용품' }],
+    clientId: 'c1',
+    rules: [{ keyword: '행복마트', category: '식비' }],
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].category, '생활용품');
+});
+
+test('같은 키워드의 전용 규칙이 있으면 고치는 것으로 표시한다', () => {
+  const rule = { id: 'r1', keyword: '행복마트', category: '식비', clientId: 'c1' };
+  const out = ruleLearnCandidates({
+    rows: [{ merchant: '행복마트', category: '생활용품' }], clientId: 'c1', rules: [rule],
+  });
+  assert.equal(out[0].existing, rule);
+});
+
+test('공통 규칙만 있으면 새로 만드는 것이다 — 공통을 고치지 않는다', () => {
+  // 공통 규칙은 전 입주자에게 영향을 주고, 담당자에게는 권한도 없다.
+  const common = { id: 'r1', keyword: '행복마트', category: '식비' };
+  const out = ruleLearnCandidates({
+    rows: [{ merchant: '행복마트', category: '생활용품' }], clientId: 'c1', rules: [common],
+  });
+  assert.equal(out[0].existing, null);
+});
+
+test('상호명이나 분류가 비면 제안하지 않는다', () => {
+  const out = ruleLearnCandidates({
+    rows: [
+      { merchant: '', category: '식비' },
+      { merchant: '   ', category: '식비' },
+      { merchant: '행복마트', category: '' },
+      { merchant: '행복마트', category: '확인필요' },
+    ],
+    clientId: 'c1', rules: [],
+  });
+  assert.deepEqual(out, []);
+});
+
+test('같은 가맹점이 여러 장이면 한 번만 제안한다', () => {
+  const out = ruleLearnCandidates({
+    rows: [
+      { merchant: '행복마트', category: '식비' },
+      { merchant: '행복마트', category: '식비' },
+    ],
+    clientId: 'c1', rules: [],
+  });
+  assert.equal(out.length, 1);
+});
+
+test('빈 입력에도 깨지지 않는다', () => {
+  for (const input of [undefined, {}, { rows: null, rules: null }]) {
+    assert.deepEqual(ruleLearnCandidates(input), []);
+  }
 });

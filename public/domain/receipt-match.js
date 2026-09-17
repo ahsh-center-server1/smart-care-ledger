@@ -190,3 +190,46 @@ export function classifyMerchant(merchant, rules, clientId) {
   }
   return null;
 }
+
+/**
+ * 「이 가맹점을 항상 이 분류로」 제안 목록.
+ *
+ * 판독은 상호명을 읽어 주지만 분류는 사용자가 고른다. 같은 가맹점을 매달
+ * 같은 분류로 고치고 있다면, 그 손질은 규칙 하나로 대체할 수 있다.
+ *
+ * **규칙이 이미 그 답을 내면 제안하지 않는다.** 그러지 않으면 이미 잘 되고
+ * 있는 건까지 매번 물어보게 되고, 그러면 사용자는 창을 닫는 법만 배운다.
+ *
+ * 제안하는 규칙은 **입주자 전용**이다. 공통 규칙은 전 입주자에게 영향을 주고,
+ * 애초에 담당자에게는 공통 규칙 권한이 없다(settings.category.common).
+ *
+ * @param {Object} input
+ * @param {Array}  input.rows     [{merchant, category}] — 사용자가 확정한 결과
+ * @param {Array}  input.rules    keyword 가 있는 categories 문서들
+ * @param {string} input.clientId 이 입주자 전용으로 만든다
+ * @returns {Array<{keyword:string, category:string, existing:Object|null}>}
+ */
+export function ruleLearnCandidates({ rows, clientId, rules } = {}) {
+  const cid = String(clientId || '');
+  const all = (rules || []).filter(r => r && r.keyword);
+  const out = [];
+  const seen = new Set();
+
+  for (const row of (rows || [])) {
+    const keyword = String((row && row.merchant) || '').trim();
+    const category = String((row && row.category) || '').trim();
+    if (!keyword || !category || category === '확인필요') continue;
+    if (seen.has(keyword)) continue;
+
+    // 규칙이 이미 같은 답을 내면 배울 것이 없다.
+    const hit = classifyMerchant(keyword, all, cid);
+    if (hit && hit.category === category) continue;
+
+    // 같은 키워드의 전용 규칙이 있으면 **새로 만드는 것이 아니라 고치는 것**이다.
+    const existing = all.find(r => String(r.clientId || '') === cid && r.keyword === keyword) || null;
+
+    seen.add(keyword);
+    out.push({ keyword, category, existing });
+  }
+  return out;
+}

@@ -4,11 +4,13 @@ import { S } from '../state.js';
 import { prepareReceiptForAnalysis, uploadReceipts } from '../services/receipt-upload.js';
 import { toast, showLoading } from '../utils/ui.js';
 import { batchMixedOps } from '../services/firestore.js';
+import { offerRuleLearning } from './receipt-learn.js';
+import { categoryField } from './receipt-fields.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
 import { validateUploadSize } from '../services/storage.js';
 import { auditOp } from '../services/audit.js';
 import { can } from './permissions.js';
-import { isConfirmedLocked, loadTransactions } from './core.js';
+import { isConfirmedLocked, loadTransactions, refetchCategories } from './core.js';
 import { toReceiptDraft } from '../domain/receipt.js';
 import { classifyMerchant } from '../domain/receipt-match.js';
 import {
@@ -397,27 +399,6 @@ function field(row, key, label, type) {
   return d;
 }
 
-function categoryField(row) {
-  const d = document.createElement('div');
-  const l = document.createElement('label');
-  l.className = 'ui-label';
-  l.textContent = '분류';
-  const s = document.createElement('select');
-  s.className = 'ui-select';
-
-  if (row.decision === 'choose') {
-    s.appendChild(new Option('후보를 선택하세요', ''));
-  }
-  const cats = [...new Set(S.categories
-    .filter(c => !c.keyword && c.type === '지출')
-    .map(c => c.category))];
-  s.appendChild(new Option('분류 없음', ''));
-  for (const c of cats) s.appendChild(new Option(c, c));
-  s.value = cats.includes(row.category) ? row.category : '';
-  s.addEventListener('change', () => { row.category = s.value; });
-  d.append(l, s);
-  return d;
-}
 
 /** 「기존 거래에 첨부」 vs 「새 거래 만들기」 */
 function targetField(row) {
@@ -560,6 +541,8 @@ async function saveAll() {
     if (logOp) await batchMixedOps({ adds: [{ col: logOp.col, data: logOp.data }] });
 
     const byUpload = new Map(out.results.map(result => [result.uploadId, result]));
+    // cleanup() 이 rows 를 비우므로 미리 잡아 둔다.
+    const saved = rows.map(r => ({ uploadId: r.uploadId, merchant: r.draft?.merchant || '', category: r.category || '' }));
     const remaining = [];
     for (const row of rows) {
       const result = byUpload.get(row.uploadId);
@@ -577,8 +560,9 @@ async function saveAll() {
       paintReview();
     } else {
       toast(`저장 완료 — 기존 거래에 ${attached}건 첨부, 새 거래 ${created}건 생성.`, 'success', 6000);
-      cleanup();
-      window.closeModal();
+      const learned = saved.filter(r => byUpload.get(r.uploadId)?.ok);
+      cleanup(); window.closeModal();
+      if (can('settings.category')) offerRuleLearning(learned, clientId, refetchCategories);
     }
     await loadTransactions(clientId, { range: S.trxRange });
   } catch (e) {
@@ -596,3 +580,4 @@ function cleanup() {
 }
 
 export { cleanup as cleanupReceiptIntake, LOW_CONFIDENCE, MAX_FILES };
+
