@@ -76,8 +76,16 @@ jobs:
     steps:
       - name: 시크릿 확인
         id: check
+        env:
+          # ⚠️ 시크릿을 run 본문에 ${{ }} 로 박으면 **값이 스크립트 텍스트로 치환된다.**
+          # 서비스 계정 JSON에는 큰따옴표와 줄바꿈이 있어 `[ -n "…" ]` 의 인용이
+          # 중간에 끊기고 `[: too many arguments` 로 죽는다. `if` 조건의 실패는
+          # 무시되므로 **시크릿이 있는데도 "없다"로 판정**되어 배포가 조용히
+          # 건너뛰어졌다(실제로 겪은 일이다). env 로 넘기면 값은 셸 변수에만
+          # 들어가고 스크립트 문법을 건드리지 않는다.
+          SA_JSON: ${{ secrets.FIREBASE_SA_STAGING }}
         run: |
-          if [ -n "${{ secrets.FIREBASE_SA_STAGING }}" ]; then
+          if [ -n "$SA_JSON" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
             echo "시크릿 확인됨 · 대상 프로젝트: $FIREBASE_PROJECT"
             exit 0

@@ -74,6 +74,26 @@ test('자격증명을 저장소나 로그에 남기지 않는다', () => {
   assert.ok(!/echo\s+"?\$SA_JSON/.test(src), '시크릿을 echo하고 있습니다');
 });
 
+test('시크릿을 run 본문에 직접 박지 않는다', () => {
+  // 실제로 겪은 일 — 시크릿을 등록했는데도 배포가 조용히 건너뛰어졌다.
+  //
+  //   if [ -n "${{ secrets.FIREBASE_SA_STAGING }}" ]; then
+  //
+  // ${{ }}는 **값을 스크립트 텍스트로 치환**한다. 서비스 계정 JSON에는
+  // 큰따옴표와 줄바꿈이 있으므로 인용이 중간에 끊겨 `[: too many arguments`로
+  // 죽고, if 조건의 실패는 무시되어 "시크릿이 없다"는 가지로 흘렀다.
+  // 로그에서도 값은 ***로 가려져 원인이 보이지 않는다.
+  //
+  // env: 로 넘기면 값은 셸 변수에만 들어가고 문법을 건드리지 않는다.
+  const src = read(WORKFLOW);
+  const runBlocks = [...src.matchAll(/^(\s+)run: \|\n((?:\1\s.*\n|\n)*)/gm)];
+  assert.ok(runBlocks.length > 0, 'run 블록을 찾지 못했습니다');
+  for (const m of runBlocks) {
+    assert.ok(!/\$\{\{\s*secrets\./.test(m[2]),
+      'run 스크립트 안에서 시크릿을 ${{ secrets.* }}로 직접 참조합니다 — env로 넘기세요');
+  }
+});
+
 test('시크릿이 없으면 배포에 들어가지 않는다', () => {
   const src = read(WORKFLOW);
   assert.match(src, /needs: preflight/, '배포가 준비 확인에 의존하지 않습니다');
