@@ -803,7 +803,7 @@
 
           <div id="report-area" style="display:none;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;" class="no-print">
-              <button onclick="document.getElementById('report-area').style.display='none';if(window.S)S.reportData=null;document.querySelectorAll('#rpt-list .card').forEach(el=>el.style.background='');" style="font-size:13px;font-weight:700;color:var(--muted);background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;">← 목록으로</button>
+              <button onclick="closeReportView()" style="font-size:13px;font-weight:700;color:var(--muted);background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;">← 목록으로</button>
               <div style="display:flex;gap:8px;align-items:center;">
                 <div id="rpt-status-badge"></div>
                 <div style="display:flex;gap:8px;" id="rpt-action-btns"></div>

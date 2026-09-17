@@ -25,6 +25,7 @@ import { reportChecklist, checklistLines } from '../domain/report-checklist.js';
 import { getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
 import { isConfirmedLocked } from './core.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
+import { rememberOpenReport, restorableReport } from '../domain/report-session.js';
 
 // 보고서 필수 고정항목 미납 배너
 function renderRptMandatoryBanner(clientId,year,month,trxList){
@@ -286,6 +287,9 @@ export async function loadReport(){
     });
     const accountRows=getReportAccountRows(year,month,accs,allTrx);
     S.reportData={clientId,year,month,trxList,allTrx,accs,accountRows,report,summary:{totalIn,totalOut,balance:totalIn-totalOut,catStats}};
+    // 무엇을 보고 있었는지만 남긴다. 계산 결과는 돌아올 때 다시 만든다 —
+    // 결재 문서라 낡은 숫자가 그대로 보이는 쪽이 더 위험하다.
+    S.reportOpen=rememberOpenReport({clientId,year,month});
     renderReportView();
     document.getElementById('report-area').style.display='block';
     // 목록 테이블에서 현재 보고서 행 하이라이트
@@ -301,6 +305,37 @@ export async function loadReport(){
     document.getElementById('report-area')?.scrollIntoView({behavior:'smooth',block:'start'});
   }catch(e){toast('보고서 로드 오류: '+e.message,'error');}
   showLoading(false);
+}
+
+/**
+ * 보고서 화면을 닫는다 — 직접 닫은 것이므로 기억도 지운다.
+ * 탭 이동(changeView)은 "잠깐 다른 걸 본다"라 기억을 남기고, 여기는 "그만 본다"다.
+ */
+export function closeReportView(){
+  const ra=document.getElementById('report-area');
+  if(ra)ra.style.display='none';
+  S.reportData=null; S.reportOpen=null;
+  document.querySelectorAll('#rpt-list tr').forEach(tr=>{tr.style.background='';tr.style.fontWeight='';});
+  document.querySelectorAll('#rpt-list .card').forEach(el=>{el.style.background='';});
+}
+
+/**
+ * 보고서 탭으로 돌아왔을 때 보던 것을 다시 연다.
+ *
+ * 기억해 둔 것으로 **다시 조회한다** — 그 사이 거래를 고쳤거나 동료가 결재했을
+ * 수 있다. 담당에서 빠진 입주자면 조용히 선택 화면으로 남는다.
+ */
+export function restoreOpenReport(){
+  const rec=restorableReport(S.reportOpen,S.clients);
+  if(!rec){ S.reportOpen=null; S.reportData=null; return; }
+  const rc=document.getElementById('r-client'),ry=document.getElementById('r-year'),rm=document.getElementById('r-month');
+  if(!rc||!ry||!rm)return;
+  rc.value=rec.clientId; ry.value=String(rec.year); rm.value=String(rec.month);
+  // 연도 선택칸에 없는 해(6년 넘게 지난 보고서)면 복원하지 않는다.
+  if(rc.value!==rec.clientId||Number(ry.value)!==rec.year||Number(rm.value)!==rec.month){
+    S.reportOpen=null; return;
+  }
+  loadReport();
 }
 
 export function renderReportView(){
@@ -1190,10 +1225,7 @@ export function renderReportList(){
     tr.addEventListener('mouseleave',()=>{if(S.reportData?.report?.id!==r.id)tr.style.background='';});
     tr.addEventListener('click',()=>{
       if(S.reportData?.report?.id===r.id){
-        const ra=document.getElementById('report-area');
-        if(ra)ra.style.display='none';
-        S.reportData=null;
-        tbody.querySelectorAll('tr').forEach(t=>{t.style.background='';t.style.fontWeight='';});
+        closeReportView();
         return;
       }
       tbody.querySelectorAll('tr').forEach(t=>{t.style.background='';t.style.fontWeight='';});

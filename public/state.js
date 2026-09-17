@@ -32,6 +32,9 @@ export const S = {
   rptChart: null, rptTrendChart: null,
   annualCharts: {},
   reportData: null,
+  // 보고서 탭을 떠날 때 남기는 「무엇을 보고 있었나」 (입주자·연·월).
+  // 계산 결과가 아니다 — 돌아오면 이것으로 다시 조회한다.
+  reportOpen: null,
   driveToken: null,
   driveTokenExpiry: null,
   fixedItems: [],          // 고정항목 (활성 입주자 기준)

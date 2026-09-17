@@ -349,9 +349,12 @@ export function changeView(view) {
   }
   if(view==='annual'){ changeView('report'); switchRptSubtab('annual'); return; }
   if(view!=='report'){
+    // 화면만 감춘다. **버리지 않는다** — 예전에는 여기서 S.reportData=null 이라
+    // 대시보드에서 숫자 하나 보고 돌아오면 입주자·연·월을 다시 고르고 조회를
+    // 다시 눌러야 했다. 돌아올 때 무엇을 보고 있었는지로 다시 조회한다
+    // (낡은 숫자를 그대로 보여주지 않으려고 계산 결과는 다시 만든다).
     const ra=document.getElementById('report-area');
     if(ra)ra.style.display='none';
-    S.reportData=null;
   }
   ['dashboard','history','report','settings'].forEach(v=>{
     const el=document.getElementById('view-'+v); if(el)el.style.display=v===view?'block':'none';
@@ -382,7 +385,7 @@ export function changeView(view) {
       Settings.loadSettings();
     }
   }
-  if (view==='report')    { Rpt.loadReportList(); switchRptSubtab('monthly'); }
+  if (view==='report')    { Rpt.loadReportList(); switchRptSubtab('monthly'); Rpt.restoreOpenReport(); }
 }
 
 export function switchRptSubtab(tab){

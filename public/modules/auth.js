@@ -157,7 +157,7 @@ function clearSessionState() {
   S.allClients=[]; S.allAccounts=[];
   S.transactions=[]; S.filteredTrx=[]; S.activeClient=null;
   S.trxRange='month'; S.page=1;
-  S.reportData=null;
+  S.reportData=null; S.reportOpen=null;
   S.confirmedMonths=new Set();
   S.submittedMonths=new Set();
   S.reportList=null; S.rptTrxCache=null; S.rptListAllYears=false;

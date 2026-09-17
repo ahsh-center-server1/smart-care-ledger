@@ -136,6 +136,7 @@ Object.assign(window, {
   generateRuleBasedSummary: Rpt.generateRuleBasedSummary,
   loadAnnual: Rpt.loadAnnual,
   loadReport: Rpt.loadReport,
+  closeReportView: Rpt.closeReportView,
   renderReportView: Rpt.renderReportView,
   renderRptTrxTable: Rpt.renderRptTrxTable,
   applyRptSort: Rpt.applyRptSort,
