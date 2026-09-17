@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>cache probe</title>
+<body><pre id="log">probe loading…</pre></body>
+<script>
+// 계수는 프록시(tools/measure-cache.mjs)가 한다. 페이지 안에서 XHR·fetch 를
+// 둘 다 감싸 봤더니 같은 스트림을 두 번 세어 같은 시나리오가 90 과 180 을
+// 오갔다 — 재보는 도구가 흔들리면 결론도 흔들린다.
+</script>
+<script type="module">
+import {
+  initializeApp, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  CACHE_SIZE_UNLIMITED, connectFirestoreEmulator,
+  collection, query, where, getDocs, onSnapshot,
+} from '/sdk.js';
+
+const params = new URLSearchParams(location.search);
+const app = initializeApp({ projectId: params.get('project') || 'cache-probe', apiKey: 'x', appId: '1:1:web:1' });
+
+// 앱(public/index.html)과 **같은 설정**이어야 재는 의미가 있다.
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+    cacheSizeBytes: CACHE_SIZE_UNLIMITED,
+  }),
+});
+connectFirestoreEmulator(db, '127.0.0.1', 8080);   // 앱과 똑같이 에뮬레이터에 직접
+
+const q = query(collection(db, 'transactions'), where('clientId', '==', 'c1'));
+let unsub = null;
+
+window.probe = {
+  /** 현재 앱이 쓰는 방식 */
+  async once() {
+    const s = await getDocs(q);
+    return { size: s.size, fromCache: s.metadata.fromCache };
+  },
+  /** 제안하는 방식 — 서버와 동기화될 때까지 기다린다 */
+  listen() {
+    return new Promise((resolve, reject) => {
+      let first = null;
+      unsub = onSnapshot(q, { includeMetadataChanges: true }, (s) => {
+        if (first === null) first = { size: s.size, fromCache: s.metadata.fromCache };
+        // fromCache=false 가 되면 서버 동기화가 끝난 것이다.
+        if (!s.metadata.fromCache) {
+          resolve({ first, synced: { size: s.size, changes: s.docChanges().length } });
+        }
+      }, reject);
+    });
+  },
+  stop() { if (unsub) { unsub(); unsub = null; } },
+};
+document.getElementById('log').textContent = 'probe ready';
+window.__ready = true;
+</script>
