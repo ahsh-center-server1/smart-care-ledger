@@ -201,6 +201,12 @@ module.exports = function aiFns(ctx) {
         '사진 자동입력 키가 거부되었습니다. 관리자에게 API 키 재설정을 요청하세요.' + MANUAL,
       );
     }
+    if (m === 'ai-model-unavailable') {
+      return new HttpsError(
+        'failed-precondition',
+        '판독 모델을 사용할 수 없습니다. 관리자에게 문의하세요.' + MANUAL,
+      );
+    }
     if (m === 'ai-quota-exceeded') {
       return new HttpsError(
         'resource-exhausted',

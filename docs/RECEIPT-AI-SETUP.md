@@ -26,7 +26,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 모델 | 기본 `gemini-2.5-flash-lite` (`GEMINI_MODEL` 환경변수로 교체 가능) |
+| 모델 | 기본 `gemini-3.5-flash-lite` (`GEMINI_MODEL` 환경변수로 교체 가능) |
 | 사진 1장 | 실제 모델·이미지 크기·과금 등급에 따라 달라짐 |
 | 월 500장 | Google AI Studio 또는 Vertex AI 콘솔의 현재 단가로 확인 |
 

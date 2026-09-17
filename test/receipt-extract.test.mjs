@@ -28,6 +28,10 @@ const ai = require('../functions/ai/gemini.js');
 test('모델 id가 상수로 고정돼 있다', () => {
   // 값이 틀리면 런타임 400이다. 기본값은 코드에 두고, 운영에서는 GEMINI_MODEL로 바꿀 수 있다.
   assert.match(ai.ANALYZE_MODEL, /^gemini-/);
+  // 은퇴한 모델로 되돌아가지 않게 못 박는다. 2.5-flash-lite 는 신규 사용자에게
+  // 닫혔고, 그 상태에서는 판독이 전부 404 로 실패한다(실제로 겪었다).
+  assert.ok(!/^gemini-2\.5-/.test(ai.ANALYZE_MODEL),
+    `${ai.ANALYZE_MODEL} 은 신규 사용자에게 닫힌 모델입니다`);
 });
 
 test('키가 없으면 기능 없음이지 크래시가 아니다', () => {
@@ -247,6 +251,25 @@ test('잘못된 키는 상태 코드가 400이어도 키 거부로 분류한다'
   assert.equal(providerError({ message: 'API_KEY_INVALID' }).message, 'ai-key-rejected');
 });
 
+test('은퇴한 모델의 404를 분류한다 — 실제로 겪은 형태 그대로', () => {
+  // 로그에서 그대로 가져온 형태. gemini-2.5-flash-lite 가 신규 사용자에게
+  // 닫히면서 잘 돌던 배포가 어느 날 500 으로 죽었다. 키를 의심하게 되지만
+  // 키는 멀쩡했다 — 404 를 분류하지 않아 맨 500 으로 떨어진 것이었다.
+  const cause = {
+    status: 404,
+    message: '{"error":{"code":404,"message":"This model models/gemini-2.5-flash-lite '
+      + 'is no longer available to new users. Please update your code to use '
+      + 'models/gemini-3.5-flash-lite for the latest features and improvements.",'
+      + '"status":"NOT_FOUND"}}',
+  };
+  assert.equal(providerError(cause).message, 'ai-model-unavailable');
+
+  // 상태 코드가 안 실려 와도 본문으로 알아본다
+  assert.equal(
+    providerError({ message: 'models/foo is not found for API version v1beta' }).message,
+    'ai-model-unavailable');
+});
+
 test('할당량과 일시 장애를 구분한다 — 사용자가 할 일이 다르다', () => {
   // 할당량은 기다리면 되고, 장애도 기다리면 된다. 키 거부만 관리자가 필요하다.
   assert.equal(providerError({ status: 429, message: '' }).message, 'ai-quota-exceeded');
@@ -272,7 +295,8 @@ test('공급자 오류 이름이 전부 사용자 메시지로 번역된다', as
   // 고치기 전과 똑같아지므로 여기서 대조한다.
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../functions/ai-fns.js', import.meta.url), 'utf8');
-  for (const name of ['ai-key-rejected', 'ai-quota-exceeded', 'ai-provider-unavailable']) {
+  for (const name of ['ai-key-rejected', 'ai-model-unavailable', 'ai-quota-exceeded',
+    'ai-provider-unavailable']) {
     assert.ok(src.includes(`m === '${name}'`),
       `imageErrorToHttps가 ${name}을 번역하지 않습니다 — 화면에 맨 500이 뜹니다`);
   }

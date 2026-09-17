@@ -12,7 +12,15 @@
 
 const { GoogleGenAI } = require('@google/genai');
 
-const ANALYZE_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+/**
+ * 기본 모델. 운영에서는 GEMINI_MODEL 환경변수로 바꿀 수 있다.
+ *
+ * ⚠️ 모델은 **은퇴한다.** gemini-2.5-flash-lite 는 신규 사용자에게 닫혔고,
+ * 그때 API 가 404 NOT_FOUND 를 돌려줬다("no longer available to new users").
+ * 키 문제로 보이지만 키는 멀쩡하다 — 배포된 지 한참 뒤에 갑자기 드러난다.
+ * 그래서 providerError 가 404 를 따로 분류한다(receipt-extract.js).
+ */
+const ANALYZE_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
 let cached = null;
 

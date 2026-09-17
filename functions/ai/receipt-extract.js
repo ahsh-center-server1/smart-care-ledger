@@ -248,6 +248,11 @@ function providerError(cause) {
   if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(text)) {
     return named('ai-quota-exceeded');
   }
+  // 모델은 은퇴한다. 잘 돌던 배포가 어느 날 404 로 죽는다 — 키를 의심하게
+  // 되지만 키는 멀쩡하다. gemini-2.5-flash-lite 가 실제로 그렇게 닫혔다.
+  if (status === 404 || /NOT_FOUND|no longer available|is not found for API version/i.test(text)) {
+    return named('ai-model-unavailable');
+  }
   if (status >= 500 || /UNAVAILABLE|DEADLINE_EXCEEDED|fetch failed|ECONN|ETIMEDOUT/i.test(text)) {
     return named('ai-provider-unavailable');
   }
