@@ -62,7 +62,7 @@ test('구분자가 섞인 내용이 다른 거래와 충돌하지 않는다', ()
 test('중복 대조는 화면 캐시가 아니라 Firestore를 본다', () => {
   // S.transactions는 당월·활성 입주자뿐이라, 2월 명세서를 9월에 올리면
   // 중복 0건 → 같은 파일을 두 번 올려도 두 벌 들어갔다.
-  const body = bodyOf(src('public/modules/modals.js'), 'async function fetchExistingForDup(');
+  const body = bodyOf(src('public/modules/excel-support.js'), 'export async function fetchExistingForDup(');
   assert.ok(body.includes('getDocs'), '기존 거래를 Firestore에서 읽지 않습니다');
   assert.ok(/where\('accountId','==',accId\)/.test(body), '계좌로 좁히지 않습니다');
   assert.ok(!body.includes('S.transactions'), '아직 화면 캐시를 보고 있습니다');

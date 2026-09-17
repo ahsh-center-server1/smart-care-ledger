@@ -21,7 +21,6 @@ function calcAccountBalance(account, transactions) {
   for (const t of (transactions || [])) {
     if (t.accountId !== accId) continue;
     if (base && (t.date || '') <= base) continue;   // 기준일 당일까지는 기초잔액에 포함됨
-    if (t.type === '취소') continue;                 // 승인취소는 잔액 무관
     bal += Number(t.amountIn || 0) - Number(t.amountOut || 0);
   }
   return bal;
@@ -31,7 +30,7 @@ function calcAccountBalance(account, transactions) {
  * 잔액에 영향을 주는 거래 필드 목록.
  * calcAccountBalance가 실제로 읽는 필드와 정확히 일치해야 한다.
  */
-const BALANCE_FIELDS = ['accountId', 'date', 'type', 'amountIn', 'amountOut'];
+const BALANCE_FIELDS = ['accountId', 'date', 'amountIn', 'amountOut'];
 
 /**
  * 거래 문서의 변경이 계좌 잔액을 바꿀 수 있는가.
@@ -54,8 +53,7 @@ function affectsBalance(before, after) {
     Number(before.amountIn  || 0) !== Number(after.amountIn  || 0) ||
     Number(before.amountOut || 0) !== Number(after.amountOut || 0) ||
     String(before.accountId || '') !== String(after.accountId || '') ||
-    String(before.date      || '') !== String(after.date      || '') ||
-    String(before.type      || '') !== String(after.type      || '')
+    String(before.date      || '') !== String(after.date      || '')
   );
 }
 

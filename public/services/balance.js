@@ -18,6 +18,8 @@
 
 'use strict';
 
+import { countsInTotals } from '../domain/trx-totals.js';
+
 /**
  * 기준일 이후 거래만 합산한 계좌 잔액.
  *
@@ -25,10 +27,11 @@
  *   initialBalance는 "기준일 시점의 잔액"이므로 그날 거래는 이미 반영되어 있다.
  *   따라서 date > baseDate 인 거래만 더한다. (기준일 당일을 포함하면 이중 계상)
  *
- * 거래 유형
- *   수입·지출·자산이동 → 잔액에 반영
- *   취소               → 카드 승인취소이므로 잔액에 영향 없음
- *   음수 amountOut     → 환불. 부호 그대로 반영되어 잔액이 늘어난다.
+ * 거래 유형은 보지 않는다
+ *   **모든 거래가 잔액에 들어간다.** 예전에는 취소를 건너뛰었는데(카드 승인이
+ *   취소되면 돈이 안 나갔다는 뜻으로), 실제로는 이미 빠져나간 돈이 돌아오는
+ *   경우가 더 흔했다. 그때는 통장 잔액과 장부가 그 금액만큼 어긋났다.
+ *   음수 amountOut(환불)은 부호 그대로 반영되어 잔액이 늘어난다.
  *
  * @param {Object} account      accounts 문서 ({id, initialBalance, initialBalanceDate})
  * @param {Array}  transactions 해당 계좌를 포함한 거래 목록 (다른 계좌가 섞여 있어도 됨)
@@ -43,7 +46,6 @@ export function calcAccountBalance(account, transactions) {
   for (const t of (transactions || [])) {
     if (t.accountId !== accId) continue;
     if (base && (t.date || '') <= base) continue;   // 기준일 당일까지는 기초잔액에 포함됨
-    if (t.type === '취소') continue;                 // 승인취소는 잔액 무관
     bal += Number(t.amountIn || 0) - Number(t.amountOut || 0);
   }
   return bal;
@@ -54,7 +56,9 @@ export function calcAccountBalance(account, transactions) {
  * calcAccountBalance가 실제로 읽는 필드와 정확히 일치해야 한다 —
  * 여기에 빠진 필드가 잔액식에 쓰이면 갱신이 누락된다.
  */
-export const BALANCE_FIELDS = ['accountId', 'date', 'type', 'amountIn', 'amountOut'];
+// type 은 없다 — 잔액식이 더 이상 유형을 보지 않는다(모든 거래가 들어간다).
+// 남겨 두면 분류만 고쳐도 계좌 전체 재계산이 돌아 읽기가 낭비된다.
+export const BALANCE_FIELDS = ['accountId', 'date', 'amountIn', 'amountOut'];
 
 /**
  * 거래 문서의 변경이 계좌 잔액을 바꿀 수 있는가.
@@ -82,8 +86,7 @@ export function affectsBalance(before, after) {
     Number(before.amountIn  || 0) !== Number(after.amountIn  || 0) ||
     Number(before.amountOut || 0) !== Number(after.amountOut || 0) ||
     String(before.accountId || '') !== String(after.accountId || '') ||
-    String(before.date      || '') !== String(after.date      || '') ||
-    String(before.type      || '') !== String(after.type      || '')
+    String(before.date      || '') !== String(after.date      || '')
   );
 }
 
@@ -108,15 +111,16 @@ export function calcBalances(accounts, transactions) {
 }
 
 /**
- * 수입/지출 집계. 자산이동과 취소는 제외한다(계좌 간 이동은 수입도 지출도 아니다).
+ * 수입/지출 집계. 「합계 제외」로 표시된 거래는 빠진다
+ * (계좌 간 이동은 수입도 지출도 아니다 — domain/trx-totals.js).
  * @returns {{totalIn:number, totalOut:number}}
  */
 export function sumIncomeExpense(transactions) {
   let totalIn = 0, totalOut = 0;
   for (const t of (transactions || [])) {
-    if (t.type === '수입')      totalIn  += Number(t.amountIn  || 0);
-    else if (t.type === '지출') totalOut += Number(t.amountOut || 0);
-    // 자산이동 · 취소 → 집계 제외
+    if (!countsInTotals(t)) continue;
+    totalIn  += Number(t.amountIn  || 0);
+    totalOut += Number(t.amountOut || 0);
   }
   return { totalIn, totalOut };
 }

@@ -45,6 +45,7 @@ accounts:     { accountId, clientId, label, accountNumber,
                 bankStatements: [{url, thumbUrl, month}] }
 transactions: { trxId, clientId, accountId, date, type, category,
                 subcategory, description, amountIn, amountOut,
+                method, excludeFromTotals,
                 receiptUrl, sortOrder, isFixed, fixedItemId,
                 linkedAccountId, linkedTrxId }
 categories:   { keyword, type, category, subcategory,
@@ -210,14 +211,48 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
   부재면 담당 배정을 바꿔 다른 담당자가 제출한다 — 결재 단계를 건너뛰는
   탈출구는 두지 않는다.
 
-## 6. 거래 유형(type)
+## 6. 거래 유형(type)과 「합계 제외」
 
-| 유형 | 수입/지출 집계 | 잔액 반영 | 비고 |
-|---|---|---|---|
-| 수입 | ✅ | ✅ | |
-| 지출 | ✅ | ✅ | 음수 amountOut = 환불 |
-| 자산이동 | ❌ 제외 | ✅ | 출금계좌 → 지출, 입금계좌 → 수입 (별도 2개 거래) |
-| 취소 | ❌ 제외 | ❌ | 카드 승인취소 |
+**유형은 수입·지출 둘뿐이다.** 그리고 **잔액은 유형을 보지 않는다** —
+모든 거래가 들어간다(`services/balance.js`). 합계에서 뺄지 말지는
+`excludeFromTotals` 표시 하나가 정한다.
+
+| | 수입/지출 집계 | 잔액 반영 |
+|---|---|---|
+| 수입 · 지출 | ✅ | ✅ |
+| 「합계 제외」 표시 | ❌ | ✅ |
+
+> 판정은 `public/domain/trx-totals.js`의 `countsInTotals()` **한 곳**이다.
+> 예전에는 `type==='자산이동'||type==='취소'` 가 열한 곳에 손으로 적혀 있었고,
+> 한 곳만 빠뜨리면 보고서 합계와 대시보드 카드가 달라졌다.
+
+### 구형 유형 — 새로 만들 수는 없고, 읽기는 그대로
+
+`자산이동`·`취소`는 **"합계에는 안 들어가지만 잔액에는 들어간다"는 한 가지
+성질**을 말하려고 만든 유형이었다. 그 대가로 자산이동은 두 거래를 서로 링크하는
+콜러블(`saveTransfer`)과 규칙 예외를 달고 있었는데, 실제로 쓰는 사람은 많지
+않았다. 성질에 이름을 주니 유형은 둘로 줄고 나머지는 체크 한 칸이 됐다.
+
+이미 저장된 것은 **고쳐 쓰지 않는다.** 결재가 끝난 달의 숫자가 배포 때문에
+달라지면 안 되므로, 두 유형을 「합계 제외」와 같은 뜻으로 읽는다. 수기 입력
+폼은 그런 거래를 **열었을 때만** 그 유형을 보여 준다(`legacyTypeOption`) —
+목록에 없으면 select 가 「지출」로 떨어지고, 저장을 누르는 순간 짝이 있는
+자산이동이 말없이 지출로 바뀐다.
+
+> ⚠️ **취소가 이제 잔액에 반영된다.** 예전에는 건너뛰었다("카드 승인이
+> 취소됐으니 돈이 안 나갔다"). 그런데 현장에서 더 흔한 것은 이미 빠져나간
+> 돈이 돌아오는 경우였고, 그때는 통장 잔액과 장부가 그 금액만큼 어긋났다.
+> **기존 취소 거래가 있는 계좌는 잔액이 달라진다** — 배포 뒤
+> `node tools/recalc-balances.mjs`(먼저 드라이런)로 `currentBalance` 를
+> 다시 만든다.
+
+### 결제수단(`method`)
+
+분류(무엇에 썼나)와 **다른 축**이다. 통장 적요에서 읽어
+`카드 · 계좌이체 · 자동이체 · 현금` 중 하나를 붙이고, 모르면 비워 둔다.
+판정은 `public/domain/payment-method.js` 하나이고, **`NOISE_WORDS` 로 다듬기
+전의 원문**(`descRaw`)에서 한다 — 다듬으면서 지우는 단어들
+(`체크카드`·`일시불`·`승인`·`전자금융`·`CD이체`)이 정확히 그 단서다.
 
 ---
 
@@ -236,10 +271,10 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 - [x] 입주자/계좌/구분/증빙/기간 필터
 - [x] 계좌 필터 (입주자 변경 시 자동 갱신)
 - [x] 키워드(내용) 검색
-- [x] 날짜 오름차순 기본 정렬
+- [x] 장부 순서 정렬: **날짜 → 그 날 안의 순서(sortOrder) → 시각**
 - [x] 날짜/카테고리/내용/계좌/수입/지출/증빙 컬럼 헤더 정렬 (토글)
 - [x] 목록 뷰 ↔ 달력 뷰 전환
-- [x] sortOrder 기반 드래그앤드롭 순서 변경 (현재 페이지 내)
+- [x] 드래그앤드롭 순서 변경 (**그 날 안에서만** — domain/trx-order.js)
 - [x] 수정 후 정렬 유지 (로컬 업데이트)
 - [x] 페이지네이션 (100건/페이지)
 - [x] 일괄 삭제 (체크박스)
@@ -256,7 +291,7 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 ### 엑셀 업로드
 - [x] KB국민은행/카드, NH농협은행/카드, 우리은행, 신한은행 지원
 - [x] SMS XML, HTML-XLS 지원
-- [x] 파일 순서 그대로 sortOrder 부여
+- [x] 파일 순서 그대로 sortOrder 부여 (날짜마다 그 날의 다음 자리부터)
 - [x] 음수 지출 → 지출에서 음수 처리 (잔액 반영)
 - [x] 중복 경고 (날짜+금액 비교, 중복의심 뱃지)
 - [x] 입주자별 자동 분류 규칙 (우선) + 공통 규칙 매칭
@@ -279,7 +314,7 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 
 ### 카테고리 관리
 - [x] 공통 + 입주자별 전용 카테고리
-- [x] sortOrder 기반 드래그앤드롭 순서 변경
+- [x] 드래그앤드롭 순서 변경 (그 날 안에서만)
 - [x] 자주 사용하는 순서로 거래내역 드롭다운에 반영
 - [x] 공통 + 입주자별 전용 자동분류 규칙
 
@@ -316,7 +351,7 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 - [x] 규칙 기반 자동 분석
 - [x] 엑셀 저장
 - [x] 인쇄/PDF (A4, 글씨 15px)
-- [x] sortOrder 기반 드래그앤드롭 순서 변경 (현재 페이지 내)
+- [x] 드래그앤드롭 순서 변경 (**그 날 안에서만** — domain/trx-order.js)
 - [x] 거래내역 자동 정렬: sortOrder 기준 → 날짜/시간 오름차순
 - [x] 컬럼 헤더 정렬 (rptSortKey)
 

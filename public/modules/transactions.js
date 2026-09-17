@@ -14,7 +14,7 @@ import { can, unavailableMessage } from './permissions.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 import {
   renderUnclassifiedBadge, isUnclassifiedTrx, resetFiltersUI,
-  openCatDropdownUI, closeCatDropdowns, methodBadge, readTrxFilters,
+  openCatDropdownUI, closeCatDropdowns, methodBadge, excludedBadge, readTrxFilters,
 } from './transactions-widgets.js';
 
 // 필수 고정항목 미납 배너 렌더 (당월 기준)
@@ -169,7 +169,7 @@ export function renderHistoryTable() {
       const sub=Number(t.amountIn||0)>0?'수입':'지출';
       typeTag='<span style="font-size:10px;background:#f4f4f5;color:#71717a;padding:1px 5px;border-radius:4px;margin-left:4px;">취소('+sub+')</span>';
     }
-    const methodTag=methodBadge(t.method), accName=S.accounts.find(a=>a.id===t.accountId)?.label||'';
+    const methodTag=methodBadge(t.method)+excludedBadge(t), accName=S.accounts.find(a=>a.id===t.accountId)?.label||'';
     tr.innerHTML=`
       <td style="text-align:center;width:28px;cursor:grab;color:#cbd5e1;font-size:16px;user-select:none;${isInputOnly?'display:none;':''}" class="drag-handle" title="드래그로 순서 변경">⠿</td>
       <td class="col-check" style="text-align:center;width:36px;${isInputOnly?'display:none;':''}"><input type="checkbox" class="row-check" value="${t.id}" data-acc="${t.accountId}" style="accent-color:var(--blue);width:14px;height:14px;cursor:pointer;"></td>

@@ -23,11 +23,14 @@ import { renderFixedItemForm, registerModalShell } from './fixed-items.js';
 // 호출부까지 번지지 않게 하는 것이 분리의 목적이다.
 export { getUnpaidMandatoryItems, renderFixedItemsList } from './fixed-items.js';
 import * as ExcelParser from '../services/excel-parser.js';
+import { dupKey, fetchExistingForDup, isImageFile, renderXlSkipped } from './excel-support.js';
+export { isImageFile };
 import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
 import { bankbookRowsToParsed } from '../domain/receipt.js';
 import { orderedCategories } from '../domain/category-order.js';
 import { dayOrderAllocator } from '../domain/trx-order.js';
 import { PAYMENT_METHODS, detectPaymentMethod, normalizePaymentMethod } from '../domain/payment-method.js';
+import { isExcludedFromTotals } from '../domain/trx-totals.js';
 import { parseAmount, attachAmountInput } from '../utils/amount-input.js';
 import { classifyMerchant } from '../domain/receipt-match.js';
 import { compressImage, heicToJpeg } from '../services/image.js';
@@ -97,9 +100,7 @@ export function renderTrxForm(t){
         <div><label class="label">구분</label><select id="f-type" class="input" style="padding:8px 12px;">
           <option value="지출"${editTypeUI==='지출'?' selected':''}>지출</option>
           <option value="수입"${editTypeUI==='수입'?' selected':''}>수입</option>
-          <option value="자산이동"${editTypeUI==='자산이동'?' selected':''}>자산이동 (계좌간 이체)</option>
-          <option value="취소-지출"${editTypeUI==='취소-지출'?' selected':''}>취소(지출, 카드승인취소)</option>
-          <option value="취소-수입"${editTypeUI==='취소-수입'?' selected':''}>취소(수입 환수)</option>
+          ${legacyTypeOption(editTypeUI)}
         </select></div>
         <div><label class="label">금액</label><input type="text" inputmode="numeric" id="f-amount" class="input" value="${editAmount}" placeholder="0" style="text-align:right;"></div>
       </div>
@@ -112,6 +113,11 @@ export function renderTrxForm(t){
         <div><label class="label">분류</label><select id="f-cat" class="input" style="padding:8px 12px;"></select></div>
         <div><label class="label">내용</label><input type="text" id="f-desc" class="input" value="${isEdit?t.description||'':''}" placeholder="거래 내용"></div>
       </div>
+      <div><label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sub);cursor:pointer;">
+        <input type="checkbox" id="f-exclude" style="accent-color:var(--blue);width:15px;height:15px;"${
+          isEdit&&isExcludedFromTotals(t)?' checked':''}>
+        합계에서 제외 <span style="font-size:11px;color:var(--muted);">(계좌 간 이동·승인취소 등 — 잔액에는 반영됩니다)</span>
+      </label></div>
       <div><label class="label">결제수단 <span style="font-size:10px;color:var(--muted);">(비워 두면 내용에서 읽습니다)</span></label>
         <select id="f-method" class="input" style="padding:8px 12px;width:100%;"><option value="">— 미지정 —</option>${
           PAYMENT_METHODS.map(m=>`<option value="${m}"${isEdit&&t.method===m?' selected':''}>${m}</option>`).join('')}</select></div>
@@ -205,7 +211,8 @@ export function renderTrxForm(t){
       const normType=(isCancelIn||isCancelOut)?'취소':type;
       // 고르지 않았으면 내용에서 읽어 본다. 못 읽으면 빈 칸 — 틀린 값보다 낫다.
       const method=normalizePaymentMethod(document.getElementById('f-method')?.value)||detectPaymentMethod(desc);
-      const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,method,
+      const excludeFromTotals=!!document.getElementById('f-exclude')?.checked;
+      const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,method,excludeFromTotals,
         amountIn:(type==='수입'||isCancelIn)?amount:0,
         amountOut:(type==='지출'||isCancelOut)?amount:0};
       if(existId)trxData.id=existId;
@@ -306,15 +313,35 @@ export function renderTrxForm(t){
   }
 }
 // 구분(유형)별 한 줄 안내 — 엑셀만 써온 사용자가 낯선 항목을 이해하도록 돕는다
+/**
+ * 구분 선택칸에 남길 구형 유형.
+ *
+ * 자산이동·취소는 **새로 만들 수 없다.** 둘 다 "합계에는 안 들어가지만 잔액에는
+ * 들어간다"는 한 가지 성질을 말하려고 만든 유형이었고, 그 성질은 이제 체크 한
+ * 칸이다. 자산이동은 그 대가로 두 거래를 서로 링크하는 콜러블과 규칙 예외까지
+ * 달고 있었는데, 실제로 쓰는 사람은 많지 않았다.
+ *
+ * 다만 **이미 그렇게 저장된 거래를 열었을 때는** 그 유형이 보여야 한다.
+ * 목록에 없으면 select 가 「지출」로 떨어지고, 저장을 누르는 순간 짝이 있는
+ * 자산이동이 말없이 지출로 바뀐다.
+ */
+function legacyTypeOption(editTypeUI){
+  const legacy={'자산이동':'자산이동 (계좌간 이체)','취소-지출':'취소(지출)','취소-수입':'취소(수입 환수)'};
+  return legacy[editTypeUI]
+    ? `<option value="${editTypeUI}" selected>${legacy[editTypeUI]}</option>` : '';
+}
+
 export function updateTrxTypeHint(){
   const el=document.getElementById('f-type-hint'); if(!el)return;
   const type=document.getElementById('f-type')?.value||'지출';
   const hints={
     '지출':'💸 돈이 나간 거래예요.',
     '수입':'💰 돈이 들어온 거래예요.',
-    '자산이동':'🔁 출금 계좌에서 입금 계좌로 옮기는 거래예요. 출금·입금 2건이 함께 만들어지고, 수입/지출 합계에는 포함되지 않아요.',
-    '취소-지출':'↩️ 카드 승인취소 등 지출 취소예요. 수입/지출 합계와 잔액에서 제외돼요.',
-    '취소-수입':'↩️ 받았던 수입을 되돌리는(환수) 거래예요. 수입/지출 합계와 잔액에서 제외돼요.',
+    // 아래 셋은 **구형 기록을 열었을 때만** 보인다. 새로 만들 수는 없다 —
+    // 「합계에서 제외」 체크 한 칸이 같은 일을 하고, 링크된 짝도 만들지 않는다.
+    '자산이동':'🔁 계좌 간 이체로 기록된 구형 거래예요. 출금·입금 2건이 짝을 이룹니다. 유형은 바꿀 수 없어요.',
+    '취소-지출':'↩️ 지출 취소로 기록된 구형 거래예요. 합계에서는 빠지고 잔액에는 반영됩니다.',
+    '취소-수입':'↩️ 수입 환수로 기록된 구형 거래예요. 합계에서는 빠지고 잔액에는 반영됩니다.',
   };
   el.textContent=hints[type]||'';
 }
@@ -323,7 +350,7 @@ export function updateTrxCatSel(){
   const sel=document.getElementById('f-cat');
   const catRow=document.getElementById('f-cat-row');
   if(!sel)return;
-  if(type==='자산이동'||type==='취소'||type==='취소-지출'||type==='취소-수입'){
+  if(type==='자산이동'||type.startsWith('취소')){
     if(catRow)catRow.style.display='none';
     sel.innerHTML='<option value="">-</option>';
     return;
@@ -459,41 +486,6 @@ export function onXlFileSelect(){
     if(btn)btn.textContent=`📊 분석 시작 (${fi.files[0].name})`;
   }
 }
-// 중복 판정 키는 services/excel-parser.js의 transactionKey — 거기서 테스트한다
-const dupKey=ExcelParser.transactionKey;
-
-/**
- * 중복 대조용 기존 거래를 Firestore에서 직접 읽는다.
- * 화면 캐시가 아니라 **파일에 들어 있는 날짜 범위 전체**를 본다.
- */
-async function fetchExistingForDup(accId,rows){
-  const dates=rows.map(r=>r.date).filter(Boolean).sort();
-  if(!dates.length)return new Set();
-  const{getDocs,collection,query,where}=fb();
-  // 위와 같은 이유로 clientId 를 먼저 건다.
-  const clientId=String((S.allAccounts||[]).find(a=>a.id===accId)?.clientId||'');
-  if(!clientId)return new Set();
-  const snap=await getDocs(query(collection(fdb(),COLS.TRANSACTIONS),
-    where('clientId','==',clientId),
-    where('accountId','==',accId),
-    where('date','>=',dates[0]),
-    where('date','<=',dates[dates.length-1])));
-  return new Set(snap.docs.map(d=>dupKey({accountId:accId,...d.data()})));
-}
-
-/**
- * 엑셀 자리에 들어온 것이 사진인가.
- *
- * type 만 보지 않는다 — HEIC 는 브라우저에 따라 빈 type 으로 오고, 그러면
- * 사진인데 엑셀로 넘어가 엉뚱한 오류가 난다. 확장자도 함께 본다.
- */
-export function isImageFile(file){
-  if(!file)return false;
-  const type=String(file.type||'').toLowerCase();
-  if(type.startsWith('image/'))return true;
-  return /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(String(file.name||''));
-}
-
 export async function analyzeXlFile(){
   const fi=document.getElementById('xl-file');
   if(!fi?.files?.length){toast('파일을 선택하세요.','error');return;}
@@ -666,16 +658,20 @@ async function fillExcelTempFromRows(rows,accId){
 
   S.excelTemp=rows.map((p)=>{
     const rawIn=p.in||0, rawOut=p.out||0;
-    let amIn=0, amOut=0, type='지출';
+    let amIn=0, amOut=0, type='지출', exclude=false;
     if(rawIn>0){amIn=rawIn;type='수입';}
     else if(rawOut>0){amOut=rawOut;type='지출';}
-    else if(rawOut<0){amOut=rawOut;type='지출';}
-    else if(rawIn<0){amOut=Math.abs(rawIn);type='취소';}
+    else if(rawOut<0){amOut=rawOut;type='지출';}       // 음수 지출 = 환불
+    // 음수 입금 = 들어왔던 돈이 되돌아 나간 것. 돈은 실제로 빠져나가므로
+    // 잔액에는 넣되 지출 합계에는 넣지 않는다. 예전에는 구형 '취소' 유형을
+    // 새로 만들었는데, 이제 그 뜻은 표시 한 칸이다.
+    else if(rawIn<0){amOut=Math.abs(rawIn);type='지출';exclude=true;}
     const item={date:p.date,description:p.desc,descRaw:p.descRaw||p.desc,
       amountIn:amIn,amountOut:amOut,type,
       category:p.cat||'확인필요',subcategory:p.sub||'',
       // 결제수단은 **지우기 전의 원문**에서 읽는다 (domain/payment-method.js).
       method:detectPaymentMethod(p.descRaw||p.desc),
+      excludeFromTotals:exclude,
       sortOrder:takeOrder(p.date)};
     item._dup=existSet.has(dupKey({...item,accountId:accId}));
     return item;
@@ -691,33 +687,6 @@ async function fillExcelTempFromRows(rows,accId){
 }
 
 /** 제외된 행 목록 — 조용히 사라지지 않도록 이유와 원문을 함께 보여준다 */
-function renderXlSkipped(){
-  const list=S.excelSkipped||[];
-  if(!list.length)return '';
-  const byReason={};
-  list.forEach(x=>{(byReason[x.reason]=byReason[x.reason]||[]).push(x);});
-  const summary=Object.entries(byReason).map(([r,v])=>`${r} ${v.length}건`).join(' · ');
-  const rows=list.slice(0,50).map(x=>
-    `<tr style="border-top:1px solid #fde68a;">
-       <td style="padding:5px 8px;font-size:11px;color:#92400e;white-space:nowrap;">${x.row}행</td>
-       <td style="padding:5px 8px;font-size:11px;color:#92400e;white-space:nowrap;">${escAttr(x.reason)}</td>
-       <td style="padding:5px 8px;font-size:11px;color:#a16207;overflow:hidden;text-overflow:ellipsis;">${escAttr(x.text)}</td>
-     </tr>`).join('');
-  const more=list.length>50?`<div style="padding:5px 8px;font-size:11px;color:#a16207;">… 외 ${list.length-50}건</div>`:'';
-  return `
-    <details style="margin-bottom:10px;border:1px solid #fde68a;border-radius:9px;background:#fffbeb;">
-      <summary style="padding:8px 10px;font-size:12px;font-weight:700;color:#92400e;cursor:pointer;">
-        ⚠️ 제외된 행 ${list.length}건 — ${escAttr(summary)}
-      </summary>
-      <div style="max-height:160px;overflow-y:auto;">
-        <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
-          <colgroup><col style="width:52px;"><col style="width:130px;"><col></colgroup>
-          <tbody>${rows}</tbody>
-        </table>${more}
-      </div>
-    </details>`;
-}
-
 export function renderXlPreview(){
   const el=document.getElementById('xl-preview'); if(!el)return;
   const skippedHtml=renderXlSkipped();
@@ -799,6 +768,7 @@ export async function saveExcelData(){
     category:item.category,subcategory:item.subcategory||'',
     description:item.description,amountIn:item.amountIn||0,amountOut:item.amountOut||0,
     method:item.method||'',
+    excludeFromTotals:item.excludeFromTotals===true,
     sortOrder:item.sortOrder??null,
     createdBy:String(S.user?.userId||''),
   }})));

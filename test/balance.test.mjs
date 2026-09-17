@@ -44,9 +44,15 @@ test('기준일이 없으면 전 기간을 합산한다', () => {
   assert.equal(calcAccountBalance(acc({ initialBalanceDate: '' }), trx), 95000);
 });
 
-test('취소 거래는 잔액에 영향이 없다', () => {
+test('취소 거래도 잔액에 반영된다', () => {
+  // 예전에는 건너뛰었다 — "카드 승인이 취소됐으니 돈이 안 나갔다"는 뜻이었다.
+  // 그런데 현장에서 더 흔한 것은 **이미 빠져나간 돈이 돌아오는** 경우다.
+  // 그때는 통장 잔액과 장부가 그 금액만큼 어긋난 채로 남았다.
+  //
+  // ⚠️ 이 변경으로 기존 취소 거래가 있는 계좌의 잔액이 달라진다.
+  //    배포 뒤 tools/recalc-balances.mjs 로 저장된 currentBalance 를 다시 만든다.
   const trx = [t({ type: '취소', amountOut: 70000 })];
-  assert.equal(calcAccountBalance(acc(), trx), 100000);
+  assert.equal(calcAccountBalance(acc(), trx), 30000);
 });
 
 test('자산이동은 잔액에 반영된다', () => {
@@ -114,7 +120,20 @@ test('calcBalances — 계좌별로 나눠 계산', () => {
   assert.deepEqual(calcBalances(accounts, trx), { a: 900, b: 2500 });
 });
 
-test('sumIncomeExpense — 자산이동과 취소는 집계에서 뺀다', () => {
+test('sumIncomeExpense — 「합계 제외」는 빠진다', () => {
+  const trx = [
+    t({ type: '수입', amountIn: 10000 }),
+    t({ type: '지출', amountOut: 3000 }),
+    // 새 방식: 유형은 수입/지출 그대로, 표시 한 칸으로 뺀다
+    t({ type: '지출', amountOut: 50000, excludeFromTotals: true }),
+    t({ type: '수입', amountIn: 50000, excludeFromTotals: true }),
+  ];
+  assert.deepEqual(sumIncomeExpense(trx), { totalIn: 10000, totalOut: 3000 });
+});
+
+test('sumIncomeExpense — 구형 자산이동·취소도 그대로 빠진다', () => {
+  // 이미 저장된 장부를 고쳐 쓰지 않는다. 결재가 끝난 달의 숫자가 배포 때문에
+  // 달라지면 안 되므로, 두 유형을 「합계 제외」와 같은 뜻으로 읽는다.
   const trx = [
     t({ type: '수입', amountIn: 10000 }),
     t({ type: '지출', amountOut: 3000 }),
@@ -123,6 +142,14 @@ test('sumIncomeExpense — 자산이동과 취소는 집계에서 뺀다', () =>
     t({ type: '취소', amountOut: 7000 }),
   ];
   assert.deepEqual(sumIncomeExpense(trx), { totalIn: 10000, totalOut: 3000 });
+});
+
+test('「합계 제외」 거래도 잔액에는 들어간다', () => {
+  // 이것이 이 표시의 존재 이유다. 계좌 간 이동은 수입도 지출도 아니지만
+  // 통장에서는 실제로 돈이 움직인다.
+  const trx = [t({ type: '지출', amountOut: 20000, excludeFromTotals: true })];
+  assert.equal(calcAccountBalance(acc(), trx), 80000);
+  assert.deepEqual(sumIncomeExpense(trx), { totalIn: 0, totalOut: 0 });
 });
 
 test('회귀: 부분 로드된 목록을 넘기면 잔액이 틀린다 — 전체를 넘겨야 한다', () => {
@@ -210,12 +237,13 @@ test('잔액과 무관한 필드만 바뀌면 재계산이 필요 없다', () =>
   assert.equal(affectsBalance(base, { ...base, receiptMissing: true }), false);
 });
 
-test('잔액식이 읽는 다섯 필드는 모두 감지한다', () => {
+test('잔액식이 읽는 네 필드는 모두 감지한다', () => {
+  // type 은 목록에서 빠졌다 — 잔액식이 더 이상 유형을 보지 않는다.
+  // 남겨 두면 분류만 고쳐도 계좌 전체 재계산이 돌아 읽기가 낭비된다.
   const base = t({ type: '지출', amountOut: 5000 });
   const 변경 = {
     accountId: 'acc-other',
     date: '2026-03-01',
-    type: '취소',
     amountIn: 1234,
     amountOut: 9999,
   };
@@ -225,6 +253,12 @@ test('잔액식이 읽는 다섯 필드는 모두 감지한다', () => {
       `${f} 변경을 감지하지 못했다 — 잔액이 낡은 값으로 남는다`,
     );
   }
+});
+
+test('유형만 바뀌면 재계산하지 않는다', () => {
+  // 잔액식이 유형을 보지 않게 된 뒤로, 지출↔취소 전환은 잔액을 바꾸지 않는다.
+  const base = t({ type: '지출', amountOut: 5000 });
+  assert.equal(affectsBalance(base, { ...base, type: '취소' }), false);
 });
 
 test('생성과 삭제는 항상 재계산이 필요하다', () => {

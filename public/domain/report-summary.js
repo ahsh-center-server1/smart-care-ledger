@@ -14,6 +14,8 @@
 
 'use strict';
 
+import { countsInTotals } from './trx-totals.js';
+
 export function ruleBasedSummary(reportData) {
   const { year, month, trxList, summary } = reportData;
   const { totalOut, balance } = summary;
@@ -21,9 +23,8 @@ export function ruleBasedSummary(reportData) {
   const fmt = n => Number(n).toLocaleString();
 
   // 전월은 호출부가 넘긴다 — 이 파일은 Firestore도 전역 상태도 모른다.
-  // 자산이동·취소는 수입/지출이 아니므로 비교에서 뺀다(집계와 같은 규칙).
-  const prevTrxList = (reportData.prevTrx || [])
-    .filter(t => t.type !== '자산이동' && t.type !== '취소');
+  // 합계에서 빼는 기준은 집계와 같아야 한다(domain/trx-totals.js).
+  const prevTrxList = (reportData.prevTrx || []).filter(countsInTotals);
   const prevOut   = prevTrxList.reduce((s,t)=>s+Number(t.amountOut||0),0);
   const prevCat   = {};
   prevTrxList.forEach(t=>{ if(t.type==='지출'){const k=t.category||'기타'; prevCat[k]=(prevCat[k]||0)+Number(t.amountOut||0);} });
@@ -89,7 +90,7 @@ export function ruleBasedSummary(reportData) {
 
   // ⑥ 10만원 초과 단건 지출 상위 3건
   const bigTrx=(trxList||[])
-    .filter(t=>t.type!=='자산이동'&&t.type!=='취소'&&Number(t.amountOut||0)>=100000)
+    .filter(t=>countsInTotals(t)&&Number(t.amountOut||0)>=100000)
     .sort((a,b)=>Number(b.amountOut||0)-Number(a.amountOut||0))
     .slice(0,3);
   if(bigTrx.length){

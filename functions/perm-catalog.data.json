@@ -638,6 +638,7 @@
         "amountIn",
         "amountOut",
         "method",
+        "excludeFromTotals",
         "sortOrder",
         "createdBy",
         "createdAt",
@@ -720,7 +721,8 @@
         "amountOut",
         "accountId",
         "receiptMissing",
-        "method"
+        "method",
+        "excludeFromTotals"
       ],
       "immutableFields": [
         "clientId",

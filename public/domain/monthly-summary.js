@@ -28,6 +28,8 @@
 
 'use strict';
 
+import { countsInTotals } from './trx-totals.js';
+
 /**
  * 요약 형태가 바뀌면 이 값을 올린다. 예전 형태로 저장된 캐시는
  * 버전이 같아도 무시하고 다시 계산한다 — 필드가 늘어났을 때
@@ -35,7 +37,10 @@
  */
 // 2 — 미분류 건수(unclassified)를 추가했다. 1로 저장된 캐시는 그 필드가 없어
 //     배지가 항상 0으로 보인다. 버전을 올려 다시 계산하게 한다.
-export const SUMMARY_SCHEMA_VERSION = 2;
+// 3 — 합계에서 빼는 기준이 유형(자산이동·취소)에서 「합계 제외」 표시로 바뀌었다.
+//     값 자체는 구형 데이터에서 같지만, 표시를 새로 켠 거래가 있으면 2로 저장된
+//     캐시가 그것을 모른 채 남는다.
+export const SUMMARY_SCHEMA_VERSION = 3;
 
 /**
  * 분류가 정해지지 않은 상태. 판독·업로드가 정하지 못하면 여기로 들어온다.
@@ -64,7 +69,7 @@ export function monthKey(date) {
  * 거래 목록에서 한 입주자의 당월 요약을 만든다.
  *
  * 집계 규칙은 보고서·연간 통계와 **같아야** 한다:
- *   수입 → totalIn, 지출 → totalOut, 자산이동·취소는 집계 제외.
+ *   「합계 제외」로 표시된 거래는 빠진다(domain/trx-totals.js).
  * (계좌 간 이동은 수입도 지출도 아니고, 승인취소는 없던 거래다)
  *
  * @param {Array} transactions 해당 입주자의 해당 월 거래
@@ -76,9 +81,11 @@ export function computeMonthlySummary(transactions) {
 
   for (const t of (transactions || [])) {
     count++;
-    if (t.type === '수입')      inc += Number(t.amountIn || 0);
-    else if (t.type === '지출') exp += Number(t.amountOut || 0);
-    // 자산이동 · 취소 → 집계 제외
+    // 「합계 제외」 표시가 붙은 것과 구형 자산이동·취소는 빠진다.
+    if (countsInTotals(t)) {
+      inc += Number(t.amountIn || 0);
+      exp += Number(t.amountOut || 0);
+    }
 
     // 분류가 정해지지 않은 건. 대시보드가 이 수를 배지로 띄운다 — 여기서
     // 세지 않으면 카드마다 당월 거래를 다시 읽어야 하고, 그러면 캐시를 둔

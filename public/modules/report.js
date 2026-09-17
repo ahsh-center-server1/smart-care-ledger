@@ -27,6 +27,8 @@ import { isConfirmedLocked } from './core.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 import { rememberOpenReport, restorableReport } from '../domain/report-session.js';
 import { sortTrx, planReorder } from '../domain/trx-order.js';
+import { countsInTotals } from '../domain/trx-totals.js';
+import { excludedBadge } from './transactions-widgets.js';
 import { ruleBasedSummary } from '../domain/report-summary.js';
 
 // 보고서 필수 고정항목 미납 배너
@@ -121,7 +123,7 @@ export async function loadAnnual(){
   for(let m=1;m<=12;m++)monthly[m]={in:0,out:0,count:0};
   all.forEach(t=>{
     const m=parseInt((t.date||'').split('-')[1])||0; if(!m)return;
-    if(t.type==='자산이동'||t.type==='취소')return; // ④⑤ 집계 제외
+    if(!countsInTotals(t))return;
     totalIn+=Number(t.amountIn||0); totalOut+=Number(t.amountOut||0);
     monthly[m].in+=Number(t.amountIn||0); monthly[m].out+=Number(t.amountOut||0); monthly[m].count++;
     if(t.type==='지출'){const k=t.category||'기타';catMap[k]=(catMap[k]||0)+Number(t.amountOut||0);}
@@ -192,8 +194,7 @@ export async function loadReport(){
     const report=rSnap.empty?null:{id:rSnap.docs[0].id,...rSnap.docs[0].data()};
     let totalIn=0,totalOut=0; const catStats={};
     trxList.forEach(t=>{
-      // ④⑤ 자산이동·취소는 수입/지출 집계에서 제외
-      if(t.type==='자산이동'||t.type==='취소')return;
+      if(!countsInTotals(t))return;   // 「합계 제외」와 구형 자산이동·취소
       totalIn+=Number(t.amountIn||0);
       // 2. 음수 amountOut(환불): 지출에서 차감 (음수값 그대로 더함)
       totalOut+=Number(t.amountOut||0);
@@ -366,8 +367,8 @@ export function renderRptTrxTable(trxList){
   });
   byAccount.forEach(group=>{
     if(!group.items.length)return;
-    const subIn=group.items.reduce((sum,t)=>t.type==='자산이동'||t.type==='취소'?sum:sum+Number(t.amountIn||0),0);
-    const subOut=group.items.reduce((sum,t)=>t.type==='자산이동'||t.type==='취소'?sum:sum+Number(t.amountOut||0),0);
+    const subIn=group.items.reduce((sum,t)=>countsInTotals(t)?sum+Number(t.amountIn||0):sum,0);
+    const subOut=group.items.reduce((sum,t)=>countsInTotals(t)?sum+Number(t.amountOut||0):sum,0);
     const header=document.createElement('tr');
     header.className='rpt-account-group-row';
     header.innerHTML=`<td colspan="6" style="padding:8px 6px;background:#f8fafc;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:800;color:#374151;">🏦 ${escHtml(group.account.label||'미지정 계좌')} <span style="font-weight:600;color:#6b7280;margin-left:8px;">${group.items.length}건 · 수입 ${subIn.toLocaleString()}원 · 지출 ${subOut.toLocaleString()}원</span></td>`;
@@ -388,7 +389,7 @@ export function renderRptTrxTable(trxList){
     } else if(t.type==='취소'){
       const sub=Number(t.amountIn||0)>0?'수입':'지출';
       typeTag='<span style="font-size:10px;background:#f4f4f5;color:#71717a;padding:1px 5px;border-radius:4px;margin-left:4px;">취소('+sub+')</span>';
-    }
+    } else { typeTag=excludedBadge(t); }
     const catClr=cs(t.category||'');
     tr.innerHTML=`<td style="padding:7px 4px;font-family:monospace;font-size:13px;color:#6b7280;white-space:nowrap;">${escHtml(t.date||'')}</td>`
       +`<td style="padding:4px 4px;overflow:hidden;white-space:nowrap;"><span style="display:inline-block;background:${catClr.bg};color:${catClr.text};border:1px solid ${catClr.border};border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.category||'')}</span></td>`
@@ -678,7 +679,7 @@ export function renderTrendChart(clientId,baseYear,baseMonth){
     let inS=0,outS=0;
     S.transactions.forEach(t=>{
       if(t.clientId!==clientId||(t.date||'').substring(0,7)!==m)return;
-      if(t.type==='자산이동'||t.type==='취소')return;
+      if(!countsInTotals(t))return;
       inS+=Number(t.amountIn||0); outS+=Number(t.amountOut||0);
     });
     inData.push(inS); outData.push(outS);
@@ -1323,8 +1324,8 @@ export async function exportReportExcel(){
   });
   excelByAccount.forEach(group=>{
     if(!group.items.length)return;
-    const subIn=group.items.reduce((sum,t)=>t.type==='자산이동'||t.type==='취소'?sum:sum+Number(t.amountIn||0),0);
-    const subOut=group.items.reduce((sum,t)=>t.type==='자산이동'||t.type==='취소'?sum:sum+Number(t.amountOut||0),0);
+    const subIn=group.items.reduce((sum,t)=>countsInTotals(t)?sum+Number(t.amountIn||0):sum,0);
+    const subOut=group.items.reduce((sum,t)=>countsInTotals(t)?sum+Number(t.amountOut||0):sum,0);
     mergeCell(0,COLS_N-1,r,{...sThead,alignment:{horizontal:'left',vertical:'center'}},`🏦 ${group.account.label||'미지정 계좌'} (${group.items.length}건 · 수입 ${subIn.toLocaleString()}원 · 지출 ${subOut.toLocaleString()}원)`);
     setRow(20); r++;
     group.items.forEach(t=>{    

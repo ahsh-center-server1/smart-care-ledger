@@ -13,6 +13,7 @@ import { toast, escHtml } from '../utils/ui.js';
 import { orderedCategories } from '../domain/category-order.js';
 import { cs, METHOD_COLORS } from '../constants.js';
 import { isUnclassified } from '../domain/monthly-summary.js';
+import { isExcludedFromTotals, LEGACY_EXCLUDED_TYPES } from '../domain/trx-totals.js';
 
 export { isUnclassified as isUnclassifiedTrx };
 
@@ -127,4 +128,16 @@ export function readTrxFilters() {
     tf: v('h-type', 'all'), rf: v('h-receipt', 'all'),
     mf: v('h-method', 'all'), af: v('h-account'),
   };
+}
+
+/**
+ * 「합계 제외」 뱃지. 구형 자산이동·취소는 저마다의 뱃지가 이미 있으므로
+ * 여기서는 그리지 않는다 — 한 줄에 같은 뜻의 표가 두 개 붙는다.
+ */
+export function excludedBadge(trx) {
+  if (!isExcludedFromTotals(trx)) return '';
+  if (LEGACY_EXCLUDED_TYPES.includes(trx.type)) return '';
+  return '<span style="font-size:10px;background:#f1f5f9;color:#475569;'
+    + 'padding:1px 5px;border-radius:4px;margin-left:4px;" title="수입/지출 합계에서 빠집니다'
+    + ' (잔액에는 반영)">합계 제외</span>';
 }
