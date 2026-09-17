@@ -1148,7 +1148,18 @@ export function renderAccountForm(a){
       ${isEdit?`<button id="fa-stmt-btn" class="btn-sub" style="width:100%;padding:9px;color:#0369a1;border-color:#bae6fd;margin-top:4px;">📸 통장 사진 관리 (${(a.bankStatements||[]).length}장)</button>`:''}
     </div>`;
   const sel=document.getElementById('fa-client');
-  S.clients.forEach(c=>sel.add(new Option(c.name,c.id))); if(isEdit)sel.value=a.clientId;
+  S.clients.forEach(c=>sel.add(new Option(c.name,c.id)));
+  if(isEdit){
+    sel.value=a.clientId;
+    // 소속 입주자는 바꿀 수 없다(규칙이 clientId 를 불변으로 본다). 계좌를 옮기면
+    // 거래와 잔액이 통째로 따라가기 때문이다. 고를 수 있게 두면 서버가 거절만 한다.
+    // 목록에 없는 입주자면 value 가 비어 첫 항목으로 튀므로, 그때는 이름을 직접 넣는다.
+    if(sel.value!==a.clientId){
+      sel.add(new Option(S.clients.find(c=>c.id===a.clientId)?.name||a.clientId,a.clientId));
+      sel.value=a.clientId;
+    }
+    sel.disabled=true;
+  }
   if(isEdit){const stmtBtn=document.getElementById('fa-stmt-btn');if(stmtBtn)stmtBtn.addEventListener('click',()=>{closeModal();openBankStatementModal(a.id);});}
   document.getElementById('fa-save').addEventListener('click',async()=>{
     const id=document.getElementById('fa-id').value, init=Number(document.getElementById('fa-init').value||0);

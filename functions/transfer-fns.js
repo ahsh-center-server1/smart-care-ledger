@@ -37,8 +37,10 @@ module.exports = function transferFns(ctx) {
     return String((accSnap.data() || {}).clientId || '');
   }
 
-  function assertOpenMonth(months, me, clientId, date) {
-    if (me.can('lock.bypass')) return;
+  // 우회는 없다. 예전에는 여기서 lock.bypass 로 빠져나갔지만 그 권한은
+  // 아무에게도 없고(FORBIDDEN_KEYS) firestore.rules 의 editableMonth 에도
+  // 우회가 없다. 검사만 남겨 두면 "관리자는 되겠지"로 읽혀 오해를 만든다.
+  function assertOpenMonth(months, clientId, date) {
     if (months[`${clientId}_${String(date).slice(0, 7)}`] === true) {
       throw new HttpsError('failed-precondition',
         `${String(date).slice(0, 7)}은 최종 결재가 끝난 월입니다.`);
@@ -92,8 +94,8 @@ module.exports = function transferFns(ctx) {
       // 입주자의 장부에 거래를 밀어 넣을 수 있다.
       me.requireSees(fromClient);
       me.requireSees(toClient);
-      assertOpenMonth(months, me, fromClient, date);
-      assertOpenMonth(months, me, toClient, date);
+      assertOpenMonth(months, fromClient, date);
+      assertOpenMonth(months, toClient, date);
 
       let existing = null;
       if (existId) {
@@ -103,7 +105,7 @@ module.exports = function transferFns(ctx) {
         if (String(existing.clientId) !== fromClient) {
           throw new HttpsError('failed-precondition', '출금 계좌가 그 거래의 입주자와 다릅니다.');
         }
-        assertOpenMonth(months, me, existing.clientId, existing.date);
+        assertOpenMonth(months, existing.clientId, existing.date);
       }
 
       // 이미 짝이 있으면 그 짝을 그대로 쓴다. 없으면 같은 날짜·금액의

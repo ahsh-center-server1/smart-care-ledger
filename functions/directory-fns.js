@@ -19,7 +19,7 @@ const USERS = 'users';
 const CATEGORIES = 'categories';
 
 module.exports = function directoryFns(ctx) {
-  const { db, callable, requireCaller, logger, onDocumentWritten } = ctx;
+  const { db, callable, requireCaller, HttpsError, logger, onDocumentWritten } = ctx;
 
   /** 컬렉션을 통째로 읽어 명부를 다시 만든다. */
   async function rebuildDirectory(name, col, build) {
@@ -67,12 +67,15 @@ module.exports = function directoryFns(ctx) {
      *   · 트리거가 실패해 명부가 어긋났을 때 복구
      */
     rebuildDirectories: callable('rebuildDirectories', async (request) => {
-      // 관리자 전용 복구 작업이다. 등급 리터럴(99) 대신 카탈로그 키로
-      // 판정한다 — settings.reset 은 관리자 전용이고 보안 하한이 걸려 있어
-      // 설정에서 낮출 수 없다. 복구 버튼 둘을 위해 새 권한 키를 만들면
-      // 정책적으로 구분되지 않는 caps 키가 하나 더 늘어난다.
+      // 예전에는 settings.reset 을 요구했다. 그 키는 아무에게도 없으므로
+      // **복구 도구가 실행 불가**였다 — 게다가 이 함수는 rebuildLockedMonths 와
+      // 같은 버튼(설정 → 파생 문서 다시 만들기)에서 이어서 호출되므로, 앞이
+      // 고쳐져도 여기서 통째로 실패했다. 배포 직후 백필이 그 버튼에 달려 있다.
+      // rebuildLockedMonths 와 같은 기준으로 맞춘다.
       const me = await requireCaller(request.auth);
-      me.require('settings.reset', '명부 재생성');
+      if (!me.can('settings.archive') && !me.can('system.backup')) {
+        throw new HttpsError('permission-denied', '명부 재생성 권한이 없습니다.');
+      }
       const staff = await rebuildDirectory(DIRECTORIES.STAFF, USERS, buildStaffDirectory);
       const categories = await rebuildDirectory(
         DIRECTORIES.CATEGORIES, CATEGORIES, buildCategoryDirectory);

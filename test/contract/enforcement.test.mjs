@@ -30,7 +30,7 @@ import {
   PERM_CATALOG, PERM_KEYS, SERVER_ENFORCED_KEYS,
   ENFORCE, capName,
 } from '../../public/domain/perm-catalog.js';
-import { fixedCan, FIXED_ROLES } from '../../public/domain/fixed-role-policy.js';
+import { fixedCan, FIXED_ROLES, FORBIDDEN_KEYS } from '../../public/domain/fixed-role-policy.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -414,6 +414,37 @@ test('[게이트 C] storage.rules의 cap() 표가 정책보다 더 주지 않는
   assert.deepEqual(
     problems, [],
     'storage.rules의 cap() 표가 정책보다 넓습니다:\n  ' + problems.join('\n  '),
+  );
+});
+
+test('[게이트 A] 서버 가드가 아무도 못 가지는 권한을 요구하지 않는다', () => {
+  // 실제로 두 번 났다. rebuildLockedMonths 와 rebuildDirectories 가 둘 다
+  // settings.reset 을 요구했는데 그 키는 아무에게도 없다 — **색인·명부가
+  // 어긋났을 때 고칠 도구 자체가 실행 불가**였고, 게다가 그 둘은 배포 직후
+  // 백필을 담당하는 같은 버튼에 달려 있었다.
+  //
+  // 조용히 죽는다는 것이 문제다. 코드는 멀쩡해 보이고, 테스트는 "권한 없으면
+  // 거부한다"로 통과하고, 아무도 그 기능을 못 쓴다는 사실만 운영에서 드러난다.
+  const files = functionSources().filter(f => !f.includes('fixed-role-policy'));
+  const forbidden = new Set(FORBIDDEN_KEYS);
+  const hits = [];
+
+  for (const file of files) {
+    const src = stripComments(readFileSync(file, 'utf8'));
+    src.split('\n').forEach((line, i) => {
+      for (const m of line.matchAll(/(?:\.require|\.can|fixedCan)\([^)]*?'([a-z][\w.]*)'/g)) {
+        if (forbidden.has(m[1])) {
+          hits.push(`${relative(ROOT, file)}:${i + 1}  ${m[1]}`);
+        }
+      }
+    });
+  }
+
+  assert.deepEqual(
+    hits, [],
+    '아무도 가질 수 없는 권한을 서버가 검사합니다 — 그 경로는 죽어 있습니다:\n  '
+      + hits.join('\n  ')
+      + '\n실행돼야 하는 기능이면 가질 수 있는 권한으로 바꾸고, 아니면 검사를 지우세요.',
   );
 });
 
