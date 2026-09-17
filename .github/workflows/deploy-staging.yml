@@ -160,6 +160,28 @@ jobs:
             exit 1
           fi
 
+      # AI(영수증 자동입력)는 **선택 기능**이다 — 키가 없으면 getAiStatus가
+      # false를 돌려주고 화면이 버튼을 숨긴다. 그런데 Functions v2는 코드가
+      # 선언한 시크릿이 **실재하는지 배포 시점에** 확인하고, 없으면 배포 전체를
+      # 멈춘다. 그래서 쓰지도 않는 AI 키 하나 때문에 login·saveClient까지
+      # 올라가지 못했다(빈 스테이징 프로젝트에서 실제로 막혔다).
+      #
+      # 자리만 만들어 둔다. 값은 공백 한 칸이고, isAiConfigured()가 그것을
+      # "미설정"으로 본다 — 앱 동작은 키가 없을 때와 완전히 같다.
+      # 이미 값이 들어 있으면 건드리지 않는다(진짜 키를 덮어쓰지 않는다).
+      - name: AI 시크릿 자리 확인
+        run: |
+          export GOOGLE_APPLICATION_CREDENTIALS="$HOME/sa.json"
+          if firebase functions:secrets:access GEMINI_API_KEY \
+               --project "$FIREBASE_PROJECT" --non-interactive >/dev/null 2>&1; then
+            echo "GEMINI_API_KEY 있음 — 그대로 둡니다."
+            exit 0
+          fi
+          echo "GEMINI_API_KEY 없음 — 빈 자리를 만듭니다 (AI 기능은 꺼진 상태)."
+          # 대화형 프롬프트가 뜨면 잡이 타임아웃까지 매달리므로 시간을 끊는다
+          printf ' ' | timeout 120 firebase functions:secrets:set GEMINI_API_KEY \
+            --project "$FIREBASE_PROJECT" --non-interactive --data-file -
+
       - name: 배포
         run: |
           export GOOGLE_APPLICATION_CREDENTIALS="$HOME/sa.json"
