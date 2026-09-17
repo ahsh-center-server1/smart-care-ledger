@@ -329,6 +329,17 @@ export function restoreOpenReport(){
   loadReport();
 }
 
+/**
+ * 담당 칸에 적을 이름.
+ *
+ * 제출되면 제출한 사람, 아직이면 작성한 사람. **지금 보고 있는 사람은 아니다** —
+ * 결재자가 열었을 뿐인데 인쇄물의 담당 칸에 결재자 이름이 찍히면, 보는 사람은
+ * 결재 라인이 바뀐 것으로 읽는다.
+ */
+function reportStaffName(report){
+  return report?.submittedByName||report?.createdByName||'-';
+}
+
 export function renderReportView(){
   const{clientId,year,month,trxList,accs,accountRows,report,summary}=S.reportData;
   const client=S.clients.find(c=>c.id===clientId)||{name:'-'};
@@ -341,7 +352,10 @@ export function renderReportView(){
   setText('rpt-created-bottom',createdStr);
   setText('rpt-client-name',client.name);
   setText('rpt-month-label',`${year}년 ${month}월`);
-  setText('rpt-staff-name',report?.submittedByName||(S.user?.name||'-'));
+  // 제출 전이면 **작성자**를 쓴다. 예전에는 지금 보는 사람 이름으로 떨어져서,
+  // 팀장이 아직 제출되지 않은 보고서를 열면 담당 칸에 팀장 이름이 찍혔다.
+  // 저장되는 값은 아니지만 그대로 인쇄된다 — 결재 라인이 바뀐 것처럼 보인다.
+  setText('rpt-staff-name',reportStaffName(report));
   setText('rpt-total-in', summary.totalIn.toLocaleString()+'원');
   setText('rpt-total-out',summary.totalOut.toLocaleString()+'원');
   setText('rpt-balance',  summary.balance.toLocaleString()+'원');
@@ -1296,7 +1310,7 @@ export async function exportReportExcel(){
   setRow(18); r++;
   mergeCell(0,1,r,sMetaValue,client.name);
   mergeCell(2,3,r,sMetaValue,year+'년 '+month+'월');
-  mergeCell(4,COLS_N-1,r,sMetaValue,report?.submittedByName||S.user?.name||'-');
+  mergeCell(4,COLS_N-1,r,sMetaValue,reportStaffName(report));
   setRow(22); r++;
   r++;
 

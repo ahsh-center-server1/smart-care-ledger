@@ -394,3 +394,22 @@ test('보고서를 새로 만드는 모든 경로가 createdBy를 기록한다',
       `createdBy 를 서버가 정하지 않는 생성 경로가 있습니다 (offset ${m.index})`);
   }
 });
+
+test('인쇄물의 담당 칸에 지금 보는 사람 이름이 찍히지 않는다', async () => {
+  // 팀장이 아직 제출되지 않은 보고서를 열면 담당 칸이 `S.user.name` 으로
+  // 떨어져 **팀장 이름이 인쇄됐다.** 저장되는 값은 아니지만, 결재 라인이
+  // 바뀐 것처럼 보인다 — 실제 사용자가 그렇게 보고했다.
+  //
+  // 팀장은 report.draft·report.submit 을 갖지 않으므로 도장이 덮어써지는
+  // 일은 애초에 없다(위 「팀장 직접 제출 경로는 존재하지 않는다」). 남은 것은
+  // 이 표시 하나였다.
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../public/modules/report.js', import.meta.url), 'utf8');
+  const code = src.split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+  const leaks = [...code.matchAll(/submittedByName\s*\|\|[^\n]*S\.user/g)];
+  assert.deepEqual(leaks.map(m => m[0]), [],
+    '담당 칸이 지금 보는 사람 이름으로 떨어집니다. reportStaffName() 을 쓰세요');
+  assert.ok(/function reportStaffName\(/.test(src), 'reportStaffName 이 없습니다');
+  assert.ok(/createdByName/.test(code.slice(code.indexOf('function reportStaffName('))),
+    '제출 전에는 작성자 이름을 써야 합니다');
+});
