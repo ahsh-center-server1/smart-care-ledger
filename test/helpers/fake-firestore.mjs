@@ -279,10 +279,23 @@ class FakeFile {
     if (want === 0 && existing) {
       const e = new Error('이미 있습니다'); e.code = 412; throw e;
     }
+    // GCS 의 CopyOptions.metadata 는 **평평한** 커스텀 메타데이터 맵이다.
+    // 예전 이 가짜는 opts.metadata.metadata 를 읽어, 한 겹 더 감싼 잘못된
+    // 호출을 받아 줬다 — 그래서 실제로는 매번 실패하는데 테스트는 전부
+    // 통과했다. 이제 진짜 API 처럼 형태를 검사한다.
+    const custom = (opts && opts.metadata) || {};
+    for (const [k, v] of Object.entries(custom)) {
+      if (v !== null && typeof v === 'object') {
+        const e = new Error(
+          `커스텀 메타데이터 '${k}' 의 값이 객체입니다 — GCS 는 문자열 맵만 받습니다`);
+        e.code = 400;
+        throw e;
+      }
+    }
     this.bucket.objects.set(dest.name, {
       data: src.data,
       generation: this.bucket.nextGeneration(),
-      metadata: (opts && opts.metadata && opts.metadata.metadata) || {},
+      metadata: { ...custom },
     });
     return [dest];
   }

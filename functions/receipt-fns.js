@@ -240,7 +240,11 @@ module.exports = function receiptFns(ctx) {
     try {
       await src.copy(dest, {
         preconditionOpts: { ifGenerationMatch: 0 },
-        metadata: { metadata: expected },
+        // CopyOptions.metadata 는 **평평한** 커스텀 메타데이터 맵이다
+        // ({[key]: string|number|boolean|null}). 한 겹 더 감싸면 값이 객체가
+        // 되어 저장되지 않고, 되읽은 uploadId 가 undefined 라 **매번** 충돌로
+        // 판정됐다 — 파일은 복사돼 있으니 "스토리지엔 있는데 저장 실패"가 된다.
+        metadata: expected,
       });
     } catch (err) {
       if (Number(err && err.code) !== 412) throw err;
