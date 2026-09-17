@@ -36,7 +36,13 @@ export function renderDashboard() {
     // 근거로 계산해 소유한다. 대시보드는 거래를 로드하지 않으므로 이 값을 그대로 쓴다.
     const totalBal=S.accounts.filter(a=>a.clientId===client.id).reduce((s,a)=>s+Number(a.currentBalance||0),0);
     const balColor=totalBal>=0?'#10b981':'#ef4444';
-    const stats=S.monthlyStats?.[client.id]||{inc:0,exp:0};
+    // 당월 집계를 아예 읽지 않는 경우가 있다: 결재 역할(팀장·센터장)에게는
+    // core.js 가 S.monthlyStats 를 null 로 둔다. 그때 `||{inc:0,exp:0}` 로
+    // 떨어지면 카드가 「당월 거래 없음」이라고 적는다 — **읽지 않은 것을 0으로
+    // 보고하는 것**이라, 결재자는 이번 달 거래가 없다고 읽는다.
+    // 그래서 읽지 않았으면 그 줄을 아예 그리지 않는다(잔액은 그대로 보인다).
+    const tracked=!!S.monthlyStats;
+    const stats=(S.monthlyStats&&S.monthlyStats[client.id])||{inc:0,exp:0};
     // 입력자는 본인이 입력한 거래만 읽을 수 있으므로 그 합계는 당월 전체가 아니다.
     // 그것을 「당월 수입/지출」로 적으면 같은 카드가 사람에 따라 다른 금액을 보여준다.
     // 라벨을 바꿔 무엇을 더한 값인지 밝힌다.
@@ -44,9 +50,12 @@ export function renderDashboard() {
     const statsText=stats.inc===0&&stats.exp===0
       ?(stats.partial?'당월 본인 입력분 없음':'당월 거래 없음')
       :`${statsLabel} 수입 <span style="color:#10b981;">+${stats.inc.toLocaleString()}</span> / 지출 <span style="color:#ef4444;">-${stats.exp.toLocaleString()}</span>원`;
+    const statsHTML=tracked
+      ?`<div style="font-size:11px;color:var(--muted);margin-top:3px;">${statsText}</div>`
+      :'';
     // 고정항목은 필수와 그 밖의 것을 나눠 보여 준다 — 할 일의 무게가 다르다.
     // 한 숫자로 합치면 급한 것(필수 미납)이 안 급한 것에 묻힌다.
-    const fixedGap=S.fixedGap?.[client.id]||{mandatory:0,optional:0};
+    const fixedGap=(S.fixedGap&&S.fixedGap[client.id])||{mandatory:0,optional:0};
     const parts=[];
     if(fixedGap.mandatory>0)parts.push(`<div style="font-size:11px;color:#dc2626;font-weight:700;margin-top:3px;">⚠️ 필수항목 ${fixedGap.mandatory}건 미납</div>`);
     if(fixedGap.optional>0)parts.push(`<div style="font-size:11px;color:#b45309;font-weight:700;margin-top:3px;">🔁 고정항목 ${fixedGap.optional}건 미입력</div>`);
@@ -58,7 +67,7 @@ export function renderDashboard() {
       ?`<div style="font-size:11px;color:#b45309;font-weight:700;margin-top:3px;">🏷️ 당월 미분류 ${unclassified}건</div>`
       :'';
     const safeName=client.name||'(이름 없음)';
-    card.innerHTML=`<div class="client-avatar">${escHtml(safeName.charAt(0))}</div><div class="client-name">${escHtml(safeName)}</div><div style="font-size:12px;font-weight:700;color:${balColor};margin-top:4px;">${totalBal.toLocaleString()}원</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">${statsText}</div>${unpaidHTML}${unclassifiedHTML}`;
+    card.innerHTML=`<div class="client-avatar">${escHtml(safeName.charAt(0))}</div><div class="client-name">${escHtml(safeName)}</div><div style="font-size:12px;font-weight:700;color:${balColor};margin-top:4px;">${totalBal.toLocaleString()}원</div>${statsHTML}${unpaidHTML}${unclassifiedHTML}`;
     card.addEventListener('click',()=>{
       S.activeClient=client.id;
       const hc=document.getElementById('h-client'); if(hc)hc.value=client.id;

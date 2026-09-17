@@ -19,7 +19,9 @@ export function currentActionItems() {
     clients: S.allClients,
     accounts: S.allAccounts,
     fixedItems: S.allFixedItems,
-    fixedGap: S.fixedGap,
+    // null 은 「읽지 않았다」이다(결재 역할은 당월 집계를 읽지 않는다).
+    // 기본값은 undefined 일 때만 먹으므로 여기서 빈 객체로 바꿔 준다.
+    fixedGap: S.fixedGap || {},
     reportList: S.reportList,
     can,
   });

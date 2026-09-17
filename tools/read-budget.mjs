@@ -37,8 +37,13 @@ const num = (name, def) => {
 const JSON_OUT = argv.includes('--json');
 
 const cfg = {
-  // 인원
-  admins:   num('admins', 2),
+  // 인원 — 센터장과 관리자를 나눈다.
+  //
+  // 예전에는 둘을 `admins` 로 묶고 「관리자·센터장」으로 찍었는데, 읽기로는
+  // **정반대**다. 센터장만 client.view.all 을 갖고, 관리자는 역할이 비어 있어
+  // myScope() 가 빈 목록을 준다 — 관리자는 입주자를 하나도 읽지 않는다.
+  centers:  num('centers', 1),
+  admins:   num('admins', 1),
   leaders:  num('leaders', 3),
   staff:    num('staff', 12),
   typists:  num('typists', 8),
@@ -50,6 +55,9 @@ const cfg = {
   fixedItems: num('fixedItems', 40),
   // 담당 입주자 1인당 (담당자·입력자)
   clientsPerStaff: num('clientsPerStaff', 4),
+  // 팀장 한 사람이 보는 입주자 수. 팀장도 **전체를 읽지 않는다** —
+  // myScope() 가 leaderClientIds 로 좁힌다. 생략하면 입주자÷팀장.
+  clientsPerLeader: num('clientsPerLeader', 0),
   // 입주자 1명의 당월 거래 수
   trxPerClientMonth: num('trxPerClientMonth', 40),
   // 보고서 문서 수 (열람 기간)
@@ -73,8 +81,40 @@ const cfg = {
  * core.js fetchBaseData가 실제로 무엇을 읽는지에 맞춘다. 코드가 바뀌면
  * 이 모델도 바뀌어야 하므로, 아래 assertSourceShape()가 소스를 확인한다.
  */
+/**
+ * 이 역할이 로그인 때 보는 입주자 수.
+ *
+ * **규칙이 아니라 myScope() 가 정한다**(core.js). 넓게 물으면 규칙이 쿼리를
+ * 통째로 거부하므로, 앱은 담당 목록으로 나눠 묻는다(services/scoped-fetch.js).
+ * 그래서 읽기는 전 입주자가 아니라 **그 사람이 보는 수**만큼이다.
+ */
+function visibleClients(role) {
+  if (role === 'center') return cfg.clients;                  // client.view.all
+  if (role === 'admin') return 0;                             // 역할이 비어 범위가 없다
+  if (role === 'leader') {
+    return cfg.clientsPerLeader
+      || Math.ceil(cfg.clients / Math.max(1, cfg.leaders));
+  }
+  return Math.min(cfg.clientsPerStaff, cfg.clients);
+}
+
+/**
+ * 이 역할이 당월 집계를 읽는가.
+ *
+ * 카드의 「당월 수입/지출·미분류·고정항목」은 **장부를 쓰는 사람**이 오늘 무엇을
+ * 더 해야 하는지 보는 숫자다. 팀장·센터장은 거래를 입력하지 않으므로
+ * (trx.create 를 갖지 않는다) 읽지 않는다 — core.js 가 그렇게 막는다.
+ *
+ * 읽기로는 이것이 센터장 한 세션에서 가장 큰 항목이었다: 전 입주자의 요약 캐시
+ * + 낡은 것의 재계산이라, 입주자가 늘면 그대로 늘어난다.
+ */
+function readsMonthlyStats(role) {
+  return role === 'staff' || role === 'typist';
+}
+
 function loginReads(role) {
-  const isAdminLike = role === 'admin' || role === 'leader';
+  const mine = visibleClients(role);
+  const perClientAccounts = cfg.clients > 0 ? cfg.accounts / cfg.clients : 0;
   let r = 0;
 
   // 직원·분류는 파생 명부 문서 1건씩 (예전에는 컬렉션 전체 = users+categories)
@@ -82,20 +122,22 @@ function loginReads(role) {
   r += 1;                 // directories/categories
   // 입주자·계좌는 아직 컬렉션 전체다 — 앱이 모든 필드를 쓰고(설정 화면이 편집한다),
   // accounts.bankStatements가 해마다 늘어 한 문서에 담으면 1 MiB 한도에 부딪힌다.
-  r += cfg.clients;
-  r += cfg.accounts;
+  r += mine;
+  r += Math.ceil(mine * perClientAccounts);
   r += 1;                 // config/lockedMonths (문서 1건 — 예전에는 reports 쿼리였다)
   r += 1;                 // config/permissions
 
-  // 당월 집계 — 요약 캐시 문서를 읽는다.
+  // 당월 집계 — 요약 캐시 문서를 읽는다. **거래를 쓰는 역할만.**
   //
   // 예전에는 담당 입주자 전원의 당월 거래를 전부 읽어 합산했다
   // (입주자 1명당 trxPerClientMonth건). 이제 입주자 1명당 **문서 1건**이고,
   // 캐시가 낡은 입주자만 예전 비용을 낸다.
-  const myClients = isAdminLike ? cfg.clients : cfg.clientsPerStaff;
-  r += myClients;                                                   // 캐시 조회
-  r += Math.ceil(myClients * cfg.staleRatio) * cfg.trxPerClientMonth; // 낡은 것만 재계산
-  r += cfg.fixedItems;    // fixedItems 전체 (필수 항목 정의 — 미납 카운트)
+  if (readsMonthlyStats(role)) {
+    r += mine;                                                   // 캐시 조회
+    r += Math.ceil(mine * cfg.staleRatio) * cfg.trxPerClientMonth; // 낡은 것만 재계산
+    // 고정항목도 담당 범위로 좁혀 읽는다(myScope('clientId')).
+    r += cfg.clients > 0 ? Math.ceil(cfg.fixedItems * (mine / cfg.clients)) : 0;
+  }
 
   return r;
 }
@@ -114,8 +156,10 @@ function historyReads() {
  * 가장 큰 항목이었다.
  */
 function reportListReads(role) {
-  if (role === 'admin' || role === 'leader') return cfg.reports;
-  const share = cfg.clients > 0 ? cfg.clientsPerStaff / cfg.clients : 1;
+  // report.view.all 은 **센터장만** 갖는다. 팀장은 결재 대기도 담당 범위로
+  // 좁혀 읽는다 — 예전 모델은 팀장을 관리자와 묶어 전체를 읽는다고 봤다.
+  if (role === 'center') return cfg.reports;
+  const share = cfg.clients > 0 ? visibleClients(role) / cfg.clients : 0;
   return Math.ceil(cfg.reports * share);
 }
 
@@ -126,10 +170,11 @@ function pendingBadgeReads() {
 
 // ── 합산 ──────────────────────────────────────────────────────
 const ROLES = [
-  { key: 'admin',  label: '관리자·센터장', count: cfg.admins,  report: true },
-  { key: 'leader', label: '팀장',          count: cfg.leaders, report: true },
-  { key: 'staff',  label: '담당자',        count: cfg.staff,   report: true },
-  { key: 'typist', label: '입력자',        count: cfg.typists, report: false },
+  { key: 'center', label: '센터장',  count: cfg.centers, report: true },
+  { key: 'admin',  label: '관리자',  count: cfg.admins,  report: false },
+  { key: 'leader', label: '팀장',    count: cfg.leaders, report: true },
+  { key: 'staff',  label: '담당자',  count: cfg.staff,   report: true },
+  { key: 'typist', label: '입력자',  count: cfg.typists, report: false },
 ];
 
 const rows = [];
@@ -137,8 +182,10 @@ let total = 0;
 
 for (const r of ROLES) {
   if (!r.count) continue;
+  // 볼 입주자가 없으면 거래내역 전환도 일어나지 않는다(관리자).
+  const switches = visibleClients(r.key) > 0 ? cfg.clientSwitchesPerSession : 0;
   const perSession = loginReads(r.key)
-    + historyReads() * cfg.clientSwitchesPerSession
+    + historyReads() * switches
     + (r.report ? reportListReads(r.key) + pendingBadgeReads() : 0);
   const daily = perSession * cfg.sessions * r.count;
   rows.push({ ...r, perSession, daily });
@@ -167,6 +214,13 @@ function assertSourceShape() {
   if (!/fetchMonthlySummaries/.test(core)) {
     problems.push('core.js가 요약 캐시를 쓰지 않습니다 — '
       + '이 모델은 입주자 1명당 1 읽기를 가정합니다');
+  }
+
+  // 결재 역할이 당월 집계를 아예 건너뛰는가. 이 모델은 팀장·센터장·관리자가
+  // 그 항목을 0으로 계산한다 — 게이트가 사라지면 예산이 조용히 늘어난다.
+  if (!/if \(!can\('trx\.create'\)\)/.test(core)) {
+    problems.push("core.js가 당월 집계를 can('trx.create')로 막지 않습니다 — "
+      + '이 모델은 팀장·센터장이 그것을 읽지 않는다고 가정합니다');
   }
 
   // 보고서 목록이 담당 입주자로 좁혀져 있는가
@@ -206,13 +260,16 @@ if (JSON_OUT) {
   const n = (x) => x.toLocaleString('ko-KR');
   console.log('\nFirestore 일일 읽기 예산 (캐시 미적중 상한)');
   console.log('─'.repeat(64));
-  console.log(`인원  관리자·센터장 ${cfg.admins} · 팀장 ${cfg.leaders} · `
+  console.log(`인원  센터장 ${cfg.centers} · 관리자 ${cfg.admins} · 팀장 ${cfg.leaders} · `
     + `담당자 ${cfg.staff} · 입력자 ${cfg.typists}`);
+  console.log(`범위  센터장 전체 · 팀장 ${visibleClients('leader')}명 · `
+    + `담당자 ${visibleClients('staff')}명 · 관리자 0명`);
   console.log(`규모  입주자 ${cfg.clients} · 계좌 ${cfg.accounts} · `
     + `당월 거래/입주자 ${cfg.trxPerClientMonth} · 보고서 ${cfg.reports}`);
   console.log(`습관  1인 하루 콜드 세션 ${cfg.sessions}회 · `
     + `세션당 입주자 전환 ${cfg.clientSwitchesPerSession}회`);
   console.log(`캐시  요약 캐시 낡음 비율 ${Math.round(cfg.staleRatio * 100)}%`);
+  console.log('집계  당월 집계는 담당자·입력자만 읽는다 (결재 역할은 건너뛴다)');
   console.log('─'.repeat(64));
   console.log('역할'.padEnd(16) + '인원'.padStart(6)
     + '세션당'.padStart(10) + '일일'.padStart(12));

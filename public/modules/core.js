@@ -121,8 +121,22 @@ export async function fetchBaseData(opts) {
 
   // 당월 수입/지출 집계 (대시보드 카드 표시용)
   // 본인 담당 입주자만 쿼리하여 read 절감 (Firestore 'in' 절은 최대 30개)
+  //
+  // **거래를 쓰는 사람만 읽는다.** 이 숫자는 장부를 쓰는 사람이 오늘 무엇을
+  // 더 해야 하는지 보는 것(미분류 몇 건, 고정항목 몇 건 남았나)이다. 팀장·
+  // 센터장은 거래를 입력하지 않으므로(작성자와 결재자의 분리 — CLAUDE.md §4)
+  // 이 카드로 할 일이 생기지 않고, 결재할 숫자는 보고서에서 본다.
+  //
+  // 읽기로도 이것이 센터장 한 세션에서 가장 큰 항목이다 — 전 입주자의 요약
+  // 캐시 + 낡은 것의 재계산이라, 입주자가 늘면 그대로 늘어난다.
+  // tools/read-budget.mjs 로 확인할 수 있다.
   if (need('monthlyStats')) {
-    try {
+    if (!can('trx.create')) {
+      // **읽지 않았다는 것을 null 로 남긴다.** {} 로 두면 대시보드 카드가
+      // 「당월 거래 없음」이라고 적는다 — 읽지 않은 것을 0으로 보고하는 셈이고,
+      // 결재자가 그것을 보고 "이 사람은 이번 달 거래가 없구나" 로 읽는다.
+      S.monthlyStats = null; S.fixedGap = null; S.allFixedItems = [];
+    } else { try {
       const ym = currentMonth();
       const myClientIds = S.clients.map(c => c.id);
 
@@ -160,10 +174,11 @@ export async function fetchBaseData(opts) {
         S.fixedGap = unpaid;
       } catch (e) { S.allFixedItems = []; S.fixedGap = {}; }
     } catch (e) {
-      // 집계 실패가 로그인을 막지는 않는다 — 카드에 0이 보이고 나머지는 동작한다.
+      // 집계 실패가 로그인을 막지는 않는다 — 카드가 잔액만 보여주고 나머지는
+      // 동작한다. 여기서도 {} 가 아니라 null 이다: 실패한 것과 0인 것은 다르다.
       console.warn('[core] 당월 집계 실패:', e);
-      S.monthlyStats = {}; S.fixedGap = {};
-    }
+      S.monthlyStats = null; S.fixedGap = null;
+    } }
   }
 
   rebuildSelectors();

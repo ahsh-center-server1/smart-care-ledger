@@ -172,3 +172,29 @@ test('보고서를 새로 그릴 때 분석 칸을 비운다', () => {
   assert.ok(/rpt-summary-print-area/.test(reset.slice(0, 500)),
     '인쇄 영역을 감추지 않습니다 — 화면은 비었는데 인쇄물에는 남습니다');
 });
+
+test('브라우저가 애초에 거래 내용을 보내지 않는다', () => {
+  // 서버가 걸러 내더라도 상호명이 **호출에 실려 나가는 것** 자체를 막는다.
+  // 사용자의 말: "ai에 상호명은 넣지마." 경계를 한 겹만 두면, 언젠가 서버가
+  // 필드를 하나 더 읽기로 할 때 이미 와 있는 데이터를 쓰게 된다.
+  const panel = readFileSync(
+    new URL('../public/modules/report-summary-panel.js', import.meta.url), 'utf8');
+  const at = panel.indexOf("call('analyzeReport')(");
+  assert.ok(at > 0, 'analyzeReport 호출을 찾지 못했습니다');
+  const payload = panel.slice(at, panel.indexOf('});', at));
+  // 넘기는 것은 객체 하나다. 금지 항목이 **키로** 들어 있으면 값이 나간다
+  // (rd.trxList 를 .length 로만 세는 것은 나가지 않는다 — 숫자만 남는다).
+  for (const field of ['trxList', 'trx', 'rows', 'clientName', 'accountNumber', 'memo']) {
+    assert.ok(!new RegExp(`(^|[,{\\s])${field}\\s*:`).test(payload),
+      `호출에 「${field}」 가 실려 나갑니다`);
+  }
+  // 상호명이 담기는 필드 이름은 아예 나타나지 않아야 한다.
+  for (const word of ['description', 'desc', 'name']) {
+    assert.ok(!new RegExp(`\\b${word}\\b`, 'i').test(payload),
+      `호출에 「${word}」 가 보입니다 — 상호명이 새어 나갈 자리입니다`);
+  }
+  // 대신 무엇을 보내는지도 못 박는다 — 집계뿐이다.
+  for (const field of ['totalIn', 'totalOut', 'balance', 'count', 'catStats']) {
+    assert.ok(new RegExp(`\\b${field}\\b`).test(payload), `${field} 이 빠졌습니다`);
+  }
+});
