@@ -17,6 +17,7 @@ import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
 import { fetchStaffDirectory, fetchCategoryDirectory } from '../services/directory.js';
 import { countUnenteredFixed } from '../domain/monthly-summary.js';
 import { sortTrx } from '../domain/trx-order.js';
+import { defaultTrxRange, rangeBounds } from '../domain/trx-range.js';
 import { registerCategoryColors } from '../domain/category-color.js';
 import { fetchInScope } from '../services/scoped-fetch.js';
 import * as Dash     from './dashboard.js';
@@ -260,7 +261,10 @@ export async function loadTransactions(clientId, opts) {
   showLoading(true);
   try {
     const { getDocs, collection, query, where } = fb();
-    const range = (opts && opts.range) ? opts.range : 'month';
+    // 기본 범위는 **달력이 정한다.** 월초에는 지난달을 포함해 읽는다 —
+    // 이 장부의 일은 1~10일에 지난달을 정리하는 것이라, 당월만 읽으면
+    // 사용자가 곧바로 기간을 넓혀 같은 조회를 한 번 더 한다.
+    const range = (opts && opts.range) ? opts.range : defaultTrxRange();
     const db = fdb();
 
     // 입력자는 본인이 작성한 거래만 볼 수 있다.
@@ -273,23 +277,15 @@ export async function loadTransactions(clientId, opts) {
       ? [where('clientId','==',clientId), where('createdBy','==',String(S.user.userId))]
       : [where('clientId','==',clientId)];
 
-    let q;
-    if (range === 'all') {
-      q = query(collection(db,COLS.TRANSACTIONS), ...scope);
-    } else if (range && typeof range === 'object' && range.start && range.end) {
-      q = query(collection(db,COLS.TRANSACTIONS), ...scope,
-                where('date','>=',range.start),
-                where('date','<=',range.end));
-    } else {
-      // 'month' (기본) — 당월
-      const now = new Date();
-      const ymStart = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
-      const lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
-      const ymEnd = ymStart.substring(0,8)+String(lastDay).padStart(2,'0');
-      q = query(collection(db,COLS.TRANSACTIONS), ...scope,
-                where('date','>=',ymStart),
-                where('date','<=',ymEnd));
-    }
+    // 경계 계산은 domain/trx-range.js 하나다 — 예전에는 여기와
+    // needsBroaderRange 두 곳이 각자 당월을 만들었고, 어긋나면 화면에 있는
+    // 거래를 필터가 못 찾았다.
+    const bounds = rangeBounds(range);
+    const q = bounds
+      ? query(collection(db,COLS.TRANSACTIONS), ...scope,
+              where('date','>=',bounds.start),
+              where('date','<=',bounds.end))
+      : query(collection(db,COLS.TRANSACTIONS), ...scope);
     const snap = await getDocs(q);
     // 내가 시작한 조회가 더 이상 최신이 아니면 결과를 버린다
     if (mySeq !== trxLoadSeq) return;
@@ -300,8 +296,10 @@ export async function loadTransactions(clientId, opts) {
     S.activeClient=clientId; S.trxRange=range; S.page=1; S.sortKey='date'; S.sortDir='asc';
     Trx.rebuildAccountFilter();
     Trx.applyFilters();
-    // 거래가 다시 로드됐으니 보고서 전용 캐시는 낡았다
-    Rpt.invalidateReportTrxCache(clientId);
+    // 보고서 캐시는 **여기서 버리지 않는다.** 거래를 다시 읽었다고 보고서가
+    // 낡는 것이 아니라, 거래가 바뀌었을 때 낡는다 — 그 판정은 쓰기 쪽
+    // (services/firestore.js)이 한다. 예전에는 기간 필터만 바꿔도 캐시가
+    // 날아가, 보고서를 열 때마다 그 입주자의 전체 이력을 다시 읽었다.
     Rpt.syncReportTrxList();
   } catch(e) {
     if (mySeq === trxLoadSeq) toast('거래 로드 실패: '+e.message,'error');

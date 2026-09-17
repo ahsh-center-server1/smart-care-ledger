@@ -8,6 +8,39 @@
 
 'use strict';
 
+import { S } from '../state.js';
+import { COLS } from '../constants.js';
+
+// ─────────────────────────────────────────────
+// 보고서 전용 거래 캐시 — **쓰기가 버린다, 읽기가 아니라**
+//
+// 예전에는 loadTransactions 가 끝날 때마다 이 캐시를 버렸다. 이유가 뒤집혀
+// 있었다 — 거래를 **다시 읽었다고** 보고서가 낡는 것이 아니라, 거래가
+// **바뀌었을 때** 낡는다. 그래서 기간 필터만 바꿔도, 입주자를 전환했다
+// 돌아와도 캐시가 날아갔고, 월초에 보고서를 네 번 열면 네 번 다 그 입주자의
+// 전체 이력을 다시 읽었다.
+//
+// 배치 헬퍼가 자동으로 부르므로 엑셀·일괄삭제·순서변경·고정항목은 신경 쓸
+// 것이 없다. updateDoc/addDoc 을 직접 쓰는 곳만 손으로 부른다
+// (test/report-trx-cache.test.mjs 가 빠진 곳을 잡는다).
+// ─────────────────────────────────────────────
+
+/**
+ * 거래가 바뀌었다 — 보고서 캐시를 버린다.
+ * @param {string} [clientId] 알면 그 입주자 것만. 모르면 무조건 버린다(안전한 쪽).
+ */
+export function invalidateReportTrxCache(clientId) {
+  if (!clientId || S.rptTrxCache?.clientId === clientId) S.rptTrxCache = null;
+}
+
+/** 배치 항목 중 거래 쓰기가 있으면 캐시를 버린다. */
+function noteBatch(...lists) {
+  for (const list of lists) {
+    for (const it of (list || [])) {
+      if (it && it.col === COLS.TRANSACTIONS) { invalidateReportTrxCache(); return; }
+    }
+  }
+}
 
 // ─────────────────────────────────────────────
 // Firebase 헬퍼 (index.html에서 window._fb로 초기화됨)
@@ -32,6 +65,7 @@ export function fdb() { return window._fb.db; }
 
 /** 다중 문서 업데이트 (배치, 500개 단위 자동 분할) */
 export async function batchUpdateDocs(updates) {
+  noteBatch(updates);
   if(!updates.length)return;
   const { writeBatch, doc } = fb();
   // 500개씩 분할 처리
@@ -47,6 +81,7 @@ export async function batchUpdateDocs(updates) {
 
 /** 다중 문서 삭제 (배치, 500개 단위 자동 분할) */
 export async function batchDeleteDocs(deletes) {
+  noteBatch(deletes);
   if(!deletes.length)return;
   const { writeBatch, doc } = fb();
   // 500개씩 분할 처리
@@ -62,6 +97,7 @@ export async function batchDeleteDocs(deletes) {
 
 /** 다중 문서 추가 (배치, 500개 단위 자동 분할) */
 export async function batchAddDocs(adds) {
+  noteBatch(adds);
   if(!adds.length)return [];
   const { writeBatch, collection, doc, serverTimestamp } = fb();
   const addedIds = [];
@@ -90,6 +126,7 @@ export async function batchAddDocs(adds) {
  * 재시도가 사본을 복제하지 않도록 하는 데 쓴다.
  */
 export async function batchSetDocs(items) {
+  noteBatch(items);
   if(!items.length)return;
   const { writeBatch, doc } = fb();
   for(let i=0;i<items.length;i+=500){
@@ -112,6 +149,7 @@ export async function batchMixedOps(operations) {
   const totalOps = updates.length + deletes.length + adds.length;
 
   if(!totalOps)return addedIds;
+  noteBatch(updates, deletes, adds);
 
   // 총 작업이 500개 이하면 한 번에 처리
   if(totalOps<=500){

@@ -1,10 +1,13 @@
 'use strict';
 
 import { S } from '../state.js';
-import { compareTrx, nextOrderInDay, planReorder } from '../domain/trx-order.js';
+import { compareTrx, nextOrderInDay, planReorder, sortTrx } from '../domain/trx-order.js';
+import { inLoadedRange, needsBroaderRange } from '../domain/trx-range.js';
 import { COLS, cs } from '../constants.js';
 import { toast, toastAction, showConfirm, escAttr, emptyState } from '../utils/ui.js';
-import { fb, fdb, batchUpdateDocs, batchMixedOps } from '../services/firestore.js';
+import {
+  fb, fdb, batchUpdateDocs, batchMixedOps, invalidateReportTrxCache,
+} from '../services/firestore.js';
 import { auditOp } from '../services/audit.js';
 import { calcAccountBalance } from '../services/balance.js';
 import { deleteFromStorage } from '../services/storage.js';
@@ -30,27 +33,6 @@ function renderTrxMandatoryBanner(){
   el.innerHTML='<div style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;color:#991b1b;">'
     +'<span style="font-weight:700;">⚠️ 이번 달 필수 고정지출 '+unpaid.length+'건 미입력</span>'
     +'<span style="color:#7f1d1d;margin-left:8px;">'+names+'</span></div>';
-}
-
-// 필터 범위가 현재 캐시 범위(S.trxRange)를 벗어나는지 검사
-function needsBroaderRange(filterStart, filterEnd, cachedRange) {
-  if (cachedRange === 'all') return false;
-  if (!filterStart && !filterEnd) return false;
-  if (cachedRange === 'month') {
-    const now = new Date();
-    const ymStart = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
-    const lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
-    const ymEnd = ymStart.substring(0,8)+String(lastDay).padStart(2,'0');
-    if (filterStart && filterStart < ymStart) return true;
-    if (filterEnd && filterEnd > ymEnd) return true;
-    return false;
-  }
-  if (cachedRange && typeof cachedRange === 'object' && cachedRange.start && cachedRange.end) {
-    if (filterStart && filterStart < cachedRange.start) return true;
-    if (filterEnd && filterEnd > cachedRange.end) return true;
-    return false;
-  }
-  return false;
 }
 
 function todayStr() {
@@ -338,6 +320,7 @@ export async function saveCatChange(trxId, newCat, chipEl) {
   if(lk&&isConfirmedLocked(lk.clientId,lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
   const {doc,updateDoc}=fb();
   await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{category:newCat});
+  invalidateReportTrxCache();
   [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t)t.category=newCat;});
   if (chipEl) {
     const c=cs(newCat);
@@ -427,6 +410,7 @@ export async function saveTrx(data){
     const idx=S.transactions.findIndex(x=>x.id===id);
     if(idx>=0)S.transactions[idx]={...S.transactions[idx],...data};
     await updateAccBalance(data.accountId);
+    invalidateReportTrxCache(data.clientId);
     applyFilters();   // 전체 재로드 없이 필터/정렬 유지
   } else {
     // 그 날의 맨 뒤에 놓는다. 예전에는 수기 입력에 sortOrder를 **아예 붙이지
@@ -435,10 +419,19 @@ export async function saveTrx(data){
     // 입력자: createdBy 필드 추가
     if(!data.createdBy&&S.user?.userId)data.createdBy=S.user.userId;
     data.id=(await addDoc(collection(fdb(),COLS.TRANSACTIONS),data)).id;
-    // loadTransactions를 먼저 — 방금 넣은 거래가 캐시에 들어온 뒤에 잔액을 다시 계산한다.
-    // (이전에는 순서가 반대여서 신규 거래가 잔액에서 빠졌고, 수정 경로와 값이 달랐다)
-    if(S.activeClient===data.clientId)await loadTransactions(data.clientId);
+    // **방금 만든 문서의 내용을 이미 들고 있다.** 예전에는 여기서
+    // loadTransactions 로 그 달을 통째로 다시 읽었다 — 수정 경로는 바로 위처럼
+    // 로컬만 고치는데 생성 경로만 그랬고, 월초에 수기 입력을 한 건 할 때마다
+    // 그 입주자의 한 달치를 다시 읽었다.
+    //
+    // 로드된 범위 밖(예: 몇 달 전 날짜)이면 끼워 넣지 않는다. 넣으면 필터가
+    // 숨기지 못하는 유령 행이 남는다 — 사용자가 기간을 넓히면 보인다.
+    if(S.activeClient===data.clientId&&inLoadedRange(data.date,S.trxRange)){
+      S.transactions=sortTrx([...S.transactions,{...data}]);
+    }
     updateAccBalance(data.accountId);
+    invalidateReportTrxCache(data.clientId);
+    applyFilters();
   }
   toast('저장되었습니다.','success'); return data.id;   // 증빙은 거래 생성 뒤에 서버가 붙인다
 }
@@ -451,6 +444,7 @@ export async function toggleReceiptMissing(id){
   const{doc,updateDoc}=fb();
   try{
     await updateDoc(doc(fdb(),COLS.TRANSACTIONS,id),{receiptMissing:newVal});
+    invalidateReportTrxCache(t.clientId);
     t.receiptMissing=newVal;
     applyFilters();
     toast(newVal?'영수증 분실 표시':'분실 표시 해제','success',1500);

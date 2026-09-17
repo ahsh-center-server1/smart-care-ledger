@@ -18,6 +18,8 @@
 
 'use strict';
 
+import { invalidateReportTrxCache } from './firestore.js';
+
 import { uploadToStorage } from './storage.js';
 
 /** AI 판독 전에 서버가 job을 만들고 불변 staging 원본을 올린다. */
@@ -53,6 +55,10 @@ export async function uploadReceipt({
   await uploadToStorage(file, stagingPath);
   await call('completeReceiptUpload')({ uploadId });
 
+  // 서버가 거래에 증빙을 붙였다(또는 초안 거래를 새로 만들었다).
+  // 브라우저의 배치 헬퍼를 지나지 않으므로 보고서 캐시를 여기서 버린다 —
+  // 영수증 쓰기의 입구가 이 파일 하나라, 호출부마다 기억할 필요가 없다.
+  invalidateReportTrxCache();
   const res = await call('finalizeReceipts')({
     items: [{
       uploadId,
@@ -103,6 +109,7 @@ export async function uploadReceipts(clientId, entries, onProgress) {
     if (onProgress) onProgress(i + 1, entries.length);
   }
 
+  invalidateReportTrxCache();
   const res = await call('finalizeReceipts')({ items });
   return res.data || { okCount: 0, failCount: entries.length, results: [] };
 }
@@ -111,6 +118,7 @@ export async function removeReceipt({
   trxId, expectedReceiptPath = '', expectedReceiptGeneration = '', expectedReceiptUrl = '',
 }) {
   const { call } = window._fbFn;
+  invalidateReportTrxCache();
   const res = await call('removeReceipt')({
     trxId, expectedReceiptPath, expectedReceiptGeneration, expectedReceiptUrl,
   });

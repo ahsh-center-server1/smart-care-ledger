@@ -54,10 +54,17 @@ function jsFiles(dir = PUBLIC, out = []) {
 function transactionCreateSites(src, file) {
   const sites = [];
   const lines = src.split('\n');
-  // batch.set은 컬렉션 이름이 그 줄에 없다. 그래서 파일이 거래를 다루는지로
-  // 좁힌 뒤 그 파일의 batch.set만 본다 — 이 앱에서 batch.set을 쓰는 곳은
-  // 자산이동 양쪽 다리뿐이다.
-  const fileTouchesTrx = src.includes('COLS.TRANSACTIONS');
+  // batch.set은 컬렉션 이름이 그 줄에 없다. 그래서 파일이 거래를 **쓰는지**로
+  // 좁힌 뒤 그 파일의 batch.set만 본다.
+  //
+  // 「쓰는지」가 「언급하는지」와 다르다는 점이 중요하다. services/firestore.js 의
+  // 배치 헬퍼는 컬렉션을 인자(col)로 받는 범용 함수라 createdBy 를 알 수 없고,
+  // 알아서도 안 된다 — 그것은 호출부의 몫이고, 호출부는 아래
+  // `col: COLS.TRANSACTIONS` 규칙이 이미 잡는다. 그 파일이 거래를 언급하는 것은
+  // "이 배치에 거래 쓰기가 있나" 를 **비교**할 때뿐이다.
+  const writesTrxLiteral = src.split('\n').some(l =>
+    /COLS\.TRANSACTIONS/.test(l) && !/[=!]==\s*COLS\.TRANSACTIONS/.test(l));
+  const fileTouchesTrx = writesTrxLiteral;
 
   lines.forEach((line, i) => {
     const at = `${file.replace(PUBLIC, 'public/')}:${i + 1}`;

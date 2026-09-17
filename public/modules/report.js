@@ -81,10 +81,9 @@ async function getClientTrxAll(clientId) {
   return trx;
 }
 
-/** 거래가 바뀌면 보고서 캐시를 버린다 (다음 조회에서 다시 읽는다) */
-export function invalidateReportTrxCache(clientId) {
-  if (!clientId || S.rptTrxCache?.clientId === clientId) S.rptTrxCache = null;
-}
+// 거래가 바뀌면 보고서 캐시를 버린다 — 구현은 services/firestore.js 하나다.
+// 배치 헬퍼가 자기 안에서 부를 수 있어야 해서 그쪽에 둔다(여기에 두면 순환).
+export { invalidateReportTrxCache } from '../services/firestore.js';
 
 // ─────────────────────────────────────────────
 // 규칙 기반 자동 분석 (API 없음)

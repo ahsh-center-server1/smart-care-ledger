@@ -8,7 +8,7 @@
 import { S } from '../state.js';
 import { COLS, cs } from '../constants.js';
 import { toast, escAttr, makeDraggable } from '../utils/ui.js';
-import { fb, fdb, batchAddDocs } from '../services/firestore.js';
+import { fb, fdb, batchAddDocs, invalidateReportTrxCache } from '../services/firestore.js';
 import { uploadImageWithThumb, uploadExcelOriginal, deleteManyFromStorage, getImageUrl, validateUploadSize } from '../services/storage.js';
 import { loadTransactions, refetchUsers, refetchClients, refetchAccounts, isConfirmedLocked, myScope } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
@@ -468,11 +468,8 @@ async function saveTransfer({existing,existId,acc,toAcc,accId,toAccId,date,time,
   const msg=out.linkedExisting?'반대편 거래를 찾아 자산이동으로 연결했습니다.'
     :out.createdMate?'입금 계좌에 상대편 거래를 새로 만들었습니다.'
     :existId?'자산이동 수정됨':'자산이동 저장됨';
-  void existing; void toAcc;
-  await afterTransfer(acc,toAcc,msg);
-}
-
-async function afterTransfer(acc,toAcc,msg){
+  void existing;
+  invalidateReportTrxCache();   // 서버가 양쪽 거래를 썼다 — 배치 헬퍼를 안 탄다
   await updateAccBalance(acc.id); await updateAccBalance(toAcc.id);
   if(S.activeClient===acc.clientId||S.activeClient===toAcc.clientId)
     await loadTransactions(S.activeClient);
