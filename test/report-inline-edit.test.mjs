@@ -63,3 +63,24 @@ test('createdBy 가 없으면 넣지 않는다 — undefined 는 Firestore 가 �
   const p = fieldPatch({ ...TRX, createdBy: '' }, 'description', 'x');
   assert.ok(!('createdBy' in p));
 });
+
+// ── 저장하는 것은 Enter 하나다 ──────────────────────────────────────────
+//
+// blur 로도 저장하면, 표를 정리하다 다음 칸을 누르는 것만으로 손대던 값이
+// 들어간다. 사용자가 명시적으로 되돌려 달라고 한 규칙이라 (되돌릴 수도 있다고
+// 했다) 소스에 못을 박아 둔다 — 조용히 옛 동작으로 돌아가면 아무도 모른다.
+import { readFileSync } from 'node:fs';
+
+const SRC = readFileSync(new URL('../public/modules/report-inline-edit.js', import.meta.url), 'utf8');
+
+test('칸을 벗어나면(blur) 취소한다 — 저장이 아니다', () => {
+  assert.match(SRC, /addEventListener\('blur',\s*restore\)/,
+    'blur 는 restore(취소)여야 합니다');
+  assert.doesNotMatch(SRC, /addEventListener\('blur',\s*save\)/,
+    'blur 로 저장하면 안 고치려던 값이 들어갑니다');
+});
+
+test('Enter 는 저장, Esc 는 취소', () => {
+  assert.match(SRC, /e\.key === 'Enter'[^\n]*save\(\)/);
+  assert.match(SRC, /e\.key === 'Escape'[^\n]*restore\(\)/);
+});

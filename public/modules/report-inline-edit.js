@@ -16,6 +16,13 @@
  * 되돌리는 규칙
  *   저장이 거부되면(잠긴 달·권한 없음) **원래 보이던 것을 그대로 되돌린다.**
  *   입력칸이 남아 있으면 사용자는 고쳐진 줄 알고 넘어간다.
+ *
+ * 저장하는 것은 Enter 하나다
+ *   칸을 벗어나는 것(blur)은 **취소**다. 표를 정리하다 보면 다음 칸을 누르거나
+ *   다른 줄로 눈이 가는 일이 잦은데, 그때마다 손대던 값이 저장되면 무엇이
+ *   언제 바뀌었는지 사용자가 세고 있을 수 없다. 저장은 **누른 사람이 그렇게
+ *   말했을 때만** 일어나는 편이 장부에 맞는다 — 고치려던 것을 놓치면 다시
+ *   누르면 되지만, 안 고치려던 것이 저장되면 되돌릴 방법이 없다.
  */
 
 'use strict';
@@ -77,6 +84,8 @@ export function startInlineEdit(td, trx, field, commit) {
   if (input.type === 'text') input.select();
 
   let done = false;
+  // Enter 로 저장을 시작하면 input.disabled 가 blur 를 한 번 더 부른다.
+  // done 이 그때 이미 참이라 취소가 저장을 덮지 않는다.
   const restore = () => {
     if (done) return; done = true;
     openEditor = null;
@@ -103,7 +112,8 @@ export function startInlineEdit(td, trx, field, commit) {
     if (e.key === 'Enter') { e.preventDefault(); save(); }
     else if (e.key === 'Escape') { e.preventDefault(); restore(); }
   });
-  input.addEventListener('blur', save);
+  // 칸을 벗어나면 취소한다 — 저장은 Enter 만.
+  input.addEventListener('blur', restore);
   // 칸을 누른 것이 줄·문서까지 올라가면 방금 연 입력칸이 도로 닫힌다.
   ['click', 'mousedown'].forEach(t => input.addEventListener(t, e => e.stopPropagation()));
 }

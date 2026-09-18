@@ -28,9 +28,9 @@
 | `state.js` | `public/state.js` | 전역 상태(S) |
 | `parser-config.js` | `public/parser-config.js` | 은행별 엑셀 파서 설정 (ES 모듈, 유일한 설정) |
 | `manifest.json` / `sw.js` | `public/` | PWA 매니페스트 / 서비스 워커 |
-| 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions, fixed-items, report-actor, report-accounts(계좌 현황 계산), report-excel(엑셀 저장), report-inline-edit(칸별 제자리 수정), report-bank-photos(통장사진 창), client-picker(입주자 찾기), settings-permissions |
-| 서비스 | `public/services/*.js` | firestore, image(이미지 압축), storage, balance(잔액 계산), excel-parser, receipt-upload, scoped-fetch, in-query |
-| 도메인 | `public/domain/*.js` | 순수 판정 — 결재 전이표, 잔액·집계 규칙, `timestamps`(시각 변환), `report-stamps`(결재 도장이 말하는 이름), `ledger-edit-window`(§6-1), `hangul-search`(초성 검색) |
+| 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions, fixed-items, report-actor, report-accounts(계좌 현황 계산), report-excel(엑셀 저장), report-inline-edit(칸별 제자리 수정), report-bank-photos(통장사진 창), client-picker(입주자 찾기), bank-parser-ui(은행 추가 화면), settings-permissions |
+| 서비스 | `public/services/*.js` | firestore, image(이미지 압축·판독용 해상도), storage, balance(잔액 계산), excel-parser, bank-parser-guess(열 자동 추천), receipt-upload, scoped-fetch, in-query |
+| 도메인 | `public/domain/*.js` | 순수 판정 — 결재 전이표, 잔액·집계 규칙, `timestamps`(시각 변환), `report-stamps`(결재 도장이 말하는 이름), `ledger-edit-window`(§6-1), `hangul-search`(초성 검색), `bank-parser`(저장된 은행 설정) |
 | 유틸 | `public/utils/ui.js` | UI 유틸리티 |
 | 아이콘 | `public/utils/icons.js` | 인라인 SVG 한 벌 (§7 모바일) |
 | `firestore.rules` | `firestore.rules` (루트) | Firestore 보안 규칙 |
@@ -61,6 +61,7 @@ reports:      { reportId, clientId, year, month, status, summary,
 config:       { type='archive', year, archivedAt, count }
               // 'permissions' 문서: 역할별 권한 오버라이드 저장
               // 'teams' 문서: { teams:[{id,name,leaderUid,active}] } — §4-1
+              // 'bankParsers' 문서: { parsers:[{key,label,DATE,DESC,…}] } — §10-1
 fixedItems:   { clientId, accountId, type, day, category,
                 description, amount }
 budgets:      { clientId, year, categoryBudgets{...} }  // 연간 예산
@@ -344,7 +345,10 @@ recall 두 걸음이고, 각 걸음의 주인이 분명하다.
   | 분류 | 인라인 드롭다운(거래내역 탭과 **같은 것**) | `openCatDropdownUI` |
   | 증빙 오른쪽 「수정」 | 수기 입력 폼 — 여러 칸을 함께 고칠 때 | `openTrxFromReport` |
 
-  인라인 입력칸의 규칙: Enter·칸 이탈이 저장, Esc 가 취소. **거부되면 원래 보이던
+  인라인 입력칸의 규칙: **Enter 만 저장**이고, Esc 와 칸 이탈(blur)은 취소다. 표를
+  정리하다 보면 다음 칸을 누르거나 눈이 다른 줄로 가는 일이 잦은데, 그때마다 손대던
+  값이 저장되면 무엇이 언제 바뀌었는지 셀 수 없다 — 고치려던 것을 놓치면 다시 누르면
+  되지만 안 고치려던 것이 저장되면 되돌릴 방법이 없다. **거부되면 원래 보이던
   것을 그대로 되돌린다** — 입력칸이 남아 있으면 고쳐진 줄 알고 넘어간다. 편집 중인
   칸은 하나뿐이고(둘이면 어느 쪽이 저장될지 모른다), 여는 동안 그 줄의 드래그를
   끈다(끌 수 있는 줄 안에서는 글자를 마우스로 고를 수 없다).
@@ -438,6 +442,9 @@ recall 두 걸음이고, 각 걸음의 주인이 분명하다.
 
 ### 엑셀 업로드
 - [x] KB국민은행/카드, NH농협은행/카드, 우리은행, 신한은행 지원
+- [x] **그 밖의 은행은 화면에서 추가한다** — 설정 → 시스템 → 은행 파서, 또는
+      업로드가 실패한 자리의 「이 파일로 은행 추가」. 열 추천은 규칙이 먼저 하고
+      「AI 추천」이 그 위에 얹는다(보내는 것은 머리글 글자뿐). §10-1
 - [x] SMS XML, HTML-XLS 지원
 - [x] 파일 순서 그대로 sortOrder 부여 (날짜마다 그 날의 다음 자리부터)
 - [x] 음수 지출 → 지출에서 음수 처리 (잔액 반영)
@@ -453,6 +460,9 @@ recall 두 걸음이고, 각 걸음의 주인이 분명하다.
 - [x] 영수증 A4 일괄 출력 (2열×4행 격자)
 
 ### 통장 사진
+- [x] 사진에서 거래내역 판독 → 엑셀과 **같은 경로**(중복검사 → 미리보기 → 저장).
+      판독용 사진은 보관용보다 크게 보내고, 연도 없는 줄은 같은 사진의 다른 줄에서
+      연도를 빌린다 — §10-1-1
 - [x] 계좌 관리에서 다중 업로드 (연월 지정)
 - [x] 대시보드 퀵 액션에서 통장 사진 업로드 (입주자/계좌 선택)
 - [x] 사진 정렬 (연월 내림차순)
@@ -507,7 +517,13 @@ recall 두 걸음이고, 각 걸음의 주인이 분명하다.
 - [x] 해당 월 통장사진 표시 섹션
 - [x] 규칙 기반 자동 분석
 - [x] 엑셀 저장
-- [x] 인쇄/PDF (A4, 글씨 15px)
+- [x] 인쇄/PDF (A4). 표 글자 10px · 섹션 여백 최소 — 결재 문서는 **한 장에 들어가는
+      것이 목표**다. 거래 50건이 4쪽으로 나오던 원인은 글자 크기가 아니라
+      `page-break-inside:avoid` 였다: 모든 섹션에 걸려 있어서 브라우저가 거래
+      내역을 통째로 다음 쪽으로 밀고, 거기서도 안 들어가니 결국 쪼갰다 — 밀기
+      전 쪽의 남은 절반이 빈 채로 인쇄됐다. 거래 내역만 예외로 두고(쪽을 넘어
+      이어진다), 줄 하나는 여전히 쪼개지 않으며, 둘째 쪽부터 표 머리를 다시
+      찍는다(`thead{display:table-header-group}`). `test/report-print.test.mjs`
 - [x] 드래그앤드롭 순서 변경 (**그 날 안에서만** — domain/trx-order.js)
 - [x] 거래내역 자동 정렬: sortOrder 기준 → 날짜/시간 오름차순
 - [x] 컬럼 헤더 정렬 (rptSortKey)
@@ -526,6 +542,7 @@ recall 두 걸음이고, 각 걸음의 주인이 분명하다.
 - [x] 공통/입주자별 자동분류 규칙 관리
 - [x] 고정항목 관리
 - [x] 연간 예산 관리
+- [x] 은행 파서 관리 (설정 → 시스템 → 은행 파서, `excel.upload`)
 - [x] 데이터 초기화/마감 (센터장·관리자, Firebase 전체 초기화는 관리자)
 - [x] 역할별 권한 커스터마이징 (관리자)
 
@@ -628,10 +645,50 @@ const app = initializeApp(env.config);
 
 ---
 
-## 10-1. 엑셀 파서에 은행 추가하기
+## 10-1. 은행 추가 — 화면에서 한다 (배포가 필요하지 않다)
 
-`public/parser-config.js`의 `BANK_CONFIGS`에 항목 하나를 추가하면 끝이다.
-다른 파일은 건드리지 않는다.
+**기본 경로는 화면이다.** 설정 → 시스템 → **은행 파서**, 또는 엑셀 업로드가
+실패했을 때 그 자리에 뜨는 **「이 파일로 은행 추가」**. 그 은행 파일을 하나
+고르면 머리글과 값 다섯 줄이 뜨고, 각 열이 날짜·내용·출금·입금 중 무엇인지
+고른 뒤 저장한다. 저장은 `config/bankParsers` 문서 하나에 들어간다
+(팀 목록과 같은 방식 — 서버 콜러블만 쓴다).
+
+| 어디서 | 무엇이 |
+|---|---|
+| `public/domain/bank-parser.js` | 저장된 설정의 정리·검증·병합 (순수, 서버 사본 `functions/bank-parser.cjs`) |
+| `public/services/bank-parser-guess.js` | **규칙 기반** 열 추천 — 값의 생김새(날짜꼴·금액꼴)와 머리글 낱말 |
+| `public/modules/bank-parser-ui.js` | 고르는 화면(떠 있는 창) + 설정 목록 |
+| `saveBankParser` · `deleteBankParser` | 저장·삭제 콜러블. 권한은 **`excel.upload`** |
+| `suggestBankParser` | 「✨ AI 추천」. 보내는 것은 **머리글 글자와 열의 꼴뿐** |
+
+> **왜 담당자가 은행을 추가하는가.** 파일을 가진 사람만이 어느 열이 출금인지
+> 볼 수 있다. 팀장 쪽에 두면 "개발자를 부르는 일"이 "팀장을 부르는 일"이 될
+> 뿐이고, 정작 팀장은 엑셀을 올리지 않아 그 파일을 열어 본 적이 없다. 위험도
+> 낮다 — 이 설정이 정하는 것은 **파일을 어떻게 읽는가**뿐이고, 읽은 결과는
+> 여전히 미리보기에서 사람이 확인한 뒤에야 저장된다.
+
+> ⚠️ **저장분은 언제나 내장 설정 뒤에서 판정된다.** 판정은 위에서부터 먼저
+> 맞는 것을 택하므로, 앞에 두면 사용자가 만든 느슨한 설정 하나가 이미 잘 되던
+> 은행을 가로챈다. 뒤에 두면 최악의 경우가 "아직 안 되던 파일이 여전히 안 됨"
+> 이다. 키에 `USER_` 접두어를 붙여 내장 키와 겹칠 수도 없게 했다.
+> `test/bank-parser.test.mjs` 가 이 순서를 지킨다.
+
+> ⚠️ 고른 열은 번호가 아니라 **머리글 글자**로 저장한다. 번호로 담으면 은행이
+> 열 하나를 끼워 넣는 순간 전부 어긋나고, 그때 사용자는 "어제까지 되던 것"이
+> 왜 안 되는지 알 수 없다.
+
+**AI 추천이 하는 일과 안 하는 일.** 규칙이 먼저 추천하고, AI 는 그 위에 얹는
+선택지다. 규칙은 낱말 표(`출금`·`찾으신`…)에 기대는데 은행마다 표기가 갈리고,
+표에 없는 낱말이면 규칙은 자리로 추측한다 — 그게 틀리면 출금과 입금이 뒤집힌다.
+모델은 처음 보는 표기도 뜻으로 읽는다. 다만 **거래는 한 줄도 보내지 않는다**:
+경계는 `functions/ai/bank-header.js` 의 `buildHeaderFacts()` 하나이고,
+테스트가 "값이 새어 나가지 않는다"를 직접 확인한다. 실패해도 규칙 추천이
+화면에 그대로 남으므로 버튼을 눌러도 화면이 멈추지 않는다.
+
+### 소스에 직접 넣는 길 (내장 은행)
+
+`public/parser-config.js`의 `BANK_CONFIGS`에 항목 하나를 추가한다. 전국 어디서나
+쓰는 은행처럼 **모든 시설에 기본으로 들어가야 하는 것**만 여기 둔다.
 
 ```javascript
 HANA_BANK: {
@@ -647,6 +704,31 @@ HANA_BANK: {
 
 파싱에서 제외된 행은 미리보기에 행 번호·이유·원문과 함께 표시된다.
 "인식된 거래가 없습니다"만 뜨면 그 목록이 원인을 알려준다.
+
+---
+
+## 10-1-1. 통장 사진 판독 — 안 읽히는 이유는 파서가 아니다
+
+**사진 경로는 `BANK_CONFIGS` 를 한 번도 읽지 않는다.** 모델이 사진에서 직접
+읽고(`analyzeBankbook`), 그 결과를 `bankbookRowsToParsed` 가 엑셀 파서의 행
+모양으로 바꿔 **같은 저장 경로**에 태운다. 그래서 "파서에 없는 은행이라
+안 읽힌다"는 성립하지 않는다. 실제 원인은 둘이었다.
+
+| 원인 | 증상 | 고친 것 |
+|---|---|---|
+| 판독용 사진이 **보관용 압축**(1200px·0.78)을 지났다 | 글씨가 큰 은행은 읽히고 빽빽한 은행만 안 읽힌다 | `compressForReading` — 서버 상한(5MB) 안에 드는 **가장 큰** 것을 보낸다(2400→1200 단계). 통장으로 보관하는 사진은 그대로 1200px |
+| 연도 없는 줄(`09-05`)에 **오늘의 연도**를 넣었다 | 작년 통장을 올리면 조용히 올해 거래가 된다 | 같은 사진의 **다른 줄에서 연도를 빌린다**(`explicitYearOf` → 가장 많이 나온 연도). 한 줄도 없으면 예전대로 오늘 기준 |
+
+영수증이 같은 압축으로 잘 읽히던 것이 오해를 키웠다. 영수증은 한 장에 열 줄이고
+글자가 크다. 통장은 스무 줄이 넘고 글자가 작으며 괘선이 흐리다 — 4000px 사진을
+1200px 로 줄이면 한 줄 글자 높이가 40px 에서 12px 가 되고, 거기에 0.78 JPEG 가
+숫자를 뭉갠다.
+
+`test/bankbook-photo.test.mjs` 가 이 둘을 지킨다(판독용이 보관용보다 큰지,
+연도를 이웃 줄에서 빌리는지).
+
+> 남은 한계: **한 번에 한 장**이다. 통장 펼침면은 두 장으로 찍히는데 지금은 첫
+> 장만 읽는다. 두 번 나눠 올리면 둘 다 들어간다(중복 판정이 겹친 줄을 잡는다).
 
 ---
 
@@ -668,6 +750,8 @@ Cloud Functions 콜러블로 옮겨 갔다. 규칙은 문서 하나만 보므로
 | 자산이동 | `saveTransfer` | 상대편 조회까지 트랜잭션 안이어야 한다 |
 | 연도 마감 | `runArchive` | 잠긴 달의 삭제 + generation 사전조건 |
 | 팀 목록 저장 | `saveTeams` | `config` 쓰기는 규칙이 아무에게도 열지 않는다(서버 전용) |
+| 은행 파서 저장·삭제 | `saveBankParser` · `deleteBankParser` | 같은 이유로 서버 전용. 문서를 통째로 받지 않고 **한 항목만** 더하거나 지운다 — 두 사람이 동시에 추가하면 나중 사람이 앞사람 설정을 지운다 |
+| 은행 열 추천 | `suggestBankParser` | Gemini 키는 서버에만 있다. 보내는 것은 **머리글 글자와 열의 꼴뿐** — §10-1 |
 | 권한 백필 | `backfillAuthz` | 배포 후 **가장 먼저** 돌려야 한다 |
 | 보고서 분석 문장 | `analyzeReport` | Gemini 키는 서버에만 있다. 보내는 것은 **집계뿐** — 아래 |
 

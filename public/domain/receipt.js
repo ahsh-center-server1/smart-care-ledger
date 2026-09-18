@@ -100,6 +100,26 @@ function withInferredYear(month, day, today) {
 }
 
 /**
+ * 인쇄된 문자열에 **연도가 적혀 있나.** 있으면 그 연도(네 자리), 없으면 null.
+ *
+ * 통장 사진에는 `09-05` 처럼 연도 없는 줄이 흔한데, 같은 장의 다른 줄에는
+ * `2026-09-05` 가 있는 경우가 많다. 그때는 오늘 날짜로 추측하는 것보다
+ * **같은 사진의 이웃 줄**이 훨씬 나은 근거다 — bankbookRowsToParsed 참고.
+ */
+export function explicitYearOf(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return null;
+  const datePart = s.split(/[T\s]/)[0] || s;
+  let m = datePart.match(/^(\d{2,4})[.\-/](\d{1,2})[.\-/](\d{1,2})\.?$/);
+  if (m) { const y = expandYear(m[1]); return Number.isFinite(y) ? y : null; }
+  m = datePart.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m) return Number(m[1]);
+  m = s.match(/(\d{2,4})\s*년\s*\d{1,2}\s*월/);
+  if (m) { const y = expandYear(m[1]); return Number.isFinite(y) ? y : null; }
+  return null;
+}
+
+/**
  * 금액 문자열을 숫자로. 실패하면 null(0과 구분해야 한다).
  *
  * "12,000원" "₩12,000" "12 000" "-5,000" "12,000 원" → 12000 / -5000
@@ -212,6 +232,15 @@ export function bankbookRowsToParsed(extracted, opts = {}) {
   const today = opts.today || new Date();
   const src = (extracted && Array.isArray(extracted.rows)) ? extracted.rows : [];
 
+  // 연도가 안 적힌 줄의 기준 — **같은 사진의 다른 줄**에서 빌린다.
+  //
+  // 예전에는 오늘의 연도를 쓰고, 그것이 미래가 되면 작년으로 봤다. 그래서
+  // 작년 통장을 올리면 `09-05` 가 조용히 올해 9월 5일이 됐다(과거라 되돌리는
+  // 규칙에도 안 걸린다). 통장 한 장에는 대개 연도가 적힌 줄이 섞여 있고,
+  // 그 줄이 오늘보다 훨씬 나은 근거다.
+  const anchor = anchorYearOf(src);
+  const asOf = anchor == null ? today : new Date(anchor, 11, 31);
+
   const rows = [];
   const skipped = [];
 
@@ -219,7 +248,7 @@ export function bankbookRowsToParsed(extracted, opts = {}) {
     const raw = [r && r.dateRaw, r && r.description, r && r.withdraw, r && r.deposit]
       .filter(Boolean).join(' | ');
 
-    const date = normalizeReceiptDate(r && r.dateRaw, today);
+    const date = normalizeReceiptDate(r && r.dateRaw, asOf);
     if (!date) { skipped.push({ reason: '날짜를 읽을 수 없음', raw }); continue; }
 
     const out = normalizeAmount(r && r.withdraw);
@@ -241,4 +270,16 @@ export function bankbookRowsToParsed(extracted, opts = {}) {
   }
 
   return { rows, skipped };
+}
+
+/** 가장 많이 나온 연도. 연도가 적힌 줄이 하나도 없으면 null. */
+function anchorYearOf(src) {
+  const count = new Map();
+  for (const r of src || []) {
+    const y = explicitYearOf(r && r.dateRaw);
+    if (y) count.set(y, (count.get(y) || 0) + 1);
+  }
+  let best = null, most = 0;
+  for (const [y, n] of count) if (n > most) { most = n; best = y; }
+  return best;
 }

@@ -23,7 +23,7 @@ import { renderFixedItemForm, registerModalShell } from './fixed-items.js';
 // 호출부까지 번지지 않게 하는 것이 분리의 목적이다.
 export { getUnpaidMandatoryItems, renderFixedItemsList } from './fixed-items.js';
 import * as ExcelParser from '../services/excel-parser.js';
-import { dupKey, fetchExistingForDup, isImageFile, renderXlSkipped } from './excel-support.js'; export { isImageFile };
+import { dupKey, fetchExistingForDup, isImageFile, renderXlSkipped, parserConfigs, offerBankParser } from './excel-support.js'; export { isImageFile };
 import { iconSvg } from '../utils/icons.js';   // 버튼 아이콘 한 벌 (utils/icons.js 머리말)
 import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
 import { staffPickerHtml, bindStaffPicker, teamSelectHtml, bindClientTeamField } from './staff-picker.js';
@@ -34,7 +34,7 @@ import { PAYMENT_METHODS, detectPaymentMethod, normalizePaymentMethod } from '..
 import { isExcludedFromTotals } from '../domain/trx-totals.js';
 import { parseAmount, attachAmountInput } from '../utils/amount-input.js';
 import { classifyMerchant } from '../domain/receipt-match.js';
-import { compressImage, heicToJpeg } from '../services/image.js';
+import { compressImage, heicToJpeg, compressForReading, fileToBase64 } from '../services/image.js';
 import { hasReceipt, receiptAccess, receiptAccessUrl, receiptViewKind } from '../services/receipt-access.js';
 import { fnErrorMessage } from '../services/fn-errors.js';
 
@@ -501,10 +501,9 @@ export async function analyzeXlFile(){
     .map(c=>({keyword:c.keyword,category:c.category,subcategory:c.subcategory||''}));
 
   try{
-    // 사진을 여기 떨어뜨리는 일이 잦다. 드롭 존은 accept 를 우회하므로
-    // 파일 선택 필터로는 막히지 않는다. 엑셀 파서에 넘기면 "지원하지 않는
-    // 형식"이라고 답하는데, **바로 옆에 통장 사진 판독 경로가 있으므로**
-    // 그 말은 사실도 아니고 무엇을 하라는 안내도 아니다.
+    // 사진을 여기 떨어뜨리는 일이 잦다(드롭 존은 accept 를 우회한다). 엑셀
+    // 파서의 "지원하지 않는 형식"은 **바로 옆에 통장 사진 판독이 있으므로**
+    // 사실도 아니고 무엇을 하라는 안내도 아니다.
     if(isImageFile(fi.files[0])){
       const photoBox=document.getElementById('xl-photo-box');
       const photoReady=photoBox&&photoBox.style.display!=='none';
@@ -515,17 +514,17 @@ export async function analyzeXlFile(){
       return;
     }
 
-    const parsed=await ExcelParser.parseFile(fi.files[0],parserCats);
+    const parsed=await ExcelParser.parseFile(fi.files[0],parserCats,{configs:parserConfigs()});
     S.excelSkipped=parsed.skipped||[];
     S.excelTemp=[];
 
     if(!parsed.rows.length){
       // 예전에는 "인식된 거래 데이터가 없습니다" 한 줄이 전부였다.
       // 제외 사유가 있으면 그걸 보여준다 — 원인을 알 수 있는 유일한 단서다.
-      renderXlPreview();
+      renderXlPreview(); offerBankParser(fi.files[0],analyzeXlFile);
       toast(S.excelSkipped.length
         ? `인식된 거래가 없습니다. 제외된 행 ${S.excelSkipped.length}건의 이유를 아래에서 확인하세요.`
-        : '인식된 거래가 없습니다. 지원하지 않는 형식이거나 헤더를 찾지 못했습니다.','error',6000);
+        : '인식된 거래가 없습니다. 등록되지 않은 은행이면 아래 「이 파일로 은행 추가」로 추가할 수 있습니다.','error',7000);
       reset(); return;
     }
 
@@ -561,17 +560,15 @@ export async function analyzeBankbookPhoto(file){
   try{
     validateUploadSize(file);
     const jpeg=await heicToJpeg(file);
+    // 판독용과 보관용은 **다른 사진**이다 — 통장은 한 장에 스무 줄이 넘고 글자가
+    // 작아서, 보관용 1200px·0.78 로 줄이면 숫자가 뭉개진다(services/image.js).
+    const forRead=await compressForReading(jpeg);
     const compressed=await compressImage(jpeg);
-    const base64=await new Promise((res,rej)=>{
-      const fr=new FileReader();
-      fr.onerror=()=>rej(new Error('사진을 읽을 수 없습니다.'));
-      fr.onload=()=>{const t=String(fr.result||'');const i=t.indexOf(',');res(i>=0?t.slice(i+1):t);};
-      fr.readAsDataURL(compressed);
-    });
+    const base64=await fileToBase64(forRead);
 
     const res=await window._fbFn.call('analyzeBankbook')({
       imageBase64:base64,
-      mediaType:compressed.type||'image/jpeg',
+      mediaType:forRead.type||'image/jpeg',
       clientId:S.accounts.find(a=>a.id===accId)?.clientId||'',
     });
 
@@ -581,9 +578,12 @@ export async function analyzeBankbookPhoto(file){
     if(!rows.length){
       S.excelTemp=[];
       renderXlPreview();
+      // 무엇을 하면 되는지까지 말한다. 「선명한지 확인하세요」만 남기면 같은 사진을
+      // 한 번 더 올려 보고 끝난다 — 통장은 대개 **가까이서 한 면씩** 찍으면 읽힌다.
       toast(skipped.length
         ? `읽을 수 있는 줄이 없습니다. 제외된 ${skipped.length}건의 이유를 아래에서 확인하세요.`
-        : '거래내역을 읽지 못했습니다. 사진이 선명한지 확인하거나 직접 입력하세요.','error',6000);
+        : '거래내역을 읽지 못했습니다. 통장을 화면 가득 채워 한 면씩 다시 찍어 보시고, '
+          +'그래도 안 되면 은행 엑셀 파일이나 수기 입력을 써 주세요.','error',7000);
       return;
     }
 

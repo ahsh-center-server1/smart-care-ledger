@@ -363,7 +363,7 @@ export function renderRptTrxTable(trxList){
   const catAttr=canEditHere?' class="rpt-cell-cat" title="클릭해서 분류 바꾸기"':'';
   // 눌러도 되는 칸이라는 것은 hover 로만 말한다(인쇄물에는 흔적이 남지 않는다).
   // 그래서 표 머리에 한 줄로 알려 준다 — 그것도 인쇄에서는 빠진다.
-  if(hintEl&&canEditHere)hintEl.textContent='칸을 누르면 그 자리에서 고칩니다 · 전체는 오른쪽 수정 버튼';
+  if(hintEl&&canEditHere)hintEl.textContent='칸을 누르면 그 자리에서 고칩니다 · Enter 저장, 칸을 벗어나면 취소 · 전체는 오른쪽 수정 버튼';
   const byAccount=new Map();
   (S.reportData?.accs||[]).forEach(a=>byAccount.set(a.id,{account:a,items:[]}));  
   trxList.forEach(t=>{

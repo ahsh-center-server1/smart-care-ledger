@@ -63,6 +63,11 @@ export const SETTINGS_TABS = [
     desc: '입주자별 연간 예산을 정하면 보고서에서 실적과 비교됩니다.',
   },
   {
+    key: 'bankparser', label: '은행 파서', icon: 'book',
+    perm: 'excel.upload',
+    desc: '내장돼 있지 않은 은행의 거래내역 파일을 읽게 합니다. 은행이 늘어도 배포가 필요하지 않습니다.',
+  },
+  {
     key: 'audit', label: '변경 이력', icon: 'list',
     perm: 'audit.view',
     desc: '누가 무엇을 언제 바꿨는지 기록입니다.',
@@ -86,7 +91,7 @@ export const SETTINGS_GROUPS = [
   { label: '현황',   items: ['overview'] },
   { label: '운영',   items: ['list', 'team', 'category'] },
   { label: '정산',   items: ['fixed', 'budget'] },
-  { label: '시스템', items: ['audit', 'archive', 'permissions'] },
+  { label: '시스템', items: ['bankparser', 'audit', 'archive', 'permissions'] },
 ];
 
 /** key → 탭 정의 (파생) */

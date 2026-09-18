@@ -27,6 +27,11 @@
 export const LOCKED_MONTHS_DOC = 'lockedMonths';
 /** 팀 목록 문서(config/teams). 팀은 많아야 열 몇 개라 컬렉션으로 두지 않는다. */
 export const TEAMS_DOC = 'teams';
+/**
+ * 사용자가 추가한 은행 파서 문서(config/bankParsers).
+ * 은행 하나를 늘리는 데 배포가 필요하지 않게 하는 자리 — domain/bank-parser.js.
+ */
+export const BANK_PARSERS_DOC = 'bankParsers';
 
 /**
  * 마감 색인의 키. 서버(functions/locked-months.cjs)와 **같은 형식**이어야 한다.

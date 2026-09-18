@@ -4,8 +4,9 @@
  * 엑셀·통장사진 업로드가 쓰는 조각들 — 중복 대조, 사진 판별, 제외된 행 표시.
  *
  * modals.js 에서 떼어 냈다. 그 파일은 쪼갤 목록의 맨 위에 있고, 줄 수 예산은
- * 줄어들기만 한다. **modules/ 를 import 하지 않는다** — modals.js 가 이 파일을
- * 부르므로, 되부르면 순환에 끼어든다(architecture.test.mjs 가 잡는다).
+ * 줄어들기만 한다. modals.js 가 이 파일을 부르므로 **되부르면 순환에 끼어든다**
+ * (architecture.test.mjs 가 잡는다). 얽힘(SCC)에 들지 않은 화면 모듈
+ * (permissions · bank-parser-ui)만 부른다 — 그쪽에서 이리로 오는 길이 없다.
  */
 
 import { S } from '../state.js';
@@ -13,6 +14,50 @@ import { COLS } from '../constants.js';
 import { escAttr } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import * as ExcelParser from '../services/excel-parser.js';
+import { mergedBankConfigs } from '../domain/bank-parser.js';
+import { can } from './permissions.js';
+import { openBankParserWizard } from './bank-parser-ui.js';
+
+/**
+ * 파서가 실제로 쓸 설정 — 내장 + 사용자가 추가한 것.
+ *
+ * **저장분은 언제나 뒤다.** 판정은 위에서부터 먼저 맞는 것을 택하므로, 앞에
+ * 두면 느슨하게 만든 설정 하나가 이미 잘 되던 은행을 가로챌 수 있다.
+ */
+export function parserConfigs(){
+  return mergedBankConfigs(ExcelParser.BANK_CONFIGS, S.bankParsers);
+}
+
+/**
+ * 인식하지 못한 파일 위에 **다음에 할 일**을 띄운다.
+ *
+ * 예전에는 「인식된 거래가 없습니다」가 끝이었다. 맞는 말이지만 사용자가 할 수
+ * 있는 일이 없다 — 그 은행이 내장 목록에 없다는 것도, 그래서 무엇을 하면
+ * 되는지도 알 방법이 없었다. 은행을 늘리는 일이 화면에서 되는 지금은 그 길을
+ * 같은 자리에서 보여 준다.
+ *
+ * @param {File} file
+ * @param {Function} retry  추가한 뒤 다시 분석 — 같은 파일을 다시 고르게 하지 않는다
+ */
+export function offerBankParser(file,retry){
+  const host=document.getElementById('xl-preview');
+  if(!host||!file||!can('excel.upload'))return;
+  const name=String(file.name||'').toLowerCase();
+  // SMS 백업·사진은 열이 있는 표가 아니다 — 여기서 고칠 수 있는 종류가 아니다.
+  if(name.endsWith('.xml')||isImageFile(file))return;
+  const box=document.createElement('div');
+  box.style.cssText='margin-bottom:10px;border:1px solid #bfdbfe;background:#eff6ff;'
+    +'border-radius:9px;padding:11px 13px;font-size:12px;color:#1e40af;line-height:1.7;';
+  box.innerHTML='<strong>이 은행은 아직 등록돼 있지 않은 것 같습니다.</strong><br>'
+    +'파일을 열어 어느 열이 날짜·내용·출금·입금인지 한 번만 고르면, 다음부터 이 은행 파일이 그대로 읽힙니다.';
+  const btn=document.createElement('button');
+  btn.className='btn'; btn.style.cssText='margin-top:8px;';
+  btn.textContent='이 파일로 은행 추가';
+  btn.addEventListener('click',()=>openBankParserWizard(file,retry));
+  box.appendChild(btn);
+  host.style.display='block';
+  host.prepend(box);
+}
 
 // 중복 판정 키는 services/excel-parser.js의 transactionKey — 거기서 테스트한다
 export const dupKey=ExcelParser.transactionKey;

@@ -54,6 +54,10 @@ export const S = {
   // 머리말 참고. 읽지 않았으면 null 이다(빈 배열이면 "팀이 없다"로 읽혀,
   // 직원 폼이 팀 선택지를 통째로 감춘다).
   teams: null,
+  // 사용자가 추가한 은행 파서(config/bankParsers). 엑셀을 올리는 역할만 읽는다.
+  // 읽지 않았으면 null 이다 — 빈 배열이면 "추가된 은행이 없다"로 읽혀, 설정
+  // 화면이 아직 못 읽은 것을 "없음"으로 적는다.
+  bankParsers: null,
   // 담당 입주자 id 목록(authz/{uid}.accessibleClientIds). 보안 규칙이 범위를
   // 이것으로 판정하므로 조회도 같은 목록으로 좁힌다.
   accessibleClientIds: [],

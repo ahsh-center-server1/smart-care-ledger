@@ -22,6 +22,7 @@ module.exports = function aiFns(ctx) {
   const { isAiConfigured, getGeminiClient, ANALYZE_MODEL } = ctx.aiProvider || require('./ai/gemini');
   const { extractReceipt, extractBankbook, providerError } = ctx.extractors || require('./ai/receipt-extract');
   const { narrateReport } = ctx.narrator || require('./ai/report-narrative');
+  const { suggestColumns } = ctx.bankHeader || require('./ai/bank-header');
   const { consumeRateLimits } = ctx.rateLimiter || require('./rateLimit');
   const { fixedCan } = require('./fixed-role-policy.cjs');
   const { STATES, jobPath, stagingPath, millis } = require('./receipt-jobs.cjs');
@@ -335,6 +336,45 @@ module.exports = function aiFns(ctx) {
   }
 
   /**
+   * suggestBankParser — 은행 파일의 **머리글만** 보고 어느 열이 무엇인지 묻는다.
+   *
+   * 규칙 추천(`services/bank-parser-guess.js`)이 먼저 돌고, 이것은 그 위에
+   * 얹는다. 실패하면 규칙 추천이 그대로 남으므로 화면은 언제나 뜬다.
+   *
+   * 보내는 것은 헤더 글자와 「그 열이 무슨 꼴인지」 한 단어뿐이다 —
+   * 경계는 `ai/bank-header.js` 의 `buildHeaderFacts()` 하나다.
+   */
+  const suggestBankParser = callable('suggestBankParser', async (request) => {
+    const me = await requireCaller(request.auth);
+    me.require('excel.upload', '은행 파서 추천');
+    if (!isAiConfigured()) {
+      throw new HttpsError('failed-precondition',
+        'AI 추천이 설정되지 않았습니다. 화면에서 직접 고를 수 있습니다.');
+    }
+    await consumeAiRateLimits('bank-header', request.auth.uid);
+
+    const columns = Array.isArray((request.data || {}).columns) ? request.data.columns : [];
+    if (!columns.length) throw new HttpsError('invalid-argument', '머리글이 전달되지 않았습니다.');
+
+    try {
+      const { picks, usage } = await suggestColumns({ columns },
+        { client: getGeminiClient(), model: ANALYZE_MODEL });
+      await writeAiAuditLog(request, me, 'ai.bankHeaderSuggest', {
+        columnCount: columns.length,
+        inputTokens: (usage && (usage.promptTokenCount ?? usage.input_tokens)) || 0,
+        outputTokens: (usage && (usage.candidatesTokenCount ?? usage.output_tokens)) || 0,
+      });
+      return { picks };
+    } catch (cause) {
+      const mapped = providerError(cause) || cause;
+      logger.warn('[suggestBankParser] 실패', { message: mapped && mapped.message });
+      // 규칙 추천이 이미 화면에 있다. 여기서 멈출 이유가 없다.
+      throw new HttpsError('unavailable',
+        'AI 추천을 받지 못했습니다. 화면에서 직접 고를 수 있습니다.');
+    }
+  }, AI_SECRETS);
+
+  /**
    * analyzeReport — 보고서 「자동 분석」 문장을 모델에게 쓰게 한다.
    *
    * 규칙 기반 문장은 그대로 남는다. 키가 없거나 호출이 실패하면 화면이
@@ -398,7 +438,7 @@ module.exports = function aiFns(ctx) {
     }
   }, AI_SECRETS);
 
-  return { getAiStatus, analyzeReceipt, analyzeBankbook, analyzeReport };
+  return { getAiStatus, analyzeReceipt, analyzeBankbook, analyzeReport, suggestBankParser };
 };
 
 module.exports.AI_DEFAULTS = { userRpm: 10, projectRpm: 30 };

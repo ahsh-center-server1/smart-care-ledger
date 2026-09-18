@@ -10,9 +10,10 @@
 'use strict';
 
 import { S } from '../state.js';
-import { COLS, LOCKED_MONTHS_DOC, TEAMS_DOC, lockKey } from '../constants.js';
+import { COLS, LOCKED_MONTHS_DOC, TEAMS_DOC, BANK_PARSERS_DOC, lockKey } from '../constants.js';
 import { missingIndexMessage } from '../services/fn-errors.js';
 import { normalizeTeams } from '../domain/teams.js';
+import { normalizeBankParsers } from '../domain/bank-parser.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
@@ -85,6 +86,11 @@ export async function fetchBaseData(opts) {
   if (need('users') && (can('assignments.manage') || can('settings.staff'))) {
     tasks.push(['teams', getDoc(doc(db,COLS.CONFIG,TEAMS_DOC))]);
   }
+  // 사용자가 추가한 은행 파서 — **엑셀을 올리는 역할만** 읽는다. 팀장·센터장은
+  // 파일을 올리지 않으므로 한 건도 쓰지 않는다(월초 열흘이 한도를 정한다).
+  if (need('categories') && can('excel.upload')) {
+    tasks.push(['bankParsers', getDoc(doc(db,COLS.CONFIG,BANK_PARSERS_DOC))]);
+  }
 
   const results = await Promise.all(tasks.map(t=>t[1]));
   const snapMap = {};
@@ -119,6 +125,11 @@ export async function fetchBaseData(opts) {
 
   if (snapMap.teams) {
     S.teams = normalizeTeams(snapMap.teams.exists() ? snapMap.teams.data() : null);
+  }
+
+  if (snapMap.bankParsers) {
+    S.bankParsers = normalizeBankParsers(
+      snapMap.bankParsers.exists() ? snapMap.bankParsers.data() : null);
   }
 
   if (snapMap.lockedMonths) {

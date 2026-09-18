@@ -302,6 +302,12 @@ Object.assign(exports, require('./team-fns')({
   db, callable, HttpsError, logger, FieldValue,
 }));
 
+// 은행 파서 — config/bankParsers 문서 하나. 은행 하나 늘리는 데 배포가
+// 필요하지 않게 한다(파일을 가진 사람이 곧 열을 아는 사람이다).
+Object.assign(exports, require('./bank-parser-fns')({
+  db, callable, HttpsError, logger, FieldValue,
+}));
+
 // 권한 등급표 — 저장이 곧 집행이 되도록 config 와 전 사용자 caps 를 함께 쓴다.
 // 콜러블만 꺼낸다(팩토리 반환값에 테스트용 순수 함수가 함께 들어 있다).
 exports.savePermissions = require('./permissions-fns')({

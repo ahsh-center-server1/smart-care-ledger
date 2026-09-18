@@ -405,13 +405,19 @@ const merge = (a, b) => ({
   skipped: a.skipped.concat(b.skipped),
 });
 
-/** XLSX 워크북 전체 */
-export function parseWorkbook(workbook, categories) {
-  let acc = { bank: '', rows: [], skipped: [] };
+/** XLSX 워크북 → 시트별 배열의 배열. 파서와 「열 고르기」가 같은 것을 본다. */
+export function workbookSheets(workbook) {
   const XLSX = globalThis.XLSX;
-  for (const name of workbook.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '' });
-    if (rows.length) acc = merge(acc, parseSheetRows(rows, categories));
+  return workbook.SheetNames
+    .map(name => ({ name, rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '' }) }))
+    .filter(s => s.rows.length);
+}
+
+/** XLSX 워크북 전체 */
+export function parseWorkbook(workbook, categories, opts = {}) {
+  let acc = { bank: '', rows: [], skipped: [] };
+  for (const sheet of workbookSheets(workbook)) {
+    acc = merge(acc, parseSheetRows(sheet.rows, categories, opts));
   }
   return acc;
 }
@@ -438,43 +444,73 @@ export function parseSmsXml(xmlText, categories) {
  * 표를 배열의 배열로 바꿔 시트와 똑같이 처리한다 — 예전에는 KB 전용 하드코딩이라
  * 다른 은행 파일은 0건이 나왔다.
  */
-export function parseHtmlXls(htmlText, categories) {
+export function htmlXlsSheets(htmlText) {
   const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+  return Array.from(doc.querySelectorAll('table'))
+    .map((table, i) => ({
+      name: `표 ${i + 1}`,
+      rows: Array.from(table.querySelectorAll('tr'))
+        .map(tr => Array.from(tr.querySelectorAll('td,th')).map(td => td.textContent.trim())),
+    }))
+    .filter(s => s.rows.length >= 2);
+}
+
+export function parseHtmlXls(htmlText, categories, opts = {}) {
   let acc = { bank: '', rows: [], skipped: [] };
-  doc.querySelectorAll('table').forEach(table => {
-    const rows = Array.from(table.querySelectorAll('tr'))
-      .map(tr => Array.from(tr.querySelectorAll('td,th')).map(td => td.textContent.trim()));
-    if (rows.length >= 2) acc = merge(acc, parseSheetRows(rows, categories));
-  });
+  for (const sheet of htmlXlsSheets(htmlText)) acc = merge(acc, parseSheetRows(sheet.rows, categories, opts));
   return acc;
+}
+
+/** 파일 바이트를 읽는다. 파싱과 「열 고르기」가 같은 길로 들어오게 하는 자리다. */
+function readBytes(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('파일을 읽는 중 오류가 발생했습니다.'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/**
+ * 업로드된 파일 하나를 **시트 목록**으로. 파싱하지 않는다.
+ *
+ * 「이 파일로 은행 추가」가 쓰는 길이다. 인식에 실패한 파일에서도 열을
+ * 보여 줘야 하는데, 인식 결과에는 남은 것이 없다(헤더를 못 찾았으니까).
+ *
+ * @returns {Promise<{sheets:Array<{name:string,rows:Array}>, encoding?:string}>}
+ */
+export async function readFileSheets(file) {
+  const raw = await readBytes(file);
+  const name = String(file.name || '').toLowerCase();
+  if (name.endsWith('.xml')) return { sheets: [] };   // SMS 백업은 표가 아니다
+  if (name.endsWith('.csv') || name.endsWith('.txt')) {
+    const { text, encoding } = decodeCsvBytes(raw);
+    return { sheets: workbookSheets(globalThis.XLSX.read(text, { type: 'string' })), encoding };
+  }
+  if (isHtmlBytes(new Uint8Array(raw, 0, Math.min(10, raw.byteLength)))) {
+    return { sheets: htmlXlsSheets(decodeCsvBytes(raw).text) };
+  }
+  return { sheets: workbookSheets(globalThis.XLSX.read(raw, { type: 'array' })) };
 }
 
 /**
  * 업로드된 파일 하나를 파싱한다.
+ *
+ * @param {Object} [opts]  opts.configs — 내장 + 저장된 은행 설정
+ *   (domain/bank-parser.js 의 mergedBankConfigs). 넘기지 않으면 내장만 쓴다.
  * @returns {Promise<{bank:string, rows:Array, skipped:Array, encoding?:string}>}
  */
-export function parseFile(file, categories) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    const name = file.name.toLowerCase();
-    reader.onload = (e) => {
-      try {
-        const raw = e.target.result;
-        if (name.endsWith('.xml')) {
-          resolve(parseSmsXml(decodeCsvBytes(raw).text, categories)); return;
-        }
-        if (name.endsWith('.csv') || name.endsWith('.txt')) {
-          const { text, encoding } = decodeCsvBytes(raw);
-          const wb = globalThis.XLSX.read(text, { type: 'string' });
-          resolve({ ...parseWorkbook(wb, categories), encoding }); return;
-        }
-        if (isHtmlBytes(new Uint8Array(raw, 0, Math.min(10, raw.byteLength)))) {
-          resolve(parseHtmlXls(decodeCsvBytes(raw).text, categories)); return;
-        }
-        resolve(parseWorkbook(globalThis.XLSX.read(raw, { type: 'array' }), categories));
-      } catch (err) { reject(err); }
-    };
-    reader.onerror = () => reject(new Error('파일을 읽는 중 오류가 발생했습니다.'));
-    reader.readAsArrayBuffer(file);
-  });
+export async function parseFile(file, categories, opts = {}) {
+  const raw = await readBytes(file);
+  const name = String(file.name || '').toLowerCase();
+  if (name.endsWith('.xml')) return parseSmsXml(decodeCsvBytes(raw).text, categories);
+  if (name.endsWith('.csv') || name.endsWith('.txt')) {
+    const { text, encoding } = decodeCsvBytes(raw);
+    const wb = globalThis.XLSX.read(text, { type: 'string' });
+    return { ...parseWorkbook(wb, categories, opts), encoding };
+  }
+  if (isHtmlBytes(new Uint8Array(raw, 0, Math.min(10, raw.byteLength)))) {
+    return parseHtmlXls(decodeCsvBytes(raw).text, categories, opts);
+  }
+  return parseWorkbook(globalThis.XLSX.read(raw, { type: 'array' }), categories, opts);
 }
