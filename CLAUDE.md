@@ -30,7 +30,7 @@
 | `manifest.json` / `sw.js` | `public/` | PWA 매니페스트 / 서비스 워커 |
 | 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions, fixed-items, report-actor, report-accounts(계좌 현황 계산), report-excel(엑셀 저장), settings-permissions |
 | 서비스 | `public/services/*.js` | firestore, image(이미지 압축), storage, balance(잔액 계산), excel-parser, receipt-upload, scoped-fetch, in-query |
-| 도메인 | `public/domain/*.js` | 순수 판정 — 결재 전이표, 잔액·집계 규칙, `report-stamps`(결재 도장 날짜), `ledger-edit-window`(§6-1), `hangul-search`(초성 검색) |
+| 도메인 | `public/domain/*.js` | 순수 판정 — 결재 전이표, 잔액·집계 규칙, `timestamps`(시각 변환), `report-stamps`(결재 도장이 말하는 이름), `ledger-edit-window`(§6-1), `hangul-search`(초성 검색) |
 | 유틸 | `public/utils/ui.js` | UI 유틸리티 |
 | 아이콘 | `public/utils/icons.js` | 인라인 SVG 한 벌 (§7 모바일) |
 | `firestore.rules` | `firestore.rules` (루트) | Firestore 보안 규칙 |
@@ -261,6 +261,16 @@ recall 두 걸음이고, 각 걸음의 주인이 분명하다.
 - **도장 정리**: 전이할 때마다 도착 상태보다 뒤 단계의 결재 기록을
   `deleteField()`로 지운다. 취소된 서명이 인쇄물에 남지 않는다.
 - **`createdBy`**: 보고서를 만드는 모든 경로가 기록한다. 회수 권한 판정의 근거.
+- **문서에 찍히는 날짜는 제출일**(`submittedAt`)이다. `createdAt` 은 임시저장을
+  처음 누른 시점이라 며칠 손보다 올린 보고서에서는 결재자가 본 날짜와 어긋난다.
+  제출 전에는 작성일을 쓰고 **이름표도 함께 바꾼다**(`domain/timestamps.js` 의
+  `reportDateLine`) — 같은 자리에 다른 뜻이 들어가는데 이름이 그대로면 속는다.
+  > ⚠️ 시각은 두 모양으로 저장된다: 결재 도장은 **ISO 문자열**(전이표가 만든다),
+  > `createdAt`·`archivedAt` 등은 **Firestore Timestamp**(서버가 찍는다).
+  > `new Date(값)` 은 앞의 것만 처리한다 — 뒤의 것을 넣으면 조용히 Invalid Date 가
+  > 되고 그 글자가 인쇄물에 남는다(실제로 그랬다). 변환은
+  > `public/domain/timestamps.js` 하나이고, 화면이 직접 `new Date()` 로 감싸면
+  > `test/timestamps.test.mjs` 가 실패한다.
 - **`rejected`에서 나가는 길**: 담당자 재제출(`submit`) 하나다. 담당자가
   부재면 담당 배정을 바꿔 다른 담당자가 제출한다 — 결재 단계를 건너뛰는
   탈출구는 두지 않는다.
@@ -447,9 +457,10 @@ recall 두 걸음이고, 각 걸음의 주인이 분명하다.
 - [x] 의견란 (담당자/팀장/센터장 각각) — **자동 저장**. 칸을 떠날 때 저장하고,
       결재 버튼은 저장되지 않은 초안을 전이에 함께 실어 보낸다(저장을 누르지 않고
       결재해서 글이 사라지던 자리)
-- [x] 인쇄물의 날짜는 **제출일**(제출 전에만 작성일). 결재란은 **이름만** 찍는다 —
-      도장 자리라 날짜까지 넣으면 두 줄이 되어 빽빽해진다. 값은 결재한 순간 문서에
-      박힌 것이라 담당·팀장이 바뀌어도 과거 문서는 그대로다 (`domain/report-stamps.js`)
+- [x] 결재란은 **이름만** 찍는다 — 도장 자리라 날짜까지 넣으면 두 줄이 되어
+      빽빽해진다. 값은 결재한 순간 문서에 박힌 것이라 담당·팀장이 바뀌어도 과거
+      문서는 그대로다 (`domain/report-stamps.js`). 날짜 변환 자체는
+      `domain/timestamps.js` 하나가 한다
 - [x] 보고서 표에서 **분류·내용을 클릭해** 거래 직접 수정 — 내가 결재하기 전까지만(§6-1)
 - [x] 계좌 현황: 기초잔액+기준일이후~보고서월말 거래 직접 계산
 - [x] 분류별 지출: 비율순 정렬 + 바 시각화 (원차트 제거)

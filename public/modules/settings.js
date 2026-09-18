@@ -17,6 +17,7 @@ import { toast, showConfirm, showLoading, escAttr, escHtml } from '../utils/ui.j
 import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchMixedOps } from '../services/firestore.js';
 import { deleteManyFromStorage } from '../services/storage.js';
 import { COLS, DEFAULT_CATEGORIES, cs } from '../constants.js';
+import { formatDate } from '../domain/timestamps.js';
 const SYSTEM_OPS = COLS.SYSTEM_OPS;
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
 import { fetchBaseData, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
@@ -493,7 +494,8 @@ export async function loadArchiveHistory(){
       const stuck=r.status==='in_progress';
       const when=r.archivedAt||r.startedAt;
       div.innerHTML=`<span>${escHtml(r.year)}년 마감${stuck?' <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:5px;font-size:11px;font-weight:700;">중단됨 · 다시 실행하면 이어서 진행</span>':''}</span>`
-        +`<span style="color:var(--muted);">${r.count??0}건 · ${when?new Date(when).toLocaleDateString('ko-KR'):''}</span>`;
+        // archivedAt 은 서버 타임스탬프다 — new Date() 에 그냥 넣으면 Invalid Date.
+        +`<span style="color:var(--muted);">${r.count??0}건 · ${escHtml(formatDate(when))}</span>`;
       el.appendChild(div);
     });
   }catch(e){console.warn('archive history:',e);}

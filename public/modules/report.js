@@ -7,6 +7,7 @@
 
 import { S } from '../state.js';
 import { missingIndexMessage } from '../services/fn-errors.js';
+import { formatDate, reportDateLine } from '../domain/timestamps.js';
 import { iconSvg } from '../utils/icons.js';
 import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml, escAttr } from '../utils/ui.js';
@@ -29,7 +30,7 @@ import { openModal, getUnpaidMandatoryItems, openReceiptModal, openBankStatement
 import { isConfirmedLocked, trxEditBlockReason } from './core.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 import { rememberOpenReport, restorableReport } from '../domain/report-session.js';
-import { reportDateLine, approvalStamps, formatStampDate, reportStaffName } from '../domain/report-stamps.js';
+import { approvalStamps, reportStaffName } from '../domain/report-stamps.js';
 import { sortTrx, planReorder } from '../domain/trx-order.js';
 import { countsInTotals } from '../domain/trx-totals.js';
 import { excludedBadge } from './transactions-widgets.js';
@@ -231,20 +232,18 @@ export function restoreOpenReport(){
 export function renderReportView(){
   const{clientId,year,month,trxList,accs,accountRows,report,summary}=S.reportData;
   const client=S.clients.find(c=>c.id===clientId)||{name:'-'};
-  const curStatus=report?report.status:'';
+  const now=new Date(), curStatus=report?report.status:'';
   resetSummaryPanel();   // 앞사람의 분석이 남지 않게 — 인쇄 영역까지 함께 지운다
   setText('rpt-period',`${year}년 ${month}월 거래 내역`);
-  // 인쇄물의 날짜는 **제출일**이다. 작성일은 담당자가 초안을 연 날이라
-  // 결재 라인의 누구에게도 근거가 되지 않는다. 아직 제출 전이면 작성일로
-  // 떨어진다 — 그때는 제출 도장이 없기 때문이다.
-  //
-  // ⚠️ createdAt 은 Firestore Timestamp 다. new Date() 에 그대로 넣으면
-  //    Invalid Date 가 되어 그대로 인쇄됐다. 변환은 domain/report-stamps.js
-  //    한 곳에서만 한다 — 도장은 ISO 문자열이라 한 문서에 두 모양이 섞여 있다.
-  const dateLine=reportDateLine(report);
-  setText('rpt-created',`${dateLine.label}: ${dateLine.date}`);
-  setText('rpt-created-bottom',dateLine.date);
-  setText('rpt-created-label',dateLine.label);
+  // 결재 문서에서 의미가 있는 날짜는 **담당자가 올린 날**이다. 작성일(createdAt)은
+  // 임시저장을 처음 누른 시점이라 결재자가 본 날짜와 어긋난다 — 제출 전에만 쓰고
+  // 이름표도 함께 바꾼다. 게다가 createdAt 은 서버 타임스탬프라 `new Date()` 에
+  // 그냥 넣으면 Invalid Date 가 된다(실제로 그렇게 인쇄돼 나갔다).
+  const line=reportDateLine(report);
+  const dateStr=formatDate(line.date, formatDate(now));
+  setText('rpt-created',`${line.label==='제출일'?'제출':'작성'}: ${dateStr}`);
+  setText('rpt-date-label',line.label);
+  setText('rpt-created-bottom',dateStr);
   setText('rpt-client-name',client.name);
   setText('rpt-month-label',`${year}년 ${month}월`);
   // 제출 전이면 **작성자**를 쓴다. 예전에는 지금 보는 사람 이름으로 떨어져서,
@@ -801,7 +800,7 @@ export function renderApproval(report,curStatus){
   [{key:'submitted',label:'제출',icon:'✍️',name:report?.submittedByName||'',date:report?.submittedAt||''},{key:'team_approved',label:'팀장 결재',icon:'✔️',name:report?.teamApprovedByName||'',date:report?.teamApprovedAt||''},{key:'confirmed',label:'센터장 최종',icon:'🏁',name:report?.centerApprovedByName||'',date:report?.centerApprovedAt||''}].forEach((s,i,arr)=>{
     const done=curIdx>=ORDER.indexOf(s.key);
     const el=document.createElement('div'); el.style.cssText='display:flex;align-items:center;';
-    const stampDate=done?formatStampDate(s.date):'';
+    const stampDate=done?formatDate(s.date):'';
     el.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;"><div style="width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;background:'+(done?'var(--blue)':'#f1f5f9')+';color:'+(done?'#fff':'#94a3b8')+';">'+(done?s.icon:i+1)+'</div><div style="font-size:11px;font-weight:700;margin-top:5px;color:'+(done?'var(--blue)':'#94a3b8')+';">'+s.label+'</div>'+(s.name&&done?'<div style="font-size:10px;color:#94a3b8;">'+escHtml(s.name)+'</div>':'')+(stampDate?'<div style="font-size:10px;color:#cbd5e1;">'+escHtml(stampDate)+'</div>':'')+'</div>';
     track.appendChild(el);
     if(i<arr.length-1){const line=document.createElement('div');line.style.cssText='flex:1;height:2px;margin:0 6px;background:'+(done&&curIdx>ORDER.indexOf(s.key)?'var(--blue)':'#e2e8f0')+';';track.appendChild(line);}
@@ -1296,7 +1295,7 @@ export function renderReportList(){
       <td style="padding:9px 10px;text-align:center;color:var(--sub);">${r.month}월</td>
       <td style="padding:9px 10px;text-align:center;"><span class="${STATUS_CLASSES[r.status]||'rs-draft'}">${escHtml(STATUS_LABELS[r.status]||r.status)}</span></td>
       <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${escHtml(r.submittedByName||'-')}</td>
-      <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${escHtml(reportDateLine(r).date)}</td>`;
+      <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${escHtml(formatDate(r.submittedAt,'미제출'))}</td>`;
     tr.addEventListener('mouseenter',()=>{if(S.reportData?.report?.id!==r.id)tr.style.background='var(--bg)';});
     tr.addEventListener('mouseleave',()=>{if(S.reportData?.report?.id!==r.id)tr.style.background='';});
     tr.addEventListener('click',()=>{

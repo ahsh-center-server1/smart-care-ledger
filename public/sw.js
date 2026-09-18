@@ -59,6 +59,7 @@ const APP_SHELL = [
   '/domain/receipt-match.js',
   '/domain/staff-picker.js',
   '/domain/teams.js',
+  '/domain/timestamps.js',
   '/domain/category-order.js',
   '/domain/report-checklist.js',
   '/domain/report-session.js',
