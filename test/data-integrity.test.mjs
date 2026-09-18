@@ -201,8 +201,10 @@ test('드래그 리스너는 손을 뗄 때 문서에서 제거된다', () => {
 });
 
 test('떠 있는 패널은 모두 공용 드래그 헬퍼를 쓴다', () => {
-  // 각자 구현하면 각자 누수한다
-  for (const f of ['public/modules/modals.js', 'public/modules/report.js']) {
+  // 각자 구현하면 각자 누수한다.
+  // 보고서의 통장사진 창은 report-bank-photos.js 로 나갔다 — 파일이 옮겨 갔다고
+  // 검사가 빠지면, 옮긴 자리에서 각자 구현하는 것을 아무도 막지 못한다.
+  for (const f of ['public/modules/modals.js', 'public/modules/report-bank-photos.js']) {
     const text = src(f);
     assert.ok(text.includes('makeDraggable('), `${f}가 공용 헬퍼를 쓰지 않습니다`);
     assert.ok(!/document\.addEventListener\('mousemove'/.test(text),

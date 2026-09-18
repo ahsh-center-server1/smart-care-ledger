@@ -45,6 +45,7 @@ import * as Parser   from './services/excel-parser.js';
 import { initFontScale, setFontScale } from './modules/font-scale.js';
 import * as Record from './modules/mobile-record.js';
 import { hydrateIcons, iconSvg } from './utils/icons.js';
+import { initClientPicker } from './modules/client-picker.js';
 
 // ─────────────────────────────────────────────
 // ExcelParser — services/excel-parser.js로 옮겼다.
@@ -235,6 +236,8 @@ function bindEvents(){
   hydrateIcons();
   // 화면이 좁아지면 PC 전용 화면(보고서·설정)에서 빠져나온다
   Core.watchViewportForDesktopOnlyViews();
+  // 거래내역의 입주자 고르기 — 목록이 아니라 검색이다(modules/client-picker.js)
+  initClientPicker();
   // 휴대폰 하단 네비의 ＋ 기록, 헤더의 설정
   document.getElementById('btn-record')?.addEventListener('click',Record.toggleRecordSheet);
   document.getElementById('btn-mobile-settings')?.addEventListener('click',()=>Core.changeView('settings'));

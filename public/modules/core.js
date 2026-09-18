@@ -28,6 +28,7 @@ import * as Rpt      from './report.js';
 import * as Settings from './settings.js';
 import { can, hasLoadedIdentity } from './permissions.js';
 import { ledgerEditBlockedBy, ledgerEditBlockMessage } from '../domain/ledger-edit-window.js';
+import { syncClientPicker } from './client-picker.js';
 
 /** 지금 로그인한 사람의 조회 범위. 규칙이 보는 것과 같은 근거(authz)를 쓴다. */
 export function myScope(field) {
@@ -366,6 +367,8 @@ export function rebuildSelectors() {
     S.clients.forEach(c=>sel.add(new Option(c.name,c.id)));
     if (S.clients.some(c=>c.id===prev)) sel.value=prev;
   });
+  // 검색칸은 select 를 따라간다 — 목록이 바뀌면 고른 사람이 사라졌을 수 있다.
+  syncClientPicker();
   Trx.rebuildAccountFilter();
 }
 

@@ -10,7 +10,7 @@ import { missingIndexMessage } from '../services/fn-errors.js';
 import { formatDate, reportDateLine } from '../domain/timestamps.js';
 import { iconSvg } from '../utils/icons.js';
 import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
-import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml, escAttr } from '../utils/ui.js';
+import { toast, showConfirm, showLoading, setText, escHtml, escAttr } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs } from '../services/firestore.js';
 import { chunkForInQuery, IN_QUERY_CHUNK_SIZE } from '../services/in-query.js';
 import { can, unavailableMessage } from './permissions.js';
@@ -29,7 +29,12 @@ import { reportChecklist, checklistLines } from '../domain/report-checklist.js';
 import { openModal, getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
 // 분류 인라인 드롭다운은 거래내역 탭과 **같은 것**을 쓴다. 목록·최근 순서·저장이
 // 두 벌이 되면 한쪽만 고쳐진다.
-import { openCatDropdown } from './transactions.js';
+import { openCatDropdown, saveTrx } from './transactions.js';
+import { bindInlineCells, closeInlineEditor, fieldPatch } from './report-inline-edit.js';
+// 통장사진 창은 report-bank-photos.js 로 나갔다 — 화면 모듈을 부르지 않으므로
+// 화살표가 한 방향이다. 부르는 곳이 여기라 다시 내보낸다.
+import { openBankStatementsForApproval } from './report-bank-photos.js';
+export { openBankStatementsForApproval };
 import { isConfirmedLocked, trxEditBlockReason } from './core.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 import { rememberOpenReport, restorableReport } from '../domain/report-session.js';
@@ -326,9 +331,12 @@ export function renderRptTrxTable(trxList){
   // 앞사람 보고서의 문구가 그대로 남는다.
   const hintEl=document.getElementById('rpt-trx-edit-hint');
   if(hintEl)hintEl.textContent='';
+  // 표를 갈아 끼우기 전에 열려 있던 입력칸을 닫는다 — 안 닫으면 사라진 칸을
+  // 가리킨 채 남아, 다음에 다른 칸을 열 때 그 유령을 되돌리려 든다.
+  closeInlineEditor();
   if(!trxList||!trxList.length){
     const tr=document.createElement('tr');
-    tr.innerHTML='<td colspan="6" style="text-align:center;color:#6b7280;padding:16px;font-size:13px;">거래 내역이 없습니다.</td>';
+    tr.innerHTML='<td colspan="7" style="text-align:center;color:#6b7280;padding:16px;font-size:13px;">거래 내역이 없습니다.</td>';
     tbody.appendChild(tr); return;
   }
   const confirmedLocked=isConfirmedLocked(S.reportData?.clientId, S.reportData?.trxList?.[0]?.date||'');
@@ -345,16 +353,17 @@ export function renderRptTrxTable(trxList){
   // 아이콘은 두 가지가 나빴다. 눈이 고친 값(분류·내용)에서 줄 끝까지 갔다가
   // 돌아와야 했고, 인쇄 영역 안에 화면 전용 버튼이 한 칸을 차지했다.
   // 고치고 싶은 것이 곧 누를 것이면 설명할 것이 없다.
-  // **줄 전체가 누를 곳이다** — 분류 칸 하나만 빼고.
-  //   줄 = 그 거래를 연다. 날짜가 틀렸으면 날짜를, 금액이 틀렸으면 금액을
-  //        누르는 것이 자연스럽다. 「내용을 눌러야 열린다」는 규칙은 눌러 보기
-  //        전에는 알 수 없고, 알고 나서도 매번 내용 칸까지 마우스를 옮겨야 한다.
-  //   분류 = 거기서 바로 고르는 것이 전부다. 폼을 띄우면 날짜·금액·계좌까지
-  //          눈앞에 놓고 정작 할 일은 한 칸 고르기다.
+  // **누른 칸이 곧 고치는 칸이다.**
+  //   날짜·내용·수입·지출 = 그 자리가 입력칸이 된다. 한 칸 고치려고 폼을 띄우면
+  //     눈은 고칠 곳을 다시 찾고 손은 저장까지 세 번을 더 누른다.
+  //   분류 = 목록에서 고르는 것이 전부다 → 인라인 드롭다운.
+  //   여러 칸을 함께 = 그때는 폼이 낫다 → 증빙 오른쪽 「수정」 버튼.
+  const cellAttr=(field)=>canEditHere
+    ? ` class="rpt-cell-inline" data-field="${field}" title="클릭해서 고치기"` : '';
   const catAttr=canEditHere?' class="rpt-cell-cat" title="클릭해서 분류 바꾸기"':'';
-  // 눌러도 되는 줄이라는 것은 hover 로만 말한다(인쇄물에는 흔적이 남지 않는다).
+  // 눌러도 되는 칸이라는 것은 hover 로만 말한다(인쇄물에는 흔적이 남지 않는다).
   // 그래서 표 머리에 한 줄로 알려 준다 — 그것도 인쇄에서는 빠진다.
-  if(hintEl&&canEditHere)hintEl.textContent='줄을 누르면 그 거래를 고칩니다 · 분류는 눌러서 바로 바꿉니다';
+  if(hintEl&&canEditHere)hintEl.textContent='칸을 누르면 그 자리에서 고칩니다 · 전체는 오른쪽 수정 버튼';
   const byAccount=new Map();
   (S.reportData?.accs||[]).forEach(a=>byAccount.set(a.id,{account:a,items:[]}));  
   trxList.forEach(t=>{
@@ -367,7 +376,7 @@ export function renderRptTrxTable(trxList){
     const subOut=group.items.reduce((sum,t)=>countsInTotals(t)?sum+Number(t.amountOut||0):sum,0);
     const header=document.createElement('tr');
     header.className='rpt-account-group-row';
-    header.innerHTML=`<td colspan="6" style="padding:8px 6px;background:#f8fafc;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:800;color:#374151;">🏦 ${escHtml(group.account.label||'미지정 계좌')} <span style="font-weight:600;color:#6b7280;margin-left:8px;">${group.items.length}건 · 수입 ${subIn.toLocaleString()}원 · 지출 ${subOut.toLocaleString()}원</span></td>`;
+    header.innerHTML=`<td colspan="7" style="padding:8px 6px;background:#f8fafc;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:800;color:#374151;">🏦 ${escHtml(group.account.label||'미지정 계좌')} <span style="font-weight:600;color:#6b7280;margin-left:8px;">${group.items.length}건 · 수입 ${subIn.toLocaleString()}원 · 지출 ${subOut.toLocaleString()}원</span></td>`;
     tbody.appendChild(header);
     group.items.forEach(t=>{    
     const tr=document.createElement('tr');
@@ -376,11 +385,10 @@ export function renderRptTrxTable(trxList){
     // 전용 권한(trx.reorder)이 없는 검토 역할에게는 애초에 잡히지 않는다.
     const locked=confirmedLocked||!!editBlocked||!can('trx.reorder');
     tr.draggable=!locked;
-    // 누를 수 있으면 손가락, 끌 수 있으면 손바닥. 둘 다면 누르는 쪽을 보여 준다 —
-    // 끌기는 잡고 움직여 봐야 알고, 누르기는 한 번에 끝난다.
+    // 줄 전체에 hover 밑줄이 걸린다(어느 줄을 보고 있는지). 손가락 커서는
+    // **고칠 수 있는 칸에만** 준다 — 줄 전체에 주면 못 고치는 칸도 눌러 보게 된다.
     if(canEditHere)tr.className='rpt-row-edit';
-    tr.style.cssText=`border-bottom:1px solid #f3f4f6;cursor:${canEditHere?'pointer':(locked?'default':'grab')};`;
-    if(canEditHere)tr.title='클릭해서 이 거래를 수정';
+    tr.style.cssText=`border-bottom:1px solid #f3f4f6;cursor:${locked?'default':'grab'};`;
     let typeTag='';
     if(t.type==='자산이동'){
       const srcId=Number(t.amountOut||0)>0?t.accountId:t.linkedAccountId;
@@ -393,15 +401,19 @@ export function renderRptTrxTable(trxList){
       typeTag='<span style="font-size:10px;background:#f4f4f5;color:#71717a;padding:1px 5px;border-radius:4px;margin-left:4px;">취소('+sub+')</span>';
     } else { typeTag=excludedBadge(t); }
     const catClr=cs(t.category||'');
-    tr.innerHTML=`<td style="padding:7px 4px;font-family:monospace;font-size:13px;color:#6b7280;white-space:nowrap;">${escHtml(t.date||'')}</td>`
+    tr.innerHTML=`<td${cellAttr('date')} style="padding:7px 4px;font-family:monospace;font-size:13px;color:#6b7280;white-space:nowrap;">${escHtml(t.date||'')}</td>`
       +`<td${catAttr} style="padding:4px 4px;overflow:visible;white-space:nowrap;position:relative;"><span style="display:inline-block;background:${catClr.bg};color:${catClr.text};border:1px solid ${catClr.border};border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.category||'')}</span>`
         +(canEditHere?`<div class="cat-dd no-print" id="rdd-${escAttr(t.id)}"></div>`:'')+`</td>`
-      +`<td style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.description||'')}${typeTag}</td>`
-      +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#15803d;white-space:nowrap;">${Number(t.amountIn||0)>0?Number(t.amountIn).toLocaleString()+'원':''}</td>`
-      +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#b91c1c;white-space:nowrap;">${Number(t.amountOut||0)>0?Number(t.amountOut).toLocaleString()+'원':''}</td>`
+      +`<td${cellAttr('description')} style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.description||'')}${typeTag}</td>`
+      +`<td${cellAttr('amountIn')} style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#15803d;white-space:nowrap;">${Number(t.amountIn||0)>0?Number(t.amountIn).toLocaleString()+'원':''}</td>`
+      +`<td${cellAttr('amountOut')} style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#b91c1c;white-space:nowrap;">${Number(t.amountOut||0)>0?Number(t.amountOut).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:center;${t.type==='지출'&&!hasReceipt(t)&&t.receiptMissing?'background:#fee2e2;':''}">${
         hasReceipt(t)?`<button class="icon-btn rpt-rv" title="증빙 보기">${iconSvg('clip',18)}</button>`:
         (t.receiptMissing?'<span style="font-size:10px;font-weight:700;color:#b91c1c;background:#fecaca;padding:2px 6px;border-radius:4px;">분실</span>':'')
+      }</td>`
+      // 전체 수정은 **화면 전용 칸**이다 — 인쇄물에는 나오지 않는다.
+      +`<td class="no-print" style="padding:7px 2px;text-align:center;">${
+        canEditHere?`<button class="icon-btn edit rpt-edit" title="이 거래 전체 수정">${iconSvg('pen',16)}</button>`:''
       }</td>`;
     if(!locked){
       tr.addEventListener('dragstart',e=>{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',t.id);tr.style.opacity='0.4';});
@@ -410,9 +422,16 @@ export function renderRptTrxTable(trxList){
       tr.addEventListener('dragleave',()=>tr.style.background='');
       tr.addEventListener('drop',e=>{e.preventDefault();tr.style.background='';const fid=e.dataTransfer.getData('text/plain');if(fid!==t.id)reorderRptTrx(fid,t.id);});
     }
-    // 줄 어디를 눌러도 그 거래가 열린다. 예외는 자기 할 일이 따로 있는 두 곳
-    // (분류 칸·증빙 버튼)이고, 그쪽은 stopPropagation 으로 이 핸들러를 막는다.
-    if(canEditHere)tr.addEventListener('click',()=>openTrxFromReport(t));
+    // 칸마다 제자리에서 고친다. 저장은 saveTrx 하나를 지나므로 잠금·권한·잔액
+    // 갱신이 폼으로 고칠 때와 똑같다.
+    if(canEditHere)bindInlineCells(tr,t,{
+      blockReason:()=>trxEditBlockReason(t.clientId,t.date),
+      onBlocked:(msg)=>toast(msg,'error',5000),
+      save:saveTrxField,
+    });
+    tr.querySelector('.rpt-edit')?.addEventListener('click',e=>{
+      e.stopPropagation(); openTrxFromReport(t);
+    });
     // 분류는 그 자리에서 고른다. stopPropagation 이 없으면 같은 클릭이 줄 핸들러로
     // (그리고 문서까지) 올라가 폼이 열리고 방금 연 드롭다운이 곧바로 닫힌다.
     tr.querySelector('.rpt-cell-cat')?.addEventListener('click',e=>{
@@ -438,6 +457,25 @@ export function renderRptTrxTable(trxList){
     });      
   });
 }
+
+/**
+ * 고친 뒤 **보던 자리에 그대로 있게** 다시 그린다.
+ *
+ * 표를 통째로 다시 만드니 스크롤이 맨 위로 튄다. 한 줄 고칠 때마다 화면이
+ * 올라가면, 스무 줄짜리 보고서를 정리하는 동안 스무 번을 도로 내려와야 한다.
+ *
+ * 스크롤은 창이 아니라 `main` 이 한다(사이드바는 따로 구른다) — 창의
+ * scrollY 를 되돌리면 아무 일도 일어나지 않는다.
+ */
+export async function reloadReportKeepingScroll(){
+  const pane=document.querySelector('main');
+  const top=pane?pane.scrollTop:0;
+  await loadReport();
+  if(pane)pane.scrollTop=top;
+}
+
+/** 칸 하나만 저장한다. 무엇을 보낼지는 fieldPatch 가 정하고, 저장은 saveTrx 하나다. */
+const saveTrxField=(trx,field,value)=>saveTrx(fieldPatch(trx,field,value));
 
 /**
  * 보고서에서 거래 하나를 연다. 저장하면 **보고서를 다시 그린다.**
@@ -470,7 +508,7 @@ if(typeof document!=='undefined'){
     // 보고서 탭이 화면에 없으면 다시 읽지 않는다 — 거래내역 탭에서 입력할
     // 때마다 보고서를 다시 조회하면 월초 읽기가 그대로 두 배가 된다.
     if(document.getElementById('view-report')?.style.display==='none')return;
-    loadReport();
+    reloadReportKeepingScroll();
   });
 }
 
@@ -618,49 +656,6 @@ export async function renderRptBankStatements(clientId,year,month){
 
 // ─────────────────────────────────────────────
 // 결재 시 통장사진 새창으로 열기
-export function openBankStatementsForApproval(){
-  if(!S.reportData)return;
-  const{year,month,accs}=S.reportData;
-  const mStr=`${year}-${String(month).padStart(2,'0')}`;
-  const imgs=[];
-  (accs||[]).forEach(a=>{
-    (a.bankStatements||[]).filter(b=>b.month===mStr&&b.url).forEach(b=>{
-      imgs.push({url:b.url,label:a.label||''});
-    });
-  });
-  if(!imgs.length){toast('해당 월 통장사진이 없습니다.','info');return;}
-  // 기존 패널 제거
-  document.getElementById('bank-float-panel')?.remove();
-  const panel=document.createElement('div');
-  panel.id='bank-float-panel';
-  panel.style.cssText='position:fixed;right:16px;top:60px;width:400px;min-height:200px;max-height:90vh;z-index:9998;background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.25);display:flex;flex-direction:column;resize:both;overflow:hidden;border:1px solid var(--border);';
-  panel.innerHTML=`
-    <div id="bfp-header" style="padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);cursor:move;display:flex;align-items:center;gap:8px;user-select:none;">
-      <span style="font-size:13px;font-weight:700;color:var(--text);flex:1;">📷 통장사진</span>
-      <span id="bfp-label" style="font-size:12px;color:var(--muted);"></span>
-      <button onclick="document.getElementById('bank-float-panel').remove()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted);line-height:1;">×</button>
-    </div>
-    <div style="flex:1;overflow:auto;display:flex;flex-direction:column;align-items:center;padding:10px;gap:8px;">
-      <img id="bfp-img" style="max-width:100%;border-radius:6px;display:block;" alt="통장사진" />
-      ${imgs.length>1?`<div style="display:flex;gap:8px;margin-top:4px;">
-        <button onclick="if(window._bfpIdx>0){window._bfpIdx--;document.getElementById('bank-float-panel').__renderImg();}" style="padding:4px 14px;border-radius:6px;border:1px solid var(--border);background:#fff;cursor:pointer;">‹ 이전</button>
-        <button onclick="if(window._bfpIdx<window._bfpImgs.length-1){window._bfpIdx++;document.getElementById('bank-float-panel').__renderImg();}" style="padding:4px 14px;border-radius:6px;border:1px solid var(--border);background:#fff;cursor:pointer;">다음 ›</button>
-      </div>`:''}
-    </div>`;
-  document.body.appendChild(panel);
-  window._bfpImgs=imgs; window._bfpIdx=0;
-  panel.__renderImg=()=>{
-    const it=window._bfpImgs[window._bfpIdx];
-    let src=it.url;
-    src=getImageUrl(src,'w800');
-    panel.querySelector('#bfp-img').src=src;
-    panel.querySelector('#bfp-label').textContent=`${it.label} (${window._bfpIdx+1}/${window._bfpImgs.length})`;
-  };
-  panel.__renderImg();
-  // 드래그 — 누르고 있는 동안에만 문서에 리스너가 붙는다(누수 없음)
-  makeDraggable(panel, panel.querySelector('#bfp-header'));
-}
-
 export async function openBankStatementFromReport(clientId,year,month){
   const accs=S.accounts.filter(a=>a.clientId===clientId);
   if(!accs.length){toast('계좌가 없습니다.','error');return;}

@@ -9,6 +9,7 @@ import { S } from '../state.js';
 import { loadTransactions, changeView } from './core.js';
 import { escHtml } from '../utils/ui.js';
 import { renderSetupWizard } from './setup.js';
+import { syncClientPicker } from './client-picker.js';
 
 export function renderDashboard() {
   const grid=document.getElementById('client-grid'); if(!grid)return;
@@ -71,6 +72,7 @@ export function renderDashboard() {
     card.addEventListener('click',()=>{
       S.activeClient=client.id;
       const hc=document.getElementById('h-client'); if(hc)hc.value=client.id;
+      syncClientPicker();   // 검색칸도 같은 사람을 가리켜야 한다
       changeView('history'); loadTransactions(client.id);
     });
     grid.appendChild(card);

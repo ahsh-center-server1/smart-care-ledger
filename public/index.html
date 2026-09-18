@@ -221,6 +221,14 @@
     .cat-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;transition:var(--tr);white-space:nowrap;border:1.5px solid transparent;}
     .cat-chip:hover{opacity:.85;}
     .cat-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+    /* 입주자 찾기 — 목록이 아니라 검색이다(modules/client-picker.js).
+       칸 바로 아래에 붙고, 줄마다 팀·담당자를 함께 적어 동명이인을 가른다. */
+    .client-dd{position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:300;background:#fff;
+      border:1px solid var(--bm);border-radius:10px;box-shadow:var(--shadow2);padding:5px;
+      max-height:260px;overflow-y:auto;display:none;}
+    .client-dd.show{display:block;}
+    .client-dd-item{display:flex;align-items:baseline;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--text);}
+    .client-dd-item:hover{background:var(--bg);}
     .cat-dd{position:absolute;z-index:300;background:#fff;border:1px solid var(--bm);border-radius:10px;box-shadow:var(--shadow2);padding:5px;min-width:130px;display:none;}
     .cat-dd.show{display:block;}
     .cat-dd-item{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);}
@@ -275,15 +283,17 @@
     .cat-edit,.cat-del{margin-left:2px;width:18px;height:18px;border-radius:50%;background:#f1f5f9;color:#94a3b8;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;border:none;padding:0;flex-shrink:0;}
     .cat-edit svg,.cat-del svg{width:14px;height:14px;}
     .cat-edit:hover{background:#dbeafe;color:var(--blue);}
-    /* 보고서 표에서 분류·내용을 눌러 그 거래를 연다 — 줄 끝의 연필 아이콘 대신.
-       고치고 싶은 것이 곧 누를 것이면 설명할 것이 없다. hover 로만 표시하므로
-       인쇄물에는 아무 흔적도 남지 않는다(화면 전용 버튼이 칸을 차지하지도 않는다). */
-    /* 줄 전체가 누를 곳이므로 hover 도 줄 전체에 걸린다 — 밑줄이 칸 하나에서
-       끊기면 "이 칸만 눌러야 하나" 싶어진다. 분류 칸만 자기 할 일이 따로 있어
-       더 진하게 표시한다. hover 라 인쇄물에는 흔적이 남지 않는다. */
+    /* 보고서 표 — 어느 줄을 보고 있는지는 줄 전체의 밑줄이, 고칠 수 있는 칸은
+       그 칸의 진한 배경이 말한다. 둘 다 hover 라 인쇄물에는 흔적이 없다.
+       손가락 커서는 고칠 수 있는 칸에만 — 줄 전체에 주면 못 고치는 칸도 눌러 본다. */
     .rpt-row-edit:hover>td{background:#eff6ff;box-shadow:inset 0 -2px 0 #93c5fd;}
-    .rpt-cell-cat{cursor:pointer;}
+    .rpt-cell-inline,.rpt-cell-cat{cursor:pointer;}
+    .rpt-row-edit:hover>td.rpt-cell-inline:hover,
     .rpt-row-edit:hover>td.rpt-cell-cat:hover{background:#dbeafe;}
+    /* 그 자리에서 고치는 입력칸 — 칸 크기를 그대로 쓴다. 폭이 달라지면 표가
+       한 번 출렁이고, 그 순간 눈이 고치던 줄을 놓친다. */
+    .rpt-inline-input{width:100%;box-sizing:border-box;border:1px solid var(--blue);border-radius:5px;
+      padding:2px 4px;font:inherit;font-size:13px;background:#fff;color:var(--text);outline:none;}
     .cat-del:hover{background:#fee2e2;color:#dc2626;}
     .rule-tag{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:9px;background:#f8fafc;border:1.5px solid var(--bm);}
     .stat-card{background:var(--card);padding:20px;border-radius:var(--r2);border:1px solid var(--border);box-shadow:var(--shadow);}
@@ -764,9 +774,14 @@
           <div id="trx-mandatory-banner" style="display:none;"></div>
           <div class="card" style="padding:20px;margin-bottom:14px;">
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
-              <div style="min-width:150px;">
+              <div style="min-width:190px;position:relative;">
                 <label class="label">입주자</label>
-                <select id="h-client" class="input" style="padding:8px 12px;"></select>
+                <!-- 값의 근거는 여전히 select 다(대시보드 카드·필터가 그것을 읽는다).
+                     검색칸은 그 위에 덧댄 화면 — modules/client-picker.js 참고. -->
+                <input id="h-client-search" class="input" style="padding:8px 12px;"
+                       placeholder="이름·팀·담당자로 찾기" autocomplete="off" role="combobox">
+                <div id="h-client-list" class="client-dd"></div>
+                <select id="h-client" class="input" style="display:none;"></select>
               </div>
               <div style="flex:1;min-width:150px;">
                 <label class="label">내용 검색</label>
@@ -986,6 +1001,7 @@
                     <col style="width:80px;"><!-- 수입 -->
                     <col style="width:80px;"><!-- 지출 -->
                     <col style="width:44px;"><!-- 증빙 -->
+                    <col class="no-print" style="width:34px;"><!-- 수정(화면 전용) -->
                   </colgroup>
                   <thead><tr style="border-bottom:2px solid #d1d5db;">
                     <th data-rpt-sort="date" style="padding:8px 4px;text-align:left;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">날짜 <span class="rpt-sort-arrow"></span></th>
@@ -994,6 +1010,7 @@
                     <th data-rpt-sort="amountIn" style="padding:8px 4px;text-align:right;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">수입 <span class="rpt-sort-arrow"></span></th>
                     <th data-rpt-sort="amountOut" style="padding:8px 4px;text-align:right;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">지출 <span class="rpt-sort-arrow"></span></th>
                     <th data-rpt-sort="receiptUrl" style="padding:8px 4px;text-align:center;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">증빙 <span class="rpt-sort-arrow"></span></th>
+                    <th class="no-print" style="padding:8px 2px;"></th>
                   </tr></thead>
                   <tbody id="rpt-trx-body"></tbody>
                   <tfoot><tr style="border-top:2px solid #d1d5db;">
@@ -1001,6 +1018,7 @@
                     <td id="rpt-foot-in"  style="padding:8px 4px;text-align:right;font-size:14px;font-weight:900;color:#15803d;"></td>
                     <td id="rpt-foot-out" style="padding:8px 4px;text-align:right;font-size:14px;font-weight:900;color:#b91c1c;"></td>
                     <td></td>
+                    <td class="no-print"></td>
                   </tr></tfoot>
                 </table>
               </div>
