@@ -30,45 +30,45 @@ import { S } from '../state.js';
  *
  * key   — 패널 요소 id의 접두어 (`${key}-tab-content`)
  * label — 레일·select에 보이는 이름
- * icon  — 이모지 (아이콘 라이브러리를 들이지 않는다)
+ * icon  — utils/icons.js 의 아이콘 이름. 이모지를 쓰지 않는 이유는 그 파일 머리말에
  * perm  — 필요한 권한 키 (없으면 전원)
  * desc  — 패널 상단 한 줄 설명. "이 화면이 무엇을 하는 곳인지"를 말한다.
  */
 export const SETTINGS_TABS = [
   {
-    key: 'overview', label: '개요', icon: '📋',
+    key: 'overview', label: '개요', icon: 'report',
     desc: '지금 손봐야 할 것들을 모아 보여줍니다.',
   },
   {
-    key: 'list', label: '직원·입주자·계좌', icon: '👥',
+    key: 'list', label: '직원·입주자·계좌', icon: 'people',
     desc: '직원 계정, 입주자, 계좌를 등록하고 관리합니다.',
   },
   {
-    key: 'category', label: '카테고리·자동분류', icon: '🏷️',
+    key: 'category', label: '카테고리·자동분류', icon: 'copy',
     desc: '지출·수입 분류와 엑셀 업로드 시 자동분류 규칙을 관리합니다.',
   },
   {
-    key: 'fixed', label: '고정 수입/지출', icon: '🔁',
+    key: 'fixed', label: '고정 수입/지출', icon: 'refresh',
     perm: 'settings.fixed',
     desc: '매월 같은 날 반복되는 항목을 등록해 두면 한 번에 입력할 수 있습니다.',
   },
   {
-    key: 'budget', label: '예산 관리', icon: '🎯',
+    key: 'budget', label: '예산 관리', icon: 'coin',
     perm: 'settings.budget',
     desc: '입주자별 연간 예산을 정하면 보고서에서 실적과 비교됩니다.',
   },
   {
-    key: 'audit', label: '변경 이력', icon: '🧾',
+    key: 'audit', label: '변경 이력', icon: 'list',
     perm: 'audit.view',
     desc: '누가 무엇을 언제 바꿨는지 기록입니다.',
   },
   {
-    key: 'archive', label: '데이터 마감', icon: '🗄️',
+    key: 'archive', label: '데이터 마감', icon: 'archive',
     perm: 'settings.archive',
     desc: '연도를 마감해 거래를 보관하고, 다음 해 기초잔액을 넘깁니다.',
   },
   {
-    key: 'permissions', label: '내 역할 안내', icon: '🔐',
+    key: 'permissions', label: '내 역할 안내', icon: 'key',
     desc: '내 업무 역할과 담당 범위, 역할별 업무를 확인합니다. 권한은 이 화면에서 변경하지 않습니다.',
   },
 ];

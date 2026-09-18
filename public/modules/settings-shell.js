@@ -9,6 +9,8 @@
 
 'use strict';
 
+import { iconSvg } from '../utils/icons.js';
+
 import {
   SETTINGS_TABS, SETTINGS_GROUPS, SETTINGS_TAB_BY_KEY,
   canSeeSettingsTab, visibleSettingsTabs, initialSettingsTab,
@@ -67,7 +69,15 @@ export function switchSettingsTab(key) {
   const tab = SETTINGS_TAB_BY_KEY[key];
   const titleEl = document.getElementById('settings-panel-title');
   const descEl = document.getElementById('settings-panel-desc');
-  if (titleEl) titleEl.textContent = `${tab.icon} ${tab.label}`;
+  // 아이콘은 SVG 라 textContent 로는 들어가지 않는다. 이름은 우리 상수뿐이지만
+  // 값이 아니라 **요소로** 넣는다 — 나중에 라벨이 데이터가 돼도 안전하게.
+  if (titleEl) {
+    titleEl.textContent = '';
+    const ic = document.createElement('span');
+    ic.innerHTML = iconSvg(tab.icon, 20);
+    ic.setAttribute('aria-hidden', 'true');
+    titleEl.append(ic, ' ', tab.label);
+  }
   if (descEl) descEl.textContent = tab.desc || '';
 
   // 레일·선택 상태
@@ -113,7 +123,7 @@ function renderRail() {
       btn.title = tab.desc || tab.label;
 
       const icon = document.createElement('span');
-      icon.textContent = tab.icon;
+      icon.innerHTML = iconSvg(tab.icon, 18);
       icon.setAttribute('aria-hidden', 'true');
       btn.appendChild(icon);
 
@@ -149,7 +159,8 @@ function renderPicker() {
     og.label = group.label;
     for (const key of items) {
       const tab = SETTINGS_TAB_BY_KEY[key];
-      og.appendChild(new Option(`${tab.icon} ${tab.label}`, key));
+      // <option> 안에는 그림이 들어가지 않는다(브라우저가 글자만 그린다).
+      og.appendChild(new Option(tab.label, key));
     }
     picker.appendChild(og);
   }

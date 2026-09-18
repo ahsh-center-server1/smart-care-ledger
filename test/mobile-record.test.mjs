@@ -144,6 +144,9 @@ test('화면이 부르는 아이콘 이름은 전부 존재한다', () => {
     ...[...html.matchAll(/data-icon="([^"]+)"/g)].map(m => m[1]),
     ...[...read('public/app.js').matchAll(/iconSvg\('([^']+)'/g)].map(m => m[1]),
     ...[...recordSrc.matchAll(/icon: '([^']+)'/g)].map(m => m[1]),
+    // 설정 탭도 같은 한 벌을 쓴다(settings-nav.js 의 icon 은 이름이다)
+    ...[...read('public/modules/settings-nav.js').matchAll(/icon: '([^']+)'/g)].map(m => m[1]),
+    ...[...read('public/modules/modals.js').matchAll(/iconSvg\('([^']+)'/g)].map(m => m[1]),
   ]);
   const missing = [...used].filter(n => !ICON_NAMES.includes(n));
   assert.deepEqual(missing, [],
