@@ -48,19 +48,21 @@ test('인쇄물의 날짜는 제출일이다 — 제출 전에만 작성일로 �
   assert.deepEqual(reportDateLine(null), { label: '작성일', date: '-' });
 });
 
-test('결재란은 문서에 박힌 이름·날짜만 읽는다', () => {
+test('결재란은 문서에 박힌 이름만 읽는다 — 날짜는 넣지 않는다', () => {
   // 담당이 바뀌거나 팀장이 퇴사해도 과거 결재 문서는 그대로여야 한다.
   // 지금의 배정표에서 이름을 다시 찾으면 결재란이 조용히 달라진다.
+  //
+  // 날짜는 도장 칸을 두 줄로 만들어 인쇄물을 빽빽하게 한다. 언제 결재됐는지는
+  // 꼬리의 제출일과 화면의 결재 트랙이 말한다.
   const rows = approvalStamps({
     submittedByName: '김담당', submittedAt: '2026-03-04T00:00:00.000Z',
     teamApprovedByName: '이팀장', teamApprovedAt: '2026-03-05T00:00:00.000Z',
   });
-  assert.deepEqual(rows.map(r => r.label), ['담당', '팀장', '센터장']);
-  assert.equal(rows[0].name, '김담당');
-  assert.equal(rows[1].name, '이팀장');
-  assert.ok(rows[0].date && rows[1].date);
-  assert.deepEqual(rows[2], { label: '센터장', name: '', date: '' },
-    '아직 지나지 않은 단계는 비어 있어야 합니다');
+  assert.deepEqual(rows, [
+    { label: '담당', name: '김담당' },
+    { label: '팀장', name: '이팀장' },
+    { label: '센터장', name: '' },   // 아직 지나지 않은 단계는 비어 있다
+  ]);
 });
 
 test('담당 칸은 제출자, 없으면 작성자', () => {

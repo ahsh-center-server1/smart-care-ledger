@@ -68,15 +68,19 @@ export function reportDateLine(report) {
 }
 
 /**
- * 결재란 세 칸 — 이름과 날짜. **문서에 박힌 값만 읽는다.**
+ * 결재란 세 칸 — **이름만.** 문서에 박힌 값만 읽는다.
  * 비어 있는 칸은 아직 그 단계를 지나지 않은 것이다.
+ *
+ * 날짜를 넣지 않는 이유: 결재란은 도장 자리다. 한 칸에 이름과 날짜가 함께
+ * 들어가면 두 줄이 되어 인쇄물의 도장 칸이 빽빽해지고, 언제 결재됐는지는
+ * 꼬리의 제출일(reportDateLine)과 화면의 결재 트랙이 이미 말한다.
  */
 export function approvalStamps(report) {
   const r = report || {};
   return [
-    { label: '담당',   name: r.submittedByName || '',      date: formatStampDate(r.submittedAt) },
-    { label: '팀장',   name: r.teamApprovedByName || '',   date: formatStampDate(r.teamApprovedAt) },
-    { label: '센터장', name: r.centerApprovedByName || '', date: formatStampDate(r.centerApprovedAt) },
+    { label: '담당',   name: r.submittedByName || '' },
+    { label: '팀장',   name: r.teamApprovedByName || '' },
+    { label: '센터장', name: r.centerApprovedByName || '' },
   ];
 }
 

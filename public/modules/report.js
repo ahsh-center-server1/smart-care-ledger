@@ -770,15 +770,15 @@ export function renderApproval(report,curStatus){
 
   // 결재란
   const grid=document.getElementById('rpt-approval-grid'); grid.innerHTML='';
-  // 이름도 날짜도 **결재한 그 순간 문서에 박힌 값**이다(domain/report-stamps.js).
+  // 이름은 **결재한 그 순간 문서에 박힌 값**이다(domain/report-stamps.js).
   // 지금의 담당 배정에서 다시 찾으면, 담당자나 팀장이 바뀐 뒤 과거 결재
   // 문서의 결재란이 조용히 달라진다 — 공문서 산출물이라 그럴 수 없다.
+  // 날짜는 넣지 않는다 — 도장 자리다(그 이유는 approvalStamps 에 적혀 있다).
   approvalStamps(report).forEach((s,i,arr)=>{
     const cell=document.createElement('div'); cell.style.cssText='width:88px;'+(i<arr.length-1?'border-right:1px solid #d1d5db;':'');
     cell.innerHTML='<div style="background:#f9fafb;padding:6px 8px;text-align:center;font-size:11px;font-weight:700;color:#6b7280;border-bottom:1px solid #d1d5db;">'+escHtml(s.label)+'</div>'
-      +'<div style="height:58px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:7px;gap:2px;">'
+      +'<div style="height:58px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:7px;">'
       +(s.name?'<div style="font-size:12px;font-weight:700;color:#374151;">'+escHtml(s.name)+'</div>':'')
-      +(s.date?'<div style="font-size:10px;color:#9ca3af;">'+escHtml(s.date)+'</div>':'')
       +'</div>';
     grid.appendChild(cell);
   });
