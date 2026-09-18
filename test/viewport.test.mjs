@@ -18,11 +18,12 @@ test('isNarrowScreen의 기준폭이 CSS 미디어 쿼리와 일치한다', () =
   const jsWidths = [...coreSrc.matchAll(/max-width:\s*(\d+)px/g)].map(m => m[1]);
   assert.ok(jsWidths.length > 0, 'core.js에 max-width 기준이 없습니다');
 
-  // index.html에서 모바일 네비를 켜는 미디어 쿼리의 기준폭
-  assert.ok(
-    htmlSrc.includes('@media(max-width:768px){.mobile-nav{display:block;}'),
-    '모바일 네비 미디어 쿼리를 찾지 못했습니다'
-  );
+  // index.html에서 모바일 네비를 켜는 미디어 쿼리의 기준폭.
+  // 규칙이 여러 줄로 늘어난 뒤에도(＋ 기록 버튼·퀵 액션 숨김이 같은 블록에 들어왔다)
+  // **그 블록의 기준폭**을 읽는다 — 한 줄로 붙어 있는지가 아니라 숫자가 계약이다.
+  const navRule = htmlSrc.match(/@media\(max-width:(\d+)px\)\{[^@]*?\.mobile-nav\{display:block;\}/);
+  assert.ok(navRule, '모바일 네비 미디어 쿼리를 찾지 못했습니다');
+  assert.equal(navRule[1], '768', `모바일 네비 기준폭이 ${navRule[1]}px 입니다`);
   assert.ok(
     jsWidths.every(w => w === '768'),
     `core.js의 기준폭(${jsWidths.join(', ')})이 CSS(768px)와 다릅니다`
@@ -36,12 +37,28 @@ test('보고서만 PC 전용이고 설정의 역할 안내는 모바일에서도
   assert.ok(!m[1].includes('settings'), '설정 전체가 PC 전용으로 막혀 있습니다');
 });
 
-test('CSS는 보고서만 숨기고 설정 네비는 유지한다', () => {
-  // JS만 막고 CSS가 안 숨기면 눌러서 실패하는 버튼이 남는다
+test('좁은 화면에 보고서 진입점이 없고 설정 진입점은 있다', () => {
+  // 예전에는 하단 네비에 보고서·설정 칸이 있어서 CSS로 보고서만 숨겼다.
+  // 지금 하단 네비는 세 자리(담당·＋·내역)뿐이라 **보고서 칸이 아예 없다** —
+  // 숨김 규칙이 아니라 부재가 계약이다. 대신 사이드바 쪽 규칙은 그대로 확인한다.
   assert.ok(
-    htmlSrc.includes('.mobile-nav-item[data-view="report"]') &&
-    !/\.mobile-nav-item\[data-view="settings"\][^{]*\{display:none!important;\}/.test(htmlSrc),
-    '좁은 화면의 역할 안내 진입점이 숨겨져 있습니다'
+    // 한 태그 안에서만 본다(줄바꿈 금지) — [^>]* 로 두면 CSS 규칙에서 시작해
+    // 수백 줄 아래 사이드바 버튼까지 이어 붙어 없는 것을 있다고 읽는다.
+    !/<button[^>\n]*mobile-nav-item[^>\n]*data-view="report"/.test(htmlSrc),
+    '하단 네비에 보고서 칸이 다시 생겼습니다 — 누르면 PC에서 하라는 토스트만 뜹니다'
+  );
+  assert.ok(
+    /@media\(max-width:768px\)\{\s*\.nav-item\[data-view="report"\]\{display:none!important;\}/.test(htmlSrc),
+    '사이드바의 보고서 메뉴가 좁은 화면에서 숨겨지지 않습니다'
+  );
+  // 설정(내 역할 안내)은 휴대폰에서도 열려야 한다 — 헤더 버튼으로 옮겼다.
+  assert.ok(
+    /id="btn-mobile-settings"/.test(htmlSrc),
+    '좁은 화면의 설정(역할 안내) 진입점이 없습니다'
+  );
+  assert.ok(
+    /@media\(max-width:768px\)\{[^@]*?\.header-icon-btn:not\(\.perm-hidden\)\{display:inline-flex;\}/.test(htmlSrc),
+    '헤더 설정 버튼이 좁은 화면에서 보이지 않습니다'
   );
 });
 

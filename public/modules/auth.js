@@ -14,6 +14,7 @@ import { fetchBaseData, changeView } from './core.js';
 import { initPermissions, can, hasLoadedIdentity } from './permissions.js';
 import { clearAuditCache } from './settings-audit.js';
 import { refreshReceiptIntakeButtons } from './receipt-intake.js';
+import { refreshRecordButton } from './mobile-record.js';
 import { fnErrorMessage } from '../services/fn-errors.js';
 
 // window.onFirebaseReady, 이벤트 바인딩 — app.js에서 일괄 처리
@@ -117,8 +118,14 @@ function applyPermissionVisibility() {
   // 보고서·설정 탭 — 사이드바와 하단 네비 양쪽
   document.querySelectorAll('.nav-item[data-view="report"],.mobile-nav-item[data-view="report"]')
     .forEach(el => { el.style.display = can('nav.report') ? '' : 'none'; });
-  document.querySelectorAll('.nav-item[data-view="settings"],.mobile-nav-item[data-view="settings"]')
+  document.querySelectorAll('.nav-item[data-view="settings"]')
     .forEach(el => { el.style.display = hasLoadedIdentity() ? '' : 'none'; });
+  // 휴대폰에서는 설정이 헤더 버튼이다. 인라인 style 로 켜면 미디어 쿼리를 이겨
+  // 데스크톱에도 나오므로 클래스로만 감춘다.
+  document.getElementById('btn-mobile-settings')
+    ?.classList.toggle('perm-hidden', !hasLoadedIdentity());
+  // ＋ 기록 — 고를 것이 하나도 없는 역할(팀장·센터장)에게는 버튼을 내린다.
+  refreshRecordButton();
 
   show('btn-h-excel',         can('excel.upload'));
   show('btn-h-receipt-print', can('receipt.print'));

@@ -31,6 +31,7 @@
 | 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions, fixed-items, report-actor, settings-permissions |
 | 서비스 | `public/services/*.js` | firestore, image(이미지 압축), storage, balance(잔액 계산), excel-parser, receipt-upload, scoped-fetch, in-query |
 | 유틸 | `public/utils/ui.js` | UI 유틸리티 |
+| 아이콘 | `public/utils/icons.js` | 인라인 SVG 한 벌 (§7 모바일) |
 | `firestore.rules` | `firestore.rules` (루트) | Firestore 보안 규칙 |
 
 ---
@@ -382,6 +383,39 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 ### 접근성/플랫폼
 - [x] PWA (크롬/엣지 설치형 앱, manifest.json + sw.js)
 - [x] 모바일 하단 네비게이션 + 반응형 UI
+
+### 모바일 — 세 자리 네비와 「＋ 기록」
+
+휴대폰에서 이 앱으로 하는 일은 거의 전부 **기록을 남기는 일**이다(영수증 사진,
+통장 사진, 수기 입력). 그런데 하단 네비는 데스크톱 사이드바를 그대로 줄인 네
+칸이었고 정작 그 행동이 없었다 — 대시보드로 가서 퀵 액션 일곱 개 중 골라야 했다.
+
+```
+담당(대시보드)   ＋ 기록   내역(거래내역)        설정은 헤더 · 보고서는 PC 전용
+```
+
+- `＋` 가 여는 시트는 `public/modules/mobile-record.js` 의 `RECORD_ACTIONS` 하나다.
+  목록은 열 때마다 `can()` 으로 고르고, **고를 것이 없는 역할(팀장·센터장)에게는
+  버튼 자체가 뜨지 않는다.**
+- 퀵 액션(`#dashboard-actions`)은 휴대폰에서 감춘다. **감추기만 하면 파일
+  업로드처럼 다른 길이 없는 것이 사라지므로**, 시트·네비·헤더가 퀵 액션을 전부
+  덮는지 `test/mobile-record.test.mjs` 가 대조한다.
+- 영수증은 촬영(`capture=environment`)과 불러오기가 **같은 file input** 을 쓴다.
+  촬영 뒤 `capture` 를 지우지 않으면 불러오기에서도 카메라가 뜬다.
+
+> 권한·화면폭으로 감추는 것은 인라인 `style.display` 가 아니라 `.perm-hidden`
+> 클래스로 한다. 인라인은 미디어 쿼리를 이겨서, 휴대폰 전용 버튼이 데스크톱에도
+> 나온다.
+
+### 아이콘 — 이모지를 걷어낸 이유
+
+📊📜📑⚙️ 가 촌스러워 보이는 이유는 취향이 아니라 **OS마다 다른 그림을 그리기
+때문**이다. 굵기도 색도 기기마다 달라 한 화면에서 통일감이 생길 수 없다.
+
+`public/utils/icons.js` 한 벌(24×24 · 선만 · 굵기 1.5 · `currentColor`)로 바꿨다.
+정적 HTML 은 `<span data-icon="pen">` 에 `hydrateIcons()` 가 채우고, 만들어 내는
+HTML 은 `iconSvg('pen')` 을 쓴다. 아이콘 **폰트**는 쓰지 않는다 — 네트워크에서
+받아야 해서 PWA 를 오프라인으로 열면 네모가 뜬다.
 
 ---
 

@@ -43,6 +43,8 @@ import * as Modals   from './modules/modals.js';
 import * as Fixed    from './modules/fixed-items.js';
 import * as Parser   from './services/excel-parser.js';
 import { initFontScale, setFontScale } from './modules/font-scale.js';
+import * as Record from './modules/mobile-record.js';
+import { hydrateIcons, iconSvg } from './utils/icons.js';
 
 // ─────────────────────────────────────────────
 // ExcelParser — services/excel-parser.js로 옮겼다.
@@ -229,8 +231,13 @@ function bindEvents(){
   // 글자 크기 설정 — 저장값을 DOM과 맞추고 세그먼트 컨트롤을 그린다.
   // (페인트 전 적용은 index.html의 인라인 스크립트가 이미 했다)
   initFontScale();
+  // 이모지 자리를 SVG 아이콘으로 채운다 (utils/icons.js — 왜 이모지를 걷어냈는지도 거기 있다)
+  hydrateIcons();
   // 화면이 좁아지면 PC 전용 화면(보고서·설정)에서 빠져나온다
   Core.watchViewportForDesktopOnlyViews();
+  // 휴대폰 하단 네비의 ＋ 기록, 헤더의 설정
+  document.getElementById('btn-record')?.addEventListener('click',Record.toggleRecordSheet);
+  document.getElementById('btn-mobile-settings')?.addEventListener('click',()=>Core.changeView('settings'));
   // 로그인
   document.getElementById('login-id')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleLogin();});
   document.getElementById('login-pw')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleLogin();});
@@ -284,7 +291,10 @@ function bindEvents(){
     S.trxViewMode=S.trxViewMode==='list'?'calendar':'list';
     S.calendarYM='';
     const btn=document.getElementById('btn-trx-view-toggle');
-    if(btn)btn.textContent=S.trxViewMode==='calendar'?'☰ 목록':'🗓️ 달력';
+    // 아이콘이 SVG 라 textContent 로 갈아 끼우면 그림이 사라진다(예전에는 이모지라 됐다).
+    if(btn)btn.innerHTML=S.trxViewMode==='calendar'
+      ? iconSvg('list',16)+'목록'
+      : iconSvg('calendar',16)+'달력';
     Trx.renderHistoryTable();
   });
   document.getElementById('btn-bulk-del')?.addEventListener('click',Trx.confirmBulkDelete);
