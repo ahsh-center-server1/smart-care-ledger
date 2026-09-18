@@ -46,21 +46,40 @@ export async function rebuildDerivedDocs() {
     const lock = await call('rebuildLockedMonths')();
     const dir = await call('rebuildDirectories')();
 
+    // 권한 투영본(authz) — **관리자만** 돌릴 수 있다(backfillAuthz 가 users.isAdmin
+    // 으로 판정한다). 센터장이 눌렀다고 버튼 전체가 실패하면 안 되므로 건너뛴다.
+    //
+    // 이것이 없으면 고칠 방법이 없던 고장이 있다: clients.teamLeader 는 맞는데
+    // authz.leaderClientIds 가 비어 있으면 **팀장에게 그 입주자의 보고서가 보이지
+    // 않는다.** 팀장의 조회 범위가 leaderClientIds 이기 때문이다. 게다가 입주자
+    // 화면에서 다시 저장해도 낫지 않는다 — saveClient 는 이전 상태와 다른 것만
+    // 반영하는데, 팀장이 그대로면 바꿀 것이 없다고 보고 투영본을 건드리지 않는다.
+    // 원본에서 통째로 다시 만드는 이 백필만이 그 상태를 되돌린다.
+    let authz = null;
+    if (can('system.backup')) {
+      authz = await call('backfillAuthz')();
+    }
+
     const lockCount = Number((lock && lock.data && lock.data.count) || 0);
     const submitted = Number((lock && lock.data && lock.data.submitted) || 0);
     const staff = Number((dir && dir.data && dir.data.staff) || 0);
     const cats = Number((dir && dir.data && dir.data.categories) || 0);
 
+    const authzUsers = Number((authz && authz.data && authz.data.users) || 0);
     if (out) {
       out.innerHTML =
         '<div style="color:#15803d;font-weight:700;">✅ 완료</div>'
         + '<div style="color:var(--muted-foreground);margin-top:4px;">'
         + `마감 ${escHtml(lockCount)}건 · 결재 중 ${escHtml(submitted)}건 · `
-        + `직원 ${escHtml(staff)}명 · 분류 ${escHtml(cats)}건</div>`;
+        + `직원 ${escHtml(staff)}명 · 분류 ${escHtml(cats)}건`
+        + (authz
+          ? ` · 권한 ${escHtml(authzUsers)}명`
+          : ' · <span style="color:#b45309;">권한 투영본은 관리자만 다시 만들 수 있습니다</span>')
+        + '</div>';
     }
     toast('파생 문서를 다시 만들었습니다.', 'success');
     await auditLog('archive.run', {
-      summary: { target: 'derived', lockCount, staff, cats },
+      summary: { target: 'derived', lockCount, staff, cats, authzUsers },
     });
 
     // 새 색인을 화면에 반영한다 — 안 하면 이 세션에서만 잠금이 안 걸린 채로 남는다.

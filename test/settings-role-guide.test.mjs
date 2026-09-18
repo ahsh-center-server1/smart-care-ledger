@@ -23,16 +23,18 @@ function render(user, caps, ids = [], extra = {}) {
 test('역할 안내는 입력자도 읽을 수 있고 편집 제어를 만들지 않는다', () => {
   const html = render({ role: '입력자' }, { trxCreate: true }, ['a', 'a', 'b']);
   assert.match(html, /입력자/);
-  assert.match(html, /입주자 2명 배정/);
+  // 라벨이 「현재 배정」이라 값에서 '배정'을 뺐다. 지키는 것은 **배정 수**다.
+  assert.match(html, /입주자 2명/);
   assert.match(html, /본인 미제출/);
   assert.doesNotMatch(html, /<(?:button|select|input)\b|btn-perm-save|btn-perm-reset/);
 });
 
 test('업무 역할과 관리자 자격을 별개로 안내한다', () => {
   const html = render({ role: '입력자', isAdmin: true }, { trxCreate: true });
-  assert.match(html, /업무 역할<\/dt><dd>입력자/);
-  assert.match(html, /시스템 관리자<\/dt><dd>지정됨/);
-  assert.match(html, /관리자 자격만으로 금융 자료 수정이나 결재 권한이 부여되지 않습니다/);
+  // dl 에서 배지로 바꿨다. 지키는 것은 **둘이 따로 보인다**는 것이다.
+  assert.match(html, /입력자/);
+  assert.match(html, /시스템 관리자/);
+  assert.match(html, /관리자 자격만으로는 .*금전 자료 수정이나 결재 권한이 생기지 않습니다/s);
   assert.doesNotMatch(html, /시설 전체 자료 검토와 최종 결재/);
 });
 
@@ -53,8 +55,8 @@ test('알 수 없는 역할을 권한으로 해석하거나 HTML로 삽입하지
 test('팀장과 센터장 범위를 구별한다', () => {
   const leader = render({ role: '팀장' }, { reportApproveTeam: true }, ['staff-only', 'leader-client'], { leaderClientIds: ['leader-client'] });
   assert.match(leader, /담당 팀장으로 지정된 입주자/);
-  assert.match(leader, /입주자 1명 배정/);
-  assert.doesNotMatch(leader, /입주자 2명 배정/);
+  assert.match(leader, /입주자 1명/);
+  assert.doesNotMatch(leader, /입주자 2명/);
   assert.match(render({ role: '센터장' }, { reportApproveCenter: true }), /시설 전체 입주자/);
 });
 
@@ -79,8 +81,10 @@ test('확인된 authz 역할·활성 상태와 팀장 전용 배정을 우선한
   const html = render({ role: '센터장', isAdmin: true }, { reportApproveTeam: true }, ['a', 'b'], {
     authz: { role: '팀장', isAdmin: false, enabled: true, leaderClientIds: ['b'] }, leaderClientIds: ['a', 'b'],
   });
-  assert.match(html, /업무 역할<\/dt><dd>팀장/);
-  assert.match(html, /입주자 1명 배정/);
+  // dl 에서 배지로 바꿨다. 지키는 것은 **authz 의 역할이 이긴다**는 것이다.
+  assert.match(html, /팀장/);
+  assert.doesNotMatch(html, /센터장/);
+  assert.match(html, /입주자 1명/);
   assert.doesNotMatch(html, /시설 전체 입주자|시스템 관리 업무 안내/);
   assert.match(render({ role: '담당자' }, {}, [], { authz: { enabled: false } }), /비활성 계정/);
 });
@@ -89,7 +93,9 @@ test('안내 화면이 누구에게도 열리지 않는 기능을 알려 준다'
   // 사라진 버튼을 보고 "내 등급이 낮아서"라고 읽으면 상급자에게 요청하러 간다.
   // 그쪽도 못 하므로 서로 시간만 쓴다 — 여기서 끊는다.
   const html = render({ role: '센터장' }, { reportApproveCenter: true });
-  assert.match(html, /제공되지 않는 기능/);
+  // 제목을 「아무도 할 수 없는 일」로 바꿨다(더 쉬운 말). 지키는 것은
+  // **누구에게도 안 열린다는 사실을 말해 준다**는 것이다.
+  assert.match(html, /아무도 할 수 없는 일/);
   assert.match(html, /누구에게도/);
   assert.match(html, /영구히 제공되지 않음/);
   assert.match(html, /전체 초기화/);

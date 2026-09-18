@@ -264,3 +264,42 @@ test('끝난 계좌를 다시 읽지 않는다 — 멱등해야 눌러도 안 �
     '이미 색인이 있는 계좌를 걸러내지 않습니다');
   assert.match(block, /remaining/, '남은 수를 돌려주지 않아 이어서 부를 수 없습니다');
 });
+
+// ── 권한 투영본이 어긋났을 때 되돌리는 길 ────────────────────
+
+test('담당 팀장은 담당 직원에 없어도 결재 대상이 보여야 한다', () => {
+  // 팀장의 조회 범위는 leaderClientIds 다(core.js myScope). teamLeader 로만
+  // 지정돼 있어도 거기 들어가야 한다 — 안 그러면 결재해야 할 보고서가 안 보인다.
+  const authz = createRequire(import.meta.url)('../functions/authz.cjs');
+  const p = authz.projectAssignments([
+    { id: 'c1', userIds: 'staff1', teamLeader: 'leaderA' },
+  ]);
+  assert.deepEqual(p.leaderByUid.get('leaderA'), ['c1'],
+    '담당 직원에 없는 팀장이 결재 범위에서 빠졌습니다');
+  assert.ok((p.accessByUid.get('leaderA') || []).includes('c1'),
+    '팀장이 그 입주자를 아예 못 봅니다');
+});
+
+test('다시 저장해도 투영본은 고쳐지지 않는다 — 그래서 백필 버튼이 필요하다', () => {
+  // saveClient 는 이전 상태와 **다른 것만** 반영한다. 팀장이 그대로면 바꿀 것이
+  // 없다고 보고 leaderClientIds 를 건드리지 않는다. 즉 한 번 어긋나면 입주자
+  // 화면에서는 되돌릴 방법이 없다 — 이 사실이 백필을 UI 에 두는 근거다.
+  const authz = createRequire(import.meta.url)('../functions/authz.cjs');
+  const plan = authz.planAssignmentChange({
+    clientId: 'c1',
+    prev: { staff: 'staff1', leader: 'leaderA' },
+    next: { staff: 'staff1,leaderA', leader: 'leaderA' },
+  });
+  assert.deepEqual(plan.leaderOps, [],
+    '이 전제가 바뀌었다면 백필 버튼의 근거 주석도 함께 고쳐야 합니다');
+});
+
+test('권한 투영본을 화면에서 다시 만들 수 있다', () => {
+  // backfillAuthz 는 콜러블로만 있고 public/ 어디서도 부르지 않았다 — 즉
+  // 콘솔이나 스크립트 없이는 고칠 방법이 없었다.
+  const ui = read('public/modules/settings-derived.js');
+  assert.match(ui, /call\('backfillAuthz'\)/, '권한 투영본을 다시 만들지 않습니다');
+  // 관리자만 돌릴 수 있다. 센터장이 눌렀다고 버튼 전체가 실패하면 안 된다.
+  assert.match(ui, /if \(can\('system\.backup'\)\)/,
+    '관리자 여부를 보지 않아 센터장이 누르면 버튼 전체가 실패합니다');
+});
