@@ -172,6 +172,47 @@ export function normalizeAmount(raw) {
 }
 
 /**
+ * 통장의 **금액 칸 하나**를 「앞의 숫자」와 「나머지 글자」로 가른다.
+ *
+ * 왜 필요한가 — 은행마다 칸을 다르게 쓴다
+ *   어떤 통장은 금액 칸에 **상호를 같이 찍는다.** 신한은행이 그렇다:
+ *
+ *     거래일 | 내용   | 찾으신금액          | 맡기신금액 | 잔액
+ *     260201 | 신한체 | 2,400 GS25 뉴은평신 |           | 25,069
+ *     260820 | 신한체 | 165,600             | 풀무원식품 | 5,663,741
+ *     260102 | 유동CC | 김어진              | *400,000  | 434,329
+ *
+ *   내용 칸에는 **채널**(`신한체`·`현금IC`·`유동CC`)만 있고 상호는 금액 칸에,
+ *   때로는 **반대쪽** 금액 칸에 있다.
+ *
+ * 그래서 무엇이 깨졌나
+ *   `normalizeAmount` 는 숫자가 아닌 글자를 전부 지우고 남은 숫자를 이어 붙인다.
+ *   `2,400 GS25 뉴은평신` → **240025원**. 상호에 숫자가 든 가맹점(GS25·이마트24·
+ *   CGV)마다 금액이 조용히 백 배가 됐다. 거부가 아니라 값이라 미리보기에도
+ *   그럴듯하게 찍힌다.
+ *
+ * 규칙: **금액은 칸의 맨 앞에만 있다.** 뒤에 붙은 것은 글자다.
+ *   숫자로 시작하지 않으면 금액이 아니라 적요다(`김어진` · `현금IC캐시백`).
+ *
+ * @returns {{amount:number|null, text:string, raw:string, pure:boolean}}
+ *   pure — 숫자만 있던 칸. 붙은 글자가 없으니 더 믿을 만하다(아래 tie-break).
+ */
+export function splitMoneyCell(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return { amount: null, text: '', raw: '', pure: false };
+
+  // 앞의 통화기호·별표를 건너뛰고, 맨 앞의 금액 토큰만 본다.
+  const m = raw.match(/^[*₩￦\s]*(-?\d[\d,]*)(?![\d,])/);
+  if (!m) return { amount: null, text: raw, raw, pure: false };
+
+  const n = Number(m[1].replace(/,/g, ''));
+  if (!Number.isFinite(n)) return { amount: null, text: raw, raw, pure: false };
+
+  const text = raw.slice(m[0].length).trim();
+  return { amount: n, text, raw, pure: text === '' };
+}
+
+/**
  * 상호명을 비교용으로 정규화한다.
  *
  * 영수증의 상호명과 카드 명세서의 가맹점명은 표기가 다르다:
@@ -273,35 +314,92 @@ export function bankbookRowsToParsed(extracted, opts = {}) {
   const anchor = anchorYearOf(src);
   const asOf = anchor == null ? today : new Date(anchor, 11, 31);
 
+  // 잔액 사슬. **건너뛸 줄도 함께 센다** — 계좌번호 줄처럼 날짜가 없는 줄에도
+  // 잔액이 찍혀 있고, 그것이 첫 거래의 기준이다.
+  const balances = src.map(r => splitMoneyCell(r && r.balance).amount);
+
   const rows = [];
   const skipped = [];
 
-  for (const r of src) {
-    const raw = [r && r.dateRaw, r && r.description, r && r.withdraw, r && r.deposit]
+  for (let i = 0; i < src.length; i++) {
+    const r = src[i] || {};
+    const raw = [r.dateRaw, r.description, r.withdraw, r.deposit]
       .filter(Boolean).join(' | ');
 
-    const date = normalizeReceiptDate(r && r.dateRaw, asOf);
+    const date = normalizeReceiptDate(r.dateRaw, asOf);
     if (!date) { skipped.push({ reason: '날짜를 읽을 수 없음', raw }); continue; }
 
-    const out = normalizeAmount(r && r.withdraw);
-    const inn = normalizeAmount(r && r.deposit);
+    // **바로 앞 줄**의 잔액만 쓴다. 중간에 못 읽은 줄이 있으면 차이가 두 거래를
+    // 합친 값이 되어, 맞히려다 더 크게 틀린다.
+    const prev = i > 0 ? balances[i - 1] : null;
+    const delta = (balances[i] != null && prev != null) ? balances[i] - prev : null;
+
+    const { out, inn, merchant } = readMoneyCells(r, delta);
     // 출금도 입금도 못 읽었으면 금액 없는 줄이다 — 거래로 만들 수 없다.
     if ((out == null || out === 0) && (inn == null || inn === 0)) {
       skipped.push({ reason: '금액을 읽을 수 없음', raw });
       continue;
     }
 
-    const desc = String((r && r.description) || '').trim();
+    // 내용 칸이 늘 적요인 것은 아니다. 신한은행 통장은 여기에 **채널**
+    // (`신한체`·`현금IC`·`유동CC`)만 찍고 상호는 금액 칸에 넣는다.
+    // 그래서 보이는 내용은 상호를 쓰고, 채널은 원문에 남긴다 —
+    // 결제수단 판정(domain/payment-method.js)이 그 원문에서 「신한체」를 읽어
+    // 「카드」를 붙인다. 둘을 합쳐 버리면 상호가 채널에 묻힌다.
+    const channel = String(r.description || '').trim();
+    const desc = merchant || channel;
     rows.push({
       date,
       desc,
-      descRaw: desc,
+      descRaw: [channel, merchant].filter(Boolean).join(' ').trim() || desc,
       in: inn == null ? 0 : inn,
       out: out == null ? 0 : out,
     });
   }
 
   return { rows, skipped };
+}
+
+/**
+ * 한 줄의 출금·입금 칸에서 **금액과 적요를 가른다.**
+ *
+ * 은행 줄은 출금과 입금이 동시에 차지 않는다. 그런데 통장은 빈 금액 칸에
+ * 상호를 찍기도 해서(`신한체 | 165,600 | 풀무원식품`), 양쪽에서 숫자가
+ * 읽히는 일이 생긴다 — `081.(사)한국자` 같은 적요는 앞이 숫자다.
+ * 그때 어느 쪽이 진짜 금액인지 가른다.
+ *
+ *   ① 잔액이 말해 준다 — 앞 줄과의 차이가 음수면 출금, 양수면 입금.
+ *   ② 잔액을 모르면 **숫자만 있던 칸**을 택한다. 글자가 붙은 칸은 적요일
+ *      가능성이 그만큼 높다.
+ *   ③ 가를 근거가 없으면 둘 다 둔다 — 지어내지 않는다. 미리보기에서 사람이 본다.
+ *
+ * 잔액 차이로 금액을 **덮어쓰지는 않는다.** 잔액도 모델이 읽은 숫자라
+ * 똑같이 틀릴 수 있고, 맞는 금액을 틀린 잔액으로 고치면 되돌릴 근거가 없다.
+ * 여기서 잔액이 하는 일은 **가르는 것**과 **빈 칸을 채우는 것**까지다.
+ */
+function readMoneyCells(r, delta) {
+  const w = splitMoneyCell(r.withdraw);
+  const d = splitMoneyCell(r.deposit);
+
+  let useOut = w.amount != null;
+  let useIn = d.amount != null;
+  if (useOut && useIn) {
+    if (delta != null && delta !== 0) { useOut = delta < 0; useIn = !useOut; }
+    else if (w.pure !== d.pure) { useOut = w.pure; useIn = !useOut; }
+  }
+
+  // 금액으로 쓰지 않은 칸은 **통째로** 적요다(`081.(사)한국자` 의 `081.` 도
+  // 이름의 일부다). 금액으로 쓴 칸은 숫자 뒤에 붙은 글자만 적요다.
+  const merchant = [
+    useOut ? w.text : w.raw,
+    useIn ? d.text : d.raw,
+  ].map(t => String(t || '').trim()).filter(Boolean).join(' ').trim();
+
+  return {
+    out: useOut ? w.amount : null,
+    inn: useIn ? d.amount : null,
+    merchant,
+  };
 }
 
 /** 가장 많이 나온 연도. 연도가 적힌 줄이 하나도 없으면 null. */

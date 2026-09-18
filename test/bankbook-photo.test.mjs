@@ -17,7 +17,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { bankbookRowsToParsed, explicitYearOf, normalizeReceiptDate } from '../public/domain/receipt.js';
+import {
+  bankbookRowsToParsed, explicitYearOf, normalizeReceiptDate, splitMoneyCell,
+} from '../public/domain/receipt.js';
+import { detectPaymentMethod } from '../public/domain/payment-method.js';
 
 const SRC = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 
@@ -156,6 +159,96 @@ test('엑셀 쪽도 6자리를 읽고, 틀린 연도를 만들지 않는다', as
   assert.equal(fixDate('260803'), '2026-08-03');
   assert.equal(fixDate('202609'), null);
   assert.equal(fixDate('143022'), null);
+});
+
+// ── ⑷ 금액 칸에 상호가 같이 인쇄되는 통장 ──────────────────────────
+//
+// 신한은행 통장은 내용 칸에 **채널**(`신한체`·`현금IC`·`유동CC`)만 찍고 상호는
+// 금액 칸에 넣는다. 때로는 **반대쪽** 금액 칸에 넣는다.
+//
+//   거래일 | 내용   | 찾으신금액          | 맡기신금액 | 잔액
+//   260201 | 신한체 | 2,400 GS25 뉴은평신 |           | 25,069
+//   260820 | 신한체 | 165,600             | 풀무원식품 | 5,663,741
+//   260102 | 유동CC | 김어진              | *400,000  | 434,329
+//
+// 예전에는 두 가지가 깨졌다.
+//   ⑴ `normalizeAmount` 가 글자를 지우고 남은 숫자를 이어 붙여
+//      `2,400 GS25 뉴은평신` 이 **240,025원**이 됐다 — 상호에 숫자가 든
+//      가맹점(GS25·이마트24)마다 금액이 조용히 백 배가 된다.
+//   ⑵ 상호가 통째로 버려지고 내용에 `신한체` 만 남았다 — 자동분류도 보고서도
+//      쓸 수 없는 값이다.
+
+test('금액은 칸의 맨 앞 숫자까지다 — 뒤에 붙은 상호를 삼키지 않는다', () => {
+  assert.deepEqual(splitMoneyCell('2,400 GS25 뉴은평신'),
+    { amount: 2400, text: 'GS25 뉴은평신', raw: '2,400 GS25 뉴은평신', pure: false });
+  assert.deepEqual(splitMoneyCell('*400,000'),
+    { amount: 400000, text: '', raw: '*400,000', pure: true });
+  // 숫자로 시작하지 않으면 금액이 아니라 적요다.
+  assert.equal(splitMoneyCell('김어진').amount, null);
+  assert.equal(splitMoneyCell('현금IC캐시백').amount, null);
+  assert.equal(splitMoneyCell('').amount, null);
+});
+
+test('상호는 금액 칸에서 꺼내 내용으로, 채널은 원문에 남긴다', () => {
+  const out = bankbookRowsToParsed({
+    rows: [
+      { dateRaw: '', description: '110-548-119906(00-04)김어진', withdraw: '', deposit: '', balance: '*38,319' },
+      { dateRaw: '251231', description: '신한체', withdraw: '*3,990 이랜드리테일', deposit: '', balance: '*34,329' },
+      { dateRaw: '260102', description: '유동CC', withdraw: '김어진', deposit: '*400,000', balance: '*434,329' },
+      { dateRaw: '260201', description: '신한체', withdraw: '2,400 GS25 뉴은평신', deposit: '', balance: '25,069' },
+      { dateRaw: '260820', description: '신한체', withdraw: '165,600', deposit: '풀무원식품', balance: '5,663,741' },
+    ],
+  }, { today: new Date(2026, 8, 18) });
+
+  assert.deepEqual(out.rows.map(r => [r.desc, r.in, r.out]), [
+    ['이랜드리테일', 0, 3990],
+    ['김어진', 400000, 0],
+    ['GS25 뉴은평신', 0, 2400],   // 240,025 가 아니다
+    ['풀무원식품', 0, 165600],    // 상호가 반대쪽 칸에 있다
+  ]);
+  // 채널은 원문에 남아 결제수단이 된다 — 내용에 섞으면 상호가 묻힌다.
+  assert.equal(out.rows[0].descRaw, '신한체 이랜드리테일');
+  assert.equal(detectPaymentMethod(out.rows[0].descRaw), '카드');
+});
+
+test('양쪽에서 숫자가 읽히면 잔액 차이가 가른다', () => {
+  // `081.(사)한국자` 는 적요인데 앞이 숫자다. 예전에는 81원 입금이 함께 생겼다.
+  const out = bankbookRowsToParsed({
+    rows: [
+      { dateRaw: '260825', description: '창구CC', withdraw: '은평구 돌봄복', deposit: '50,000', balance: '5,764,701' },
+      { dateRaw: '260826', description: '타행CC', withdraw: '400,000', deposit: '081.(사)한국자', balance: '5,364,701' },
+    ],
+  }, { today: new Date(2026, 8, 18) });
+
+  assert.deepEqual(out.rows.map(r => [r.desc, r.in, r.out]), [
+    ['은평구 돌봄복', 50000, 0],
+    ['081.(사)한국자', 0, 400000],   // 금액으로 쓰지 않은 칸은 통째로 적요다
+  ]);
+});
+
+test('잔액을 모르면 숫자만 있던 칸을 택한다', () => {
+  const out = bankbookRowsToParsed({
+    rows: [{ dateRaw: '260826', description: '타행CC', withdraw: '400,000', deposit: '081.(사)한국자' }],
+  }, { today: new Date(2026, 8, 18) });
+  assert.deepEqual(out.rows.map(r => [r.desc, r.in, r.out]), [['081.(사)한국자', 0, 400000]]);
+});
+
+test('가를 근거가 없으면 지어내지 않는다 — 둘 다 둔다', () => {
+  // 둘 다 숫자만 있고 잔액도 없다. 미리보기에서 사람이 본다.
+  const out = bankbookRowsToParsed({
+    rows: [{ dateRaw: '260826', description: 'x', withdraw: '1,000', deposit: '2,000' }],
+  }, { today: new Date(2026, 8, 18) });
+  assert.deepEqual(out.rows.map(r => [r.in, r.out]), [[2000, 1000]]);
+});
+
+test('금액 칸이 깨끗한 통장은 예전 그대로다', () => {
+  // 내용 칸에 진짜 적요가 있는 은행에서 회귀가 없어야 한다.
+  const out = bankbookRowsToParsed({
+    rows: [{ dateRaw: '240119', description: '메가엠지씨커피', withdraw: '*5,000', deposit: '', balance: '1,578,748' }],
+  }, { today: new Date(2026, 8, 18) });
+  assert.deepEqual(out.rows, [{
+    date: '2024-01-19', desc: '메가엠지씨커피', descRaw: '메가엠지씨커피', in: 0, out: 5000,
+  }]);
 });
 
 // ── 사진 경로는 파서 설정을 쓰지 않는다 ─────────────────────────────
