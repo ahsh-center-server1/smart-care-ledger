@@ -345,15 +345,16 @@ export function renderRptTrxTable(trxList){
   // 아이콘은 두 가지가 나빴다. 눈이 고친 값(분류·내용)에서 줄 끝까지 갔다가
   // 돌아와야 했고, 인쇄 영역 안에 화면 전용 버튼이 한 칸을 차지했다.
   // 고치고 싶은 것이 곧 누를 것이면 설명할 것이 없다.
-  // 분류와 내용은 **고치는 방법이 다르다.**
-  //   분류 — 거기서 바로 고르는 것이 전부다. 폼을 띄우면 날짜·금액·계좌까지
+  // **줄 전체가 누를 곳이다** — 분류 칸 하나만 빼고.
+  //   줄 = 그 거래를 연다. 날짜가 틀렸으면 날짜를, 금액이 틀렸으면 금액을
+  //        누르는 것이 자연스럽다. 「내용을 눌러야 열린다」는 규칙은 눌러 보기
+  //        전에는 알 수 없고, 알고 나서도 매번 내용 칸까지 마우스를 옮겨야 한다.
+  //   분류 = 거기서 바로 고르는 것이 전부다. 폼을 띄우면 날짜·금액·계좌까지
   //          눈앞에 놓고 정작 할 일은 한 칸 고르기다.
-  //   내용 — 글자를 고쳐 쓰는 일이고, 대개 금액·날짜도 함께 본다. 폼을 연다.
-  const descAttr=canEditHere?' class="rpt-cell-edit" title="클릭해서 이 거래를 수정"':'';
   const catAttr=canEditHere?' class="rpt-cell-cat" title="클릭해서 분류 바꾸기"':'';
   // 눌러도 되는 줄이라는 것은 hover 로만 말한다(인쇄물에는 흔적이 남지 않는다).
   // 그래서 표 머리에 한 줄로 알려 준다 — 그것도 인쇄에서는 빠진다.
-  if(hintEl&&canEditHere)hintEl.textContent='분류를 누르면 분류만, 내용을 누르면 거래 전체를 고칩니다';
+  if(hintEl&&canEditHere)hintEl.textContent='줄을 누르면 그 거래를 고칩니다 · 분류는 눌러서 바로 바꿉니다';
   const byAccount=new Map();
   (S.reportData?.accs||[]).forEach(a=>byAccount.set(a.id,{account:a,items:[]}));  
   trxList.forEach(t=>{
@@ -375,7 +376,11 @@ export function renderRptTrxTable(trxList){
     // 전용 권한(trx.reorder)이 없는 검토 역할에게는 애초에 잡히지 않는다.
     const locked=confirmedLocked||!!editBlocked||!can('trx.reorder');
     tr.draggable=!locked;
-    tr.style.cssText=`border-bottom:1px solid #f3f4f6;cursor:${locked?'default':'grab'};`;
+    // 누를 수 있으면 손가락, 끌 수 있으면 손바닥. 둘 다면 누르는 쪽을 보여 준다 —
+    // 끌기는 잡고 움직여 봐야 알고, 누르기는 한 번에 끝난다.
+    if(canEditHere)tr.className='rpt-row-edit';
+    tr.style.cssText=`border-bottom:1px solid #f3f4f6;cursor:${canEditHere?'pointer':(locked?'default':'grab')};`;
+    if(canEditHere)tr.title='클릭해서 이 거래를 수정';
     let typeTag='';
     if(t.type==='자산이동'){
       const srcId=Number(t.amountOut||0)>0?t.accountId:t.linkedAccountId;
@@ -391,7 +396,7 @@ export function renderRptTrxTable(trxList){
     tr.innerHTML=`<td style="padding:7px 4px;font-family:monospace;font-size:13px;color:#6b7280;white-space:nowrap;">${escHtml(t.date||'')}</td>`
       +`<td${catAttr} style="padding:4px 4px;overflow:visible;white-space:nowrap;position:relative;"><span style="display:inline-block;background:${catClr.bg};color:${catClr.text};border:1px solid ${catClr.border};border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.category||'')}</span>`
         +(canEditHere?`<div class="cat-dd no-print" id="rdd-${escAttr(t.id)}"></div>`:'')+`</td>`
-      +`<td${descAttr} style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.description||'')}${typeTag}</td>`
+      +`<td style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.description||'')}${typeTag}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#15803d;white-space:nowrap;">${Number(t.amountIn||0)>0?Number(t.amountIn).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#b91c1c;white-space:nowrap;">${Number(t.amountOut||0)>0?Number(t.amountOut).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:center;${t.type==='지출'&&!hasReceipt(t)&&t.receiptMissing?'background:#fee2e2;':''}">${
@@ -405,9 +410,11 @@ export function renderRptTrxTable(trxList){
       tr.addEventListener('dragleave',()=>tr.style.background='');
       tr.addEventListener('drop',e=>{e.preventDefault();tr.style.background='';const fid=e.dataTransfer.getData('text/plain');if(fid!==t.id)reorderRptTrx(fid,t.id);});
     }
-    tr.querySelectorAll('.rpt-cell-edit').forEach(td=>td.addEventListener('click',()=>openTrxFromReport(t)));
-    // 분류는 그 자리에서 고른다. stopPropagation 이 없으면 같은 클릭이 문서까지
-    // 올라가 방금 연 드롭다운을 곧바로 닫는다(app.js 의 바깥 클릭 닫기).
+    // 줄 어디를 눌러도 그 거래가 열린다. 예외는 자기 할 일이 따로 있는 두 곳
+    // (분류 칸·증빙 버튼)이고, 그쪽은 stopPropagation 으로 이 핸들러를 막는다.
+    if(canEditHere)tr.addEventListener('click',()=>openTrxFromReport(t));
+    // 분류는 그 자리에서 고른다. stopPropagation 이 없으면 같은 클릭이 줄 핸들러로
+    // (그리고 문서까지) 올라가 폼이 열리고 방금 연 드롭다운이 곧바로 닫힌다.
     tr.querySelector('.rpt-cell-cat')?.addEventListener('click',e=>{
       e.stopPropagation();
       const blocked=trxEditBlockReason(t.clientId,t.date);
@@ -422,7 +429,8 @@ export function renderRptTrxTable(trxList){
       });
     });
     const rvBtn=tr.querySelector('.rpt-rv');
-    if(rvBtn)rvBtn.addEventListener('click',async()=>{
+    if(rvBtn)rvBtn.addEventListener('click',async(e)=>{
+      e.stopPropagation();   // 증빙을 보려던 것이지 거래를 고치려던 것이 아니다
       try{const a=await receiptAccess(t);openReceiptModal(a.url,t.id,{contentType:a.contentType});}
       catch(e){toast('증빙을 열지 못했습니다: '+(e.message||e),'error');}
     });
