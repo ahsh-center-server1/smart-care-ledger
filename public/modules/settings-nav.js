@@ -44,6 +44,11 @@ export const SETTINGS_TABS = [
     desc: '직원 계정, 입주자, 계좌를 등록하고 관리합니다.',
   },
   {
+    key: 'team', label: '팀', icon: 'people',
+    perm: 'assignments.manage',
+    desc: '팀을 만들고 팀장을 지정합니다. 입주자에 팀을 정하면 담당 후보가 그 팀으로 좁혀집니다.',
+  },
+  {
     key: 'category', label: '카테고리·자동분류', icon: 'copy',
     desc: '지출·수입 분류와 엑셀 업로드 시 자동분류 규칙을 관리합니다.',
   },
@@ -79,7 +84,7 @@ export const SETTINGS_TABS = [
  */
 export const SETTINGS_GROUPS = [
   { label: '현황',   items: ['overview'] },
-  { label: '운영',   items: ['list', 'category'] },
+  { label: '운영',   items: ['list', 'team', 'category'] },
   { label: '정산',   items: ['fixed', 'budget'] },
   { label: '시스템', items: ['audit', 'archive', 'permissions'] },
 ];

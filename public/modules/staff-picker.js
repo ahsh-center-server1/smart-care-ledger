@@ -1,6 +1,6 @@
 // public/modules/staff-picker.js
 //
-// 「담당 직원」 고르기 — 검색 · 팀별 묶음 · 고른 사람 맨 위.
+// 「담당 직원」 고르기 — 검색 · 팀별 묶음 · 고른 사람 맨 위, 그리고 팀 제약.
 //
 // 예전에는 높이 140px 상자 안의 2열 체크박스였다. 직원이 서른 명이면 일곱 명쯤
 // 보이고 나머지는 스크롤인데 **검색이 없었고**, 누구를 골랐는지 보려면 끝까지
@@ -16,6 +16,7 @@
 import { S } from '../state.js';
 import { escHtml } from '../utils/ui.js';
 import { pickerModel, selectionSummary } from '../domain/staff-picker.js';
+import { activeTeams, teamByName } from '../domain/teams.js';
 
 const LIST_ID = 'fc-staff-list';
 
@@ -108,16 +109,30 @@ function refreshSummary() {
   });
 }
 
-function applySearch(query) {
+/**
+ * 지금 걸린 두 가지 좁힘 — 검색어와 팀.
+ *
+ * 한 곳에서 함께 판정한다. 예전에 따로 두었더니 나중에 부른 쪽이 앞의 결과를
+ * 지워서, 팀을 고른 뒤 검색하면 팀 제약이 풀렸다.
+ */
+let currentQuery = '';
+let currentTeam = '';
+
+function refreshVisibility() {
   const list = document.getElementById(LIST_ID);
   if (!list) return;
-  const model = pickerModel(S.users, checkedStaffIds(), query);
-  const visible = new Set(model.groups.flatMap(g => g.matched));
+  const model = pickerModel(S.users, checkedStaffIds(), currentQuery);
+  const matched = new Set(model.groups.flatMap(g => g.matched));
+  const teamOf = new Map((S.users || []).map(u => [String(u.userId), String(u.team || '').trim()]));
   let shown = 0;
+
   list.querySelectorAll('[data-staff-row]').forEach((row) => {
-    // 고른 사람은 검색과 무관하게 남긴다 — 검색어를 지우기 전에는 무엇을
-    // 골랐는지 볼 수 없다면 검색이 오히려 헷갈리게 만든다.
-    const keep = visible.has(row.dataset.staffRow) || row.querySelector('input')?.checked;
+    const uid = row.dataset.staffRow;
+    // 고른 사람은 검색·팀과 무관하게 남긴다. 체크된 줄이 사라지면 저장할 때
+    // 그 배정이 조용히 지워지고(저장은 "체크된 것 전부"를 보낸다), 무엇을
+    // 골랐는지도 볼 수 없다.
+    const picked = row.querySelector('input')?.checked;
+    const keep = picked || (matched.has(uid) && (!currentTeam || teamOf.get(uid) === currentTeam));
     row.style.display = keep ? '' : 'none';
     if (keep) shown += 1;
   });
@@ -133,9 +148,13 @@ function applySearch(query) {
 export function bindStaffPicker() {
   const list = document.getElementById(LIST_ID);
   if (!list) return;
+  // 폼을 새로 열 때마다 좁힘을 푼다 — 모듈 수준 값이라 앞 사람의 검색어가 남는다.
+  currentQuery = '';
+  currentTeam = '';
 
   document.getElementById('fc-staff-search')?.addEventListener('input', (e) => {
-    applySearch(e.target.value);
+    currentQuery = e.target.value;
+    refreshVisibility();
   });
 
   list.addEventListener('change', (e) => {
@@ -158,4 +177,67 @@ export function bindStaffPicker() {
   });
 
   refreshSummary();
+}
+
+// ─────────────────────────────────────────────────────────────
+// 팀 — 고르는 범위를 좁힌다 (권한이 아니다: domain/teams.js 머리말)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 팀 선택 상자.
+ *
+ * 목록에 없는 값(자유 입력 시절의 오타·지워진 팀)도 **선택지로 남긴다.** 빼면
+ * select 가 첫 항목으로 떨어져, 이름만 고치고 저장하는 순간 그 사람의 팀이
+ * 조용히 바뀐다 — 구형 거래 유형을 다루는 방식과 같은 이유다(CLAUDE.md §6).
+ */
+export function teamSelectHtml(id, selected, label = '팀') {
+  const cur = String(selected || '').trim();
+  const teams = activeTeams(S.teams);
+  const known = teams.some(t => t.name === cur);
+  const opts = ['<option value="">— 미지정 —</option>']
+    .concat(teams.map(t => `<option value="${escHtml(t.name)}"${t.name === cur ? ' selected' : ''}>`
+      + `${escHtml(t.name)}</option>`))
+    .concat(cur && !known
+      ? [`<option value="${escHtml(cur)}" selected>${escHtml(cur)} (목록에 없음)</option>`] : [])
+    .join('');
+  return `<div><label class="label">${escHtml(label)}</label>`
+    + `<select id="${id}" class="input" style="padding:8px 12px;">${opts}</select></div>`;
+}
+
+/**
+ * 입주자 폼의 팀 칸을 담당 선택과 잇는다.
+ *
+ * 팀을 고르면 (1) 담당 팀장이 그 팀의 팀장으로 채워지고 (2) 담당 직원 후보가
+ * 그 팀으로 좁혀진다. 좁히는 방식은 검색과 같다 — **이미 고른 사람은 남긴다.**
+ * 안 그러면 팀을 바꾸는 순간 체크된 줄이 사라지고, 저장하면서 그 배정이 조용히
+ * 지워진다(서버도 팀이 다른 배정을 거절하므로 저장 자체가 실패한다).
+ */
+export function bindClientTeamField() {
+  const sel = document.getElementById('fc-team');
+  if (!sel) return;
+  const apply = () => {
+    applyTeamFilter(sel.value);
+    const team = teamByName(S.teams, sel.value);
+    const leader = document.getElementById('fc-leader');
+    // 팀장이 지정된 팀이면 담당 팀장을 채운다. 비어 있을 때만 — 이미 다른
+    // 사람을 골라 둔 것을 팀 선택이 덮어쓰면 그것도 조용한 변경이다.
+    //
+    // 담당 팀장 목록의 value 는 users **문서 id** 이고 팀 목록은 userId 를 들고
+    // 있다. 이 앱에서는 둘이 같지만(문서 id = 로그인 아이디), 같다고 **가정하지
+    // 않는다** — 어긋나면 select 가 조용히 빈칸으로 남아 팀장이 안 정해진다.
+    if (team && team.leaderUid && leader && !leader.value) {
+      const u = (S.users || []).find(x => String(x.userId) === team.leaderUid
+        || String(x.id) === team.leaderUid);
+      const value = u ? String(u.id || u.userId) : team.leaderUid;
+      if ([...leader.options].some(o => o.value === value)) leader.value = value;
+    }
+  };
+  sel.addEventListener('change', apply);
+  applyTeamFilter(sel.value);
+}
+
+/** 그 팀 사람만 보이게. 검색과 **같은 판정**을 거친다. */
+export function applyTeamFilter(team) {
+  currentTeam = String(team || '').trim();
+  refreshVisibility();
 }

@@ -25,6 +25,8 @@
  *   클라이언트는 규칙상 config를 쓸 수 없어 위조가 불가능하다.
  */
 export const LOCKED_MONTHS_DOC = 'lockedMonths';
+/** 팀 목록 문서(config/teams). 팀은 많아야 열 몇 개라 컬렉션으로 두지 않는다. */
+export const TEAMS_DOC = 'teams';
 
 /**
  * 마감 색인의 키. 서버(functions/locked-months.cjs)와 **같은 형식**이어야 한다.

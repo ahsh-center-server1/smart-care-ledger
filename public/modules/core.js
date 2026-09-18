@@ -10,7 +10,8 @@
 'use strict';
 
 import { S } from '../state.js';
-import { COLS, LOCKED_MONTHS_DOC, lockKey } from '../constants.js';
+import { COLS, LOCKED_MONTHS_DOC, TEAMS_DOC, lockKey } from '../constants.js';
+import { normalizeTeams } from '../domain/teams.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
@@ -76,6 +77,11 @@ export async function fetchBaseData(opts) {
   // 읽는다. 전 역할이 조회할 수 있고, 쿼리가 아니라 문서 1건이라 읽기도 준다.
   // 갱신은 Cloud Functions의 syncLockedMonths 트리거만 한다.
   if (need('reports'))    tasks.push(['lockedMonths', getDoc(doc(db,COLS.CONFIG,LOCKED_MONTHS_DOC))]);
+  // 팀 목록 — 고를 일이 있는 사람만 읽는다. 담당자·입력자는 팀을 고르는 화면이
+  // 없으므로 한 건도 쓰지 않는다(월초 열흘이 한도를 정한다 — CLAUDE.md §12-1).
+  if (need('users') && (can('assignments.manage') || can('settings.staff'))) {
+    tasks.push(['teams', getDoc(doc(db,COLS.CONFIG,TEAMS_DOC))]);
+  }
 
   const results = await Promise.all(tasks.map(t=>t[1]));
   const snapMap = {};
@@ -106,6 +112,10 @@ export async function fetchBaseData(opts) {
     const clientScope = myScope();
     S.clients = activeClients.filter(c => clientScope.all || clientScope.ids.includes(c.id));
     S.accounts = activeAccounts.filter(a=>S.clients.some(c=>c.id===a.clientId));
+  }
+
+  if (snapMap.teams) {
+    S.teams = normalizeTeams(snapMap.teams.exists() ? snapMap.teams.data() : null);
   }
 
   if (snapMap.lockedMonths) {

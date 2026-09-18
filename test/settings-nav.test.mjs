@@ -16,7 +16,8 @@ import {
   visibleSettingsTabs, initialSettingsTab,
 } from '../public/modules/settings-nav.js';
 import { S } from '../public/state.js';
-import { DEFAULT_MIN_RANK, PERM_SECTIONS } from '../public/modules/permissions.js';
+import { PERM_SECTIONS } from '../public/modules/permissions.js';
+import { FIXED_POLICY_KEYS, FIXED_ROLES, fixedCan } from '../public/domain/fixed-role-policy.js';
 
 const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 
@@ -37,16 +38,33 @@ test('패널 div가 있는데 탭 정의가 없는 것은 없다 — 아무도 �
   assert.deepEqual(orphan, [], '열 수 있는 경로가 없는 패널:\n  ' + orphan.join('\n  '));
 });
 
-test('탭이 요구하는 권한 키는 모두 등급표에 있다', () => {
-  // 등급표에 없는 키는 requiredRank가 null을 돌려주고 can()이 항상 false가 된다.
-  // 그러면 그 탭은 관리자에게도 보이지 않는다 — 눈에 띄지 않는 고장이다.
+test('탭이 요구하는 권한 키는 고정 정책이 아는 키다', () => {
+  // 정책에 없는 키는 fixedCan 이 언제나 false 를 준다. 그러면 그 탭은 센터장에게도
+  // 보이지 않는다 — 눈에 띄지 않는 고장이다.
+  //
+  // 예전에는 **등급표(perm-catalog)** 를 기준으로 봤다. 그런데 권한의 출처는
+  // 고정 정책 하나이고(CLAUDE.md §4), 등급표는 표시·검증용 자료다. 실제로
+  // 정책에는 있고 등급표에는 없는 키가 있어서(assignments.manage), 그 키를
+  // 쓰는 탭은 멀쩡히 보이는데 이 검사만 실패했다. 기준을 정책으로 옮긴다.
+  const known = new Set(FIXED_POLICY_KEYS);
   const missing = SETTINGS_TABS
-    .filter(t => t.perm && !(t.perm in DEFAULT_MIN_RANK))
+    .filter(t => t.perm && !known.has(t.perm))
     .map(t => `${t.key} → ${t.perm}`);
   assert.deepEqual(
     missing, [],
-    '등급표에 없는 권한 키를 요구하는 탭 (아무에게도 안 보입니다):\n  ' + missing.join('\n  '),
+    '고정 정책에 없는 권한 키를 요구하는 탭 (아무에게도 안 보입니다):\n  ' + missing.join('\n  '),
   );
+});
+
+test('탭 권한 키가 실제로 누군가에게 열려 있다', () => {
+  // 위 검사는 "키가 있는가"만 본다. 정책이 그 키를 아무 역할에도 주지 않으면
+  // (FORBIDDEN_KEYS 처럼) 탭은 여전히 아무에게도 안 보인다.
+  const roles = [...FIXED_ROLES, ''].map(role => ({ role, enabled: true, isAdmin: role === '' }));
+  const dead = SETTINGS_TABS
+    .filter(t => t.perm && !roles.some(id => fixedCan(id, t.perm)))
+    .map(t => `${t.key} → ${t.perm}`);
+  assert.deepEqual(dead, [],
+    '아무 역할도 가질 수 없는 권한을 요구하는 탭:\n  ' + dead.join('\n  '));
 });
 
 test('탭이 쓰는 권한 키는 권한 설정 화면에도 노출된다', () => {

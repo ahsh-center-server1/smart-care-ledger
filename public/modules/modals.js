@@ -26,7 +26,7 @@ import * as ExcelParser from '../services/excel-parser.js';
 import { dupKey, fetchExistingForDup, isImageFile, renderXlSkipped } from './excel-support.js'; export { isImageFile };
 import { iconSvg } from '../utils/icons.js';   // 버튼 아이콘 한 벌 (utils/icons.js 머리말)
 import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
-import { staffPickerHtml, bindStaffPicker } from './staff-picker.js';
+import { staffPickerHtml, bindStaffPicker, teamSelectHtml, bindClientTeamField } from './staff-picker.js';
 import { bankbookRowsToParsed } from '../domain/receipt.js';
 import { orderedCategories } from '../domain/category-order.js';
 import { dayOrderAllocator } from '../domain/trx-order.js';
@@ -1118,11 +1118,11 @@ export function renderClientForm(c){
     <input type="hidden" id="fc-id" value="${isEdit?c.id:'cli_'+Date.now()}">
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div><label class="label">성명</label><input type="text" id="fc-name" class="input" value="${isEdit?c.name:''}" ${canEditDetails?'':'disabled'}></div>
-      ${canAssign?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div>${staffPickerHtml(isEdit?c.userIds:'')}`:''}
+      ${canAssign?`${teamSelectHtml('fc-team',isEdit?c.team:'')}<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div>${staffPickerHtml(isEdit?c.userIds:'')}`:''}
       <div><label class="label">메모</label><textarea id="fc-memo" class="input" style="height:64px;resize:none;" ${canEditDetails?'':'disabled'}>${isEdit?c.memo||'':''}</textarea></div>
       <button id="fc-save" class="btn" style="width:100%;padding:11px;">${iconSvg('check')}저장 완료</button>
     </div>`;
-  bindStaffPicker();   // 검색·팀 묶음 — 저장은 그대로 input[name="fc-staff"]:checked 를 읽는다
+  bindStaffPicker(); bindClientTeamField();   // 검색·팀 좁힘. 저장은 그대로 input[name="fc-staff"]:checked 를 읽는다
   document.getElementById('fc-save').addEventListener('click',async()=>{
     const isAdm=can('assignments.manage');
     // 담당 직원·팀장은 관리 권한자만 편집한다(체크박스가 그들에게만 보인다).
@@ -1131,7 +1131,7 @@ export function renderClientForm(c){
     // 담당 필드를 바꾸지 않는다(근거는 functions/client-fns.js 머리말에).
     const leaderId=isAdm?document.getElementById('fc-leader')?.value||'':'';
     const id=document.getElementById('fc-id').value;
-    const data={id,name:document.getElementById('fc-name').value,contact:isEdit?c.contact||'':'',memo:document.getElementById('fc-memo').value};
+    const data={id,name:document.getElementById('fc-name').value,contact:isEdit?c.contact||'':'',memo:document.getElementById('fc-memo').value,team:document.getElementById('fc-team')?.value};
     if(isAdm){
       data.userIds=Array.from(document.querySelectorAll('input[name="fc-staff"]:checked')).map(x=>x.value).join(',');
     } else if(!isEdit){
@@ -1140,7 +1140,7 @@ export function renderClientForm(c){
     if(isAdm)data.teamLeader=leaderId;
 
     const p={clientId:id};
-    if(canEditDetails)p.fields={name:data.name,contact:data.contact,memo:data.memo};
+    if(canEditDetails)p.fields={name:data.name,contact:data.contact,memo:data.memo,...(data.team===undefined?{}:{team:data.team})};
     if(data.userIds!==undefined)p.staffUids=String(data.userIds).split(',');
     if(data.teamLeader!==undefined)p.leaderUid=data.teamLeader;
     // 거부를 삼키지 않는다. saveClient 는 신규 등록·담당 범위·마지막 관리자 같은
@@ -1227,7 +1227,7 @@ export function renderStaffForm(u){
       <div><label class="label">아이디</label><input type="text" id="fs-uid" class="input" value="${isEdit?u.userId||'':''}" ${isEdit?'readonly':''}></div>
       ${isEdit?'<div style="font-size:12px;color:var(--muted);">비밀번호는 직원 정보와 분리되어 있으며 이 화면에서 변경할 수 없습니다.</div>':'<div><label class="label">비밀번호</label><input type="password" id="fs-pw" class="input"></div>'}
       <div><label class="label">역할</label><select id="fs-role" class="input" style="padding:8px 12px;"><option value="입력자"${isEdit&&u.role==='입력자'?' selected':''}>입력자 (수기입력 전용)</option><option value="담당자"${isEdit&&u.role==='담당자'?' selected':''}>담당자</option><option value="팀장"${isEdit&&u.role==='팀장'?' selected':''}>팀장</option><option value="센터장"${isEdit&&u.role==='센터장'?' selected':''}>센터장</option></select></div>
-      <div><label class="label">팀</label><input type="text" id="fs-team" class="input" value="${escAttr(isEdit?u.team||'':'')}"></div>
+      ${teamSelectHtml('fs-team',isEdit?u.team:'')}
       <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;padding:8px 0;">
         <input type="checkbox" id="fs-admin" ${isEdit&&u.isAdmin===true?'checked':''} style="accent-color:var(--blue);width:18px;height:18px;">
         관리자 권한 (권한 설정·전체 초기화)

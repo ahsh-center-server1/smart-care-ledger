@@ -39,8 +39,8 @@
 ## 3. Firestore 컬렉션 구조
 
 ```
-users:        { userId, password, name, role, team }
-clients:      { clientId, name, userIds, teamLeader, contact, memo }
+users:        { userId, password, name, role, team }   // team: config/teams 의 이름
+clients:      { clientId, name, userIds, teamLeader, team, contact, memo }
 accounts:     { accountId, clientId, label, accountNumber,
                 initialBalance, initialBalanceDate, currentBalance,
                 monthEndBalances: { 'YYYY-MM': 말잔 },   // 서버 전용 (§14)
@@ -59,6 +59,7 @@ reports:      { reportId, clientId, year, month, status, summary,
                 staffComment, leaderComment, centerComment }
 config:       { type='archive', year, archivedAt, count }
               // 'permissions' 문서: 역할별 권한 오버라이드 저장
+              // 'teams' 문서: { teams:[{id,name,leaderUid,active}] } — §4-1
 fixedItems:   { clientId, accountId, type, day, category,
                 description, amount }
 budgets:      { clientId, year, categoryBudgets{...} }  // 연간 예산
@@ -112,6 +113,32 @@ archive_YYYY: 마감된 거래 데이터 백업
 >
 > `public/domain/perm-catalog.js` 는 **권한의 근거가 아니다.** 집행 지점
 > 메타데이터와 키 누락 감지에만 쓰이는 표시·검증용 자료다.
+
+### 팀 — 고르는 범위이지 권한이 아니다
+
+`users.team` 이 자유 입력 텍스트였다. 「1팀」·「1 팀」·「일팀」이 서로 다른 팀이
+되고 목록도 검증도 없었다. 이제 팀은 **`config/teams` 문서 하나**에 모여 있다
+(`{ teams:[{id,name,leaderUid,active}] }`).
+
+| 어디서 | 무엇이 달라지나 |
+|---|---|
+| 직원 폼 | 팀을 **목록에서 고른다**(자유 입력 아님). 목록이 비어 있으면 예전처럼 받는다 |
+| 입주자 폼 | 팀을 정하면 담당 팀장이 그 팀 팀장으로 채워지고, 담당 직원 후보가 그 팀으로 좁혀진다 |
+| `saveClient` | 팀이 정해진 입주자에 **그 팀이 아닌 담당**이 들어오면 거절한다 |
+| 설정 → 팀 | 팀·팀장 관리(`assignments.manage`). 「직원 정보에서 가져오기」가 마이그레이션이다 |
+
+> ⚠️ **팀은 권한의 축이 아니다.** 누가 무엇을 보는지는 여전히 `clients.userIds` ·
+> `clients.teamLeader` 의 투영본(`authz`)이 정한다. 팀을 권한 축으로 올리면
+> authz · `firestore.rules` · `storage.rules` · 계약 게이트를 전부 다시 맞춰야
+> 하고, 투영본이 어긋나는 순간 결재가 조용히 막힌다 — 그 고장을 이미 겪었다.
+> `test/teams.test.mjs` 의 「규칙과 투영본은 팀을 모른다」가 이 선을 지킨다.
+>
+> 판정은 `public/domain/teams.js` 와 서버 사본 `functions/teams.cjs` 두 벌이고,
+> 같은 표로 대조한다. 화면만 막으면 콜러블을 직접 부르는 경로가 남고, 서버만
+> 막으면 사용자는 저장을 누른 뒤에야 안다.
+>
+> 팀 목록은 **고를 일이 있는 사람만 읽는다**(`assignments.manage` 또는
+> `settings.staff`). 담당자·입력자는 한 건도 쓰지 않는다 — §12-1.
 
 ### 아무도 가질 수 없는 권한 — 두 부류이고 구분이 중요하다
 
@@ -525,6 +552,7 @@ Cloud Functions 콜러블로 옮겨 갔다. 규칙은 문서 하나만 보므로
 | 분류 이름·색상 | `saveCategory` | 이름을 바꾸면 거래가 따라와야 하는데, 공통 분류를 관리하는 팀장·센터장은 `trx.edit` 을 갖지 않는다 |
 | 자산이동 | `saveTransfer` | 상대편 조회까지 트랜잭션 안이어야 한다 |
 | 연도 마감 | `runArchive` | 잠긴 달의 삭제 + generation 사전조건 |
+| 팀 목록 저장 | `saveTeams` | `config` 쓰기는 규칙이 아무에게도 열지 않는다(서버 전용) |
 | 권한 백필 | `backfillAuthz` | 배포 후 **가장 먼저** 돌려야 한다 |
 | 보고서 분석 문장 | `analyzeReport` | Gemini 키는 서버에만 있다. 보내는 것은 **집계뿐** — 아래 |
 

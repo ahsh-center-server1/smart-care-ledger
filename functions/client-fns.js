@@ -29,13 +29,19 @@ const {
   parseStaffIds, planAssignmentChange, assertWritable,
 } = require('./authz.cjs');
 const { fixedCan } = require('./fixed-role-policy.cjs');
+const { teamMismatch } = require('./teams.cjs');
 
 const CLIENTS = 'clients';
 const USERS = 'users';
 const ASSIGNMENT_CHANGES = 'assignmentChanges';
 
-/** 화면이 바꿀 수 있는 입주자 필드. 여기 없는 것은 무시한다. */
-const CLIENT_FIELDS = ['name', 'contact', 'memo'];
+/**
+ * 화면이 바꿀 수 있는 입주자 필드. 여기 없는 것은 무시한다.
+ *
+ * `team` 은 **배정의 틀**이다. 권한을 주지 않고(조회 범위는 여전히 담당
+ * 투영본이 정한다), 대신 아래에서 "배정된 사람이 그 팀 사람인가"를 검증한다.
+ */
+const CLIENT_FIELDS = ['name', 'contact', 'memo', 'team'];
 
 module.exports = function clientFns(ctx) {
   const { db, callable, HttpsError, logger, FieldValue, randomId } = ctx;
@@ -206,6 +212,42 @@ module.exports = function clientFns(ctx) {
       // 신규 등록인데 담당을 주지 않았으면 만든 사람을 담당으로 넣는다.
       // 담당이 없는 입주자는 만든 사람 화면에도 보이지 않아 막다른 길이 된다.
       if (created && actor.role === '팀장' && !leader) leader = String(auth.uid);
+
+      // 팀이 정해져 있으면 배정은 그 팀 안에서만 이뤄진다.
+      //
+      // 화면은 이미 후보를 그 팀으로 좁혀 두지만, **좁히는 것과 막는 것은 다르다** —
+      // 콜러블은 직접 부를 수 있다. 팀이 비어 있으면(기존 입주자 전부) 아무것도
+      // 막지 않는다: 마이그레이션 없이 살기 위한 선택이다.
+      //
+      // 이 검사가 보는 것은 **결과 상태**다. 배정을 안 바꾸고 팀만 바꾸는 저장도
+      // 있으므로, 이번 요청에 실려 오지 않은 기존 담당의 소속도 읽어서 본다.
+      // (읽기는 아직 쓰기 전이어야 한다 — 트랜잭션 규약)
+      const nextTeam = fields.team !== undefined
+        ? String(fields.team || '').trim()
+        : String((cur && cur.team) || '').trim();
+      if (nextTeam) {
+        const memberUids = [...new Set([...staff, leader].filter(Boolean))];
+        const known = new Map(assignedUids.map((uid, i) => [uid,
+          assignedSnaps[i].exists ? (assignedSnaps[i].data() || {}) : null]));
+        const unknown = memberUids.filter(uid => !known.has(uid));
+        const extraSnaps = await Promise.all(
+          unknown.map(uid => tx.get(db.collection(USERS).doc(uid))),
+        );
+        unknown.forEach((uid, i) => {
+          known.set(uid, extraSnaps[i].exists ? (extraSnaps[i].data() || {}) : null);
+        });
+        const wrong = teamMismatch({
+          team: nextTeam,
+          memberUids,
+          users: memberUids
+            .filter(uid => known.get(uid))
+            .map(uid => ({ userId: uid, team: known.get(uid).team })),
+        });
+        if (wrong.length) {
+          throw new HttpsError('failed-precondition',
+            `${nextTeam} 소속이 아닌 담당이 있습니다: ${wrong.join(', ')}`);
+        }
+      }
 
       const rawPlan = planAssignmentChange({
         clientId,

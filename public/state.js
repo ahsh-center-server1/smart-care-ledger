@@ -49,6 +49,10 @@ export const S = {
   authzStatus: 'idle',
   settingsGuideOnly: false,
   leaderClientIds: [],
+  // 팀 목록(config/teams). **배정의 틀이지 권한의 축이 아니다** — domain/teams.js
+  // 머리말 참고. 읽지 않았으면 null 이다(빈 배열이면 "팀이 없다"로 읽혀,
+  // 직원 폼이 팀 선택지를 통째로 감춘다).
+  teams: null,
   // 담당 입주자 id 목록(authz/{uid}.accessibleClientIds). 보안 규칙이 범위를
   // 이것으로 판정하므로 조회도 같은 목록으로 좁힌다.
   accessibleClientIds: [],

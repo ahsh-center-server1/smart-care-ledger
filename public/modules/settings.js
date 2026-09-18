@@ -25,6 +25,7 @@ import { initSettingsShell, switchSettingsTab, registerPanel } from './settings-
 import { registerCrudDeps } from './settings-crud.js';
 import { renderSettingsOverview, refreshOverviewBadges } from './settings-overview.js';
 import { renderSettingsAudit } from './settings-audit.js';
+import { renderTeamsPanel } from './settings-teams.js';
 import { auditLog } from '../services/audit.js';
 import {
   DATA_RESET_CONFIRM_TEXT, RESET_PRESERVED, MAX_DELETES_PER_BATCH,
@@ -808,6 +809,7 @@ export function initSettingsTabs(){
   registerPanel('overview',    renderSettingsOverview);
   registerPanel('list',        renderManagement);
   registerPanel('audit',       renderSettingsAudit);
+  registerPanel('team',        renderTeamsPanel);
   // 권한 패널은 편집 중인 draft를 들고 있다. 이미 그려져 있으면 다시 그리지 않는다
   // — 탭을 왕복할 때마다 저장하지 않은 변경이 사라지면 쓸 수 없다.
   registerPanel('permissions', () => {

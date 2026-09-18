@@ -297,6 +297,11 @@ Object.assign(exports, require('./client-fns')({
   randomId: () => randomBytes(16).toString('base64url'),
 }));
 
+// 팀 목록 — config/teams 문서 하나. 팀은 배정의 틀이지 권한의 축이 아니다.
+Object.assign(exports, require('./team-fns')({
+  db, callable, HttpsError, logger, FieldValue,
+}));
+
 // 권한 등급표 — 저장이 곧 집행이 되도록 config 와 전 사용자 caps 를 함께 쓴다.
 // 콜러블만 꺼낸다(팩토리 반환값에 테스트용 순수 함수가 함께 들어 있다).
 exports.savePermissions = require('./permissions-fns')({

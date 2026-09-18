@@ -45,6 +45,20 @@ module.exports = function staffFns(ctx) {
   const AUTHZ = 'authz';
   const PRIVILEGE_REQUESTS = 'staffPrivilegeRequests';
   const { fixedCan } = require('./fixed-role-policy.cjs');
+  const { normalizeTeams } = require('./teams.cjs');
+
+  /**
+   * 등록할 수 있는 팀 이름.
+   *
+   * ⚠️ **목록이 비어 있으면 아무 이름이나 받는다.** 배포 직후 config/teams 는
+   *    없고, 그때 팀을 막으면 직원 저장이 통째로 실패한다 — 팀은 편의 기능인데
+   *    그것 때문에 계정 운영이 멈추면 안 된다. 목록이 생긴 뒤부터 오타를 막는다.
+   */
+  async function knownTeamNames() {
+    const snap = await db.collection('config').doc('teams').get();
+    return new Set(normalizeTeams(snap.exists ? snap.data() : null)
+      .filter(t => t.active).map(t => t.name));
+  }
 
   /**
    * 직원 관리 권한. 등급 리터럴이 아니라 카탈로그 키로 판정한다 —
@@ -231,6 +245,7 @@ module.exports = function staffFns(ctx) {
 
     const isAdminCaller = me.isAdmin;
     const override = await currentOverride();
+    const teamNames = await knownTeamNames();
     const results = [];
 
     for (const raw of list) {
@@ -263,6 +278,12 @@ module.exports = function staffFns(ctx) {
       }
       if (password && password.length < 8) {
         results.push({ userId, ok: false, error: '비밀번호는 8자 이상이어야 합니다.' });
+        continue;
+      }
+      // 자유 입력일 때는 「1팀」과 「1 팀」이 다른 팀이 됐고, 그걸 알아차릴
+      // 방법이 없었다. 목록이 있으면 그 안에서만 받는다.
+      if (team && teamNames.size && !teamNames.has(team)) {
+        results.push({ userId, ok: false, error: `등록되지 않은 팀입니다: ${team}` });
         continue;
       }
 
