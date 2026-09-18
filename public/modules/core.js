@@ -11,6 +11,7 @@
 
 import { S } from '../state.js';
 import { COLS, LOCKED_MONTHS_DOC, TEAMS_DOC, lockKey } from '../constants.js';
+import { missingIndexMessage } from '../services/fn-errors.js';
 import { normalizeTeams } from '../domain/teams.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
@@ -312,7 +313,9 @@ export async function loadTransactions(clientId, opts) {
     // 날아가, 보고서를 열 때마다 그 입주자의 전체 이력을 다시 읽었다.
     Rpt.syncReportTrxList();
   } catch(e) {
-    if (mySeq === trxLoadSeq) toast('거래 로드 실패: '+e.message,'error');
+    if (mySeq === trxLoadSeq) {
+      toast(missingIndexMessage(e,'거래 조회')||('거래 로드 실패: '+e.message),'error',6000);
+    }
   }
   // 뒤늦게 끝난 조회가 로딩 표시를 꺼서 진행 중인 조회를 가리지 않도록
   if (mySeq === trxLoadSeq) showLoading(false);

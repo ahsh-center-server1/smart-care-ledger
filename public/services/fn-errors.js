@@ -70,3 +70,28 @@ export function fnErrorMessage(e, fallback, endpoint) {
   }
   return fallback;
 }
+
+/**
+ * 색인이 없어서 실패한 조회인가 — 그렇다면 사람이 읽을 문장으로.
+ *
+ * 왜 따로 다루나
+ *   Firestore 는 복합 인덱스가 없으면 쿼리를 통째로 거절하고, 메시지에 **콘솔
+ *   생성 링크가 붙은 300자짜리 영문**을 준다. 그대로 토스트에 띄우면 사회복지사가
+ *   읽을 것이 못 되고, 정작 필요한 사람(배포 담당자)은 그 화면을 보지 않는다.
+ *
+ *   그래서 화면에는 "무엇이 안 되고 누구에게 말해야 하는지"만 남기고, 링크는
+ *   콘솔로 보낸다 — 개발자 도구를 여는 사람이 곧 그 링크를 쓸 사람이다.
+ *
+ * ⚠️ 이 문장이 뜬다는 것은 **배포가 덜 된 것**이다. 필요한 인덱스는
+ *    firestore.indexes.json 에 있고, test/firestore-indexes.test.mjs 가
+ *    쿼리와 대조한다. 에뮬레이터는 인덱스를 자동으로 만들어 주므로 로컬에서는
+ *    재현되지 않는다.
+ */
+export function missingIndexMessage(err, what = '조회') {
+  const raw = String((err && err.message) || '');
+  if (!/requires an index|FAILED_PRECONDITION.*index/i.test(raw)) return null;
+  const link = (raw.match(/https:\/\/console\.firebase\.google\.com\S+/) || [''])[0];
+  if (link) console.error(`[firestore] 색인이 없습니다. 만들 주소: ${link}`);
+  return `${what}에 필요한 데이터베이스 색인이 아직 만들어지지 않았습니다. `
+    + '관리자에게 알려 주세요 (배포 시 firestore:indexes 반영 필요).';
+}

@@ -6,6 +6,7 @@
 'use strict';
 
 import { S } from '../state.js';
+import { missingIndexMessage } from '../services/fn-errors.js';
 import { iconSvg } from '../utils/icons.js';
 import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml } from '../utils/ui.js';
@@ -1072,7 +1073,8 @@ export async function loadReportList(opts){
     }
     S.reportList=rows.sort((a,b)=>(b.year*100+b.month)-(a.year*100+a.month));
   }catch(e){
-    toast('보고서 목록 로드 실패: '+e.message,'error');
+    // 색인 누락은 영문 300자에 콘솔 링크가 붙어 온다 — 그대로 띄우지 않는다.
+    toast(missingIndexMessage(e,'보고서 목록')||('보고서 목록 로드 실패: '+e.message),'error',6000);
     if(!Array.isArray(S.reportList))S.reportList=[];
   }
   renderReportList();

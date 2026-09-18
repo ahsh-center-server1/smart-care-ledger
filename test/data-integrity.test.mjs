@@ -151,12 +151,21 @@ test('마감 이력은 센터장도 직접 쓸 수 없어야 한다', () => {
 });
 
 test('엑셀 중복 대조 쿼리에 필요한 복합 인덱스가 등록되어 있다', () => {
-  // 인덱스가 없으면 쿼리가 실패하고 중복 판정이 통째로 죽는다
+  // 인덱스가 없으면 쿼리가 실패하고 중복 판정이 통째로 죽는다.
+  //
+  // ⚠️ 이 검사는 한때 `accountId,date` 를 요구했는데, **그 인덱스로는 지금 쿼리가
+  //    돌지 않는다.** 규칙이 담당 범위를 clientId 로 보게 되면서 쿼리에 clientId
+  //    같음이 하나 더 붙었고, Firestore 는 범위(date)가 섞이면 색인을 병합하지
+  //    않는다. 즉 검사는 초록인데 기능은 죽어 있었다.
+  //
+  //    쿼리 모양에서 필요한 인덱스를 계산하는 일반 게이트는
+  //    test/firestore-indexes.test.mjs 에 있다. 여기서는 이 한 건만 못 박는다.
   const idx = JSON.parse(src('firestore.indexes.json'));
   const fields = idx.indexes
     .filter(i => i.collectionGroup === 'transactions')
     .map(i => i.fields.map(f => f.fieldPath).join(','));
-  assert.ok(fields.includes('accountId,date'), 'transactions(accountId,date) 인덱스가 없습니다');
+  assert.ok(fields.includes('clientId,accountId,date'),
+    'transactions(clientId,accountId,date) 인덱스가 없습니다');
 });
 
 // ─────────────────────────────────────────────
