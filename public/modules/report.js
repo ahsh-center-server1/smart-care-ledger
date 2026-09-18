@@ -320,6 +320,10 @@ export function renderReportView(){
 export function renderRptTrxTable(trxList){
   const tbody=document.getElementById('rpt-trx-body'); if(!tbody)return;
   tbody.innerHTML='';
+  // 안내는 여기서도 지운다 — 누를 줄이 없으면 「클릭하면 수정」이 거짓말이 되고,
+  // 앞사람 보고서의 문구가 그대로 남는다.
+  const hintEl=document.getElementById('rpt-trx-edit-hint');
+  if(hintEl)hintEl.textContent='';
   if(!trxList||!trxList.length){
     const tr=document.createElement('tr');
     tr.innerHTML='<td colspan="6" style="text-align:center;color:#6b7280;padding:16px;font-size:13px;">거래 내역이 없습니다.</td>';
@@ -334,6 +338,15 @@ export function renderRptTrxTable(trxList){
   // 하나다 — 규칙이 보는 것과 같은 색인이라 버튼과 서버가 어긋나지 않는다.
   const editBlocked=trxEditBlockReason(S.reportData?.clientId, `${S.reportData?.year}-${String(S.reportData?.month).padStart(2,'0')}-01`);
   const canEditHere=can('trx.edit')&&!editBlocked;
+  // 고칠 곳을 **그 자리에서** 누른다 — 줄 끝의 연필 아이콘이 아니라.
+  //
+  // 아이콘은 두 가지가 나빴다. 눈이 고친 값(분류·내용)에서 줄 끝까지 갔다가
+  // 돌아와야 했고, 인쇄 영역 안에 화면 전용 버튼이 한 칸을 차지했다.
+  // 고치고 싶은 것이 곧 누를 것이면 설명할 것이 없다.
+  const cellAttr=canEditHere?' class="rpt-cell-edit" title="클릭해서 이 거래를 수정"':'';
+  // 눌러도 되는 줄이라는 것은 hover 로만 말한다(인쇄물에는 흔적이 남지 않는다).
+  // 그래서 표 머리에 한 줄로 알려 준다 — 그것도 인쇄에서는 빠진다.
+  if(hintEl&&canEditHere)hintEl.textContent='분류·내용을 클릭하면 그 거래를 수정할 수 있습니다';
   const byAccount=new Map();
   (S.reportData?.accs||[]).forEach(a=>byAccount.set(a.id,{account:a,items:[]}));  
   trxList.forEach(t=>{
@@ -369,14 +382,14 @@ export function renderRptTrxTable(trxList){
     } else { typeTag=excludedBadge(t); }
     const catClr=cs(t.category||'');
     tr.innerHTML=`<td style="padding:7px 4px;font-family:monospace;font-size:13px;color:#6b7280;white-space:nowrap;">${escHtml(t.date||'')}</td>`
-      +`<td style="padding:4px 4px;overflow:hidden;white-space:nowrap;"><span style="display:inline-block;background:${catClr.bg};color:${catClr.text};border:1px solid ${catClr.border};border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.category||'')}</span></td>`
-      +`<td style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.description||'')}${typeTag}</td>`
+      +`<td${cellAttr} style="padding:4px 4px;overflow:hidden;white-space:nowrap;"><span style="display:inline-block;background:${catClr.bg};color:${catClr.text};border:1px solid ${catClr.border};border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.category||'')}</span></td>`
+      +`<td${cellAttr} style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.description||'')}${typeTag}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#15803d;white-space:nowrap;">${Number(t.amountIn||0)>0?Number(t.amountIn).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#b91c1c;white-space:nowrap;">${Number(t.amountOut||0)>0?Number(t.amountOut).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:center;${t.type==='지출'&&!hasReceipt(t)&&t.receiptMissing?'background:#fee2e2;':''}">${
         hasReceipt(t)?`<button class="icon-btn rpt-rv" title="증빙 보기">${iconSvg('clip',18)}</button>`:
         (t.receiptMissing?'<span style="font-size:10px;font-weight:700;color:#b91c1c;background:#fecaca;padding:2px 6px;border-radius:4px;">분실</span>':'')
-      }${canEditHere?`<button class="icon-btn edit rpt-edit no-print" title="이 거래 수정">${iconSvg('pen',18)}</button>`:''}</td>`;
+      }</td>`;
     if(!locked){
       tr.addEventListener('dragstart',e=>{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',t.id);tr.style.opacity='0.4';});
       tr.addEventListener('dragend',()=>tr.style.opacity='1');
@@ -384,8 +397,7 @@ export function renderRptTrxTable(trxList){
       tr.addEventListener('dragleave',()=>tr.style.background='');
       tr.addEventListener('drop',e=>{e.preventDefault();tr.style.background='';const fid=e.dataTransfer.getData('text/plain');if(fid!==t.id)reorderRptTrx(fid,t.id);});
     }
-    const edBtn=tr.querySelector('.rpt-edit');
-    if(edBtn)edBtn.addEventListener('click',()=>openTrxFromReport(t));
+    tr.querySelectorAll('.rpt-cell-edit').forEach(td=>td.addEventListener('click',()=>openTrxFromReport(t)));
     const rvBtn=tr.querySelector('.rpt-rv');
     if(rvBtn)rvBtn.addEventListener('click',async()=>{
       try{const a=await receiptAccess(t);openReceiptModal(a.url,t.id,{contentType:a.contentType});}
