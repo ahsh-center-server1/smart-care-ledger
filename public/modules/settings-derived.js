@@ -63,6 +63,7 @@ export async function rebuildDerivedDocs() {
 
     const lockCount = Number((lock && lock.data && lock.data.count) || 0);
     const submitted = Number((lock && lock.data && lock.data.submitted) || 0);
+    const approved = Number((lock && lock.data && lock.data.approved) || 0);
     const staff = Number((dir && dir.data && dir.data.staff) || 0);
     const cats = Number((dir && dir.data && dir.data.categories) || 0);
 
@@ -72,6 +73,7 @@ export async function rebuildDerivedDocs() {
         '<div style="color:#15803d;font-weight:700;">✅ 완료</div>'
         + '<div style="color:var(--muted-foreground);margin-top:4px;">'
         + `마감 ${escHtml(lockCount)}건 · 결재 중 ${escHtml(submitted)}건 · `
+        + `팀장 결재 ${escHtml(approved)}건 · `
         + `직원 ${escHtml(staff)}명 · 분류 ${escHtml(cats)}건`
         + (authz
           ? ` · 권한 ${escHtml(authzUsers)}명`

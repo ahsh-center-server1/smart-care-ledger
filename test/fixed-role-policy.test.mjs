@@ -37,10 +37,16 @@ test('system admin is technical, not an inherited business role', () => {
 });
 
 test('review roles do not inherit transaction input or report authorship', () => {
+  // trx.edit is deliberately excluded from this list: a reviewer may correct the
+  // numbers they have not yet signed off on. The boundary is the approval stage,
+  // not the capability — see domain/ledger-edit-window.js and the editableStage
+  // helper in firestore.rules. Authoring (create/transfer/submit) stays closed.
   for (const role of ['팀장', '센터장']) {
-    for (const key of ['trx.create', 'trx.edit', 'trx.transfer', 'receipt.replace', 'report.submit']) {
+    for (const key of ['trx.create', 'trx.transfer', 'receipt.replace', 'report.submit']) {
       assert.equal(can(user(role), key), false);
     }
+    assert.equal(can(user(role), 'trx.edit'), true,
+      `${role} cannot correct a ledger entry before signing it off`);
   }
   assert.equal(can(user('팀장'), 'report.approve.team'), true);
   assert.equal(can(user('팀장'), 'report.approve.center'), false);

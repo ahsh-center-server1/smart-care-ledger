@@ -136,13 +136,31 @@ test('팀장은 대행 결재를 할 수 없다 (센터장 이상 전용)', () =
   assert.equal(planTransition('approveTeamProxy', 'submitted', { ...CTX, leaderVacant: true }).ok, false);
 });
 
-test('회수는 작성자 본인이거나 팀장 이상만', () => {
+test('회수는 작성자 본인만 — 팀장은 반려를 쓴다', () => {
+  // 팀장에게 회수는 반려와 결과가 같으면서 **사유가 남지 않는** 길이었다.
+  // 담당자는 자기 보고서가 왜 내려왔는지 알 방법이 없다.
   as('담당자');
   assert.equal(planTransition('recall', 'submitted', { ...CTX, isAuthor: false }).ok, false,
     '남의 보고서를 회수할 수 있습니다');
   assert.equal(planTransition('recall', 'submitted', { ...CTX, isAuthor: true }).ok, true);
   as('팀장');
-  assert.equal(planTransition('recall', 'submitted', { ...CTX, isAuthor: false }).ok, true);
+  assert.equal(planTransition('recall', 'submitted', { ...CTX, isAuthor: false }).ok, false,
+    '팀장이 사유 없이 보고서를 내릴 수 있습니다');
+});
+
+test('팀장 화면에서 회수·반려·수정(초안)이 같은 일을 하지 않는다', () => {
+  // 셋이 나란히 떠 있었고 앞의 둘은 결과가 같았다. 결재자는 무엇을 눌러야
+  // 하는지 알 수 없었다. 지금 팀장이 제출된 보고서에서 할 수 있는 것은
+  // 결재와 반려 둘뿐이고, 회수는 **자기 결재를 무르는 것**으로 옮겨 갔다.
+  as('팀장');
+  assert.deepEqual(availableActions('submitted', { ...CTX, isAssignedLeader: true }).sort(),
+    ['approveTeam', 'reject']);
+  assert.deepEqual(availableActions('team_approved', { ...CTX, isAssignedLeader: true }),
+    ['revert'], '팀장 결재 뒤에 남는 것은 내 결재를 무르는 길 하나여야 합니다');
+  assert.equal(TRANSITIONS.submitted.revert, undefined,
+    '제출 상태에서 결재 취소로 초안까지 내려가는 길이 아직 있습니다(회수와 같은 일)');
+  assert.equal(TRANSITIONS.team_approved.recall, undefined,
+    '팀장 결재 뒤에도 회수가 있습니다 — 되가져올 제출이 아니라 취소할 결재입니다');
 });
 
 test('최종 결재 취소는 센터장 이상만 (팀장은 못 푼다)', () => {
@@ -207,8 +225,8 @@ test('최종 결재를 취소하면 센터장 도장만 지워진다', () => {
 });
 
 test('회수하면 제출·결재 도장이 모두 지워진다', () => {
-  as('팀장');
-  const r = planTransition('recall', 'team_approved', CTX);
+  as('담당자');
+  const r = planTransition('recall', 'submitted', { ...CTX, isAuthor: true });
   assert.equal(r.next, 'draft');
   for (const f of [...STAGE_STAMPS.submitted, ...STAGE_STAMPS.team_approved, ...STAGE_STAMPS.confirmed]) {
     assert.ok(r.clear.includes(f), `${f}가 남습니다`);
@@ -404,12 +422,18 @@ test('인쇄물의 담당 칸에 지금 보는 사람 이름이 찍히지 않는
   // 일은 애초에 없다(위 「팀장 직접 제출 경로는 존재하지 않는다」). 남은 것은
   // 이 표시 하나였다.
   const { readFileSync } = await import('node:fs');
-  const src = readFileSync(new URL('../public/modules/report.js', import.meta.url), 'utf8');
-  const code = src.split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
-  const leaks = [...code.matchAll(/submittedByName\s*\|\|[^\n]*S\.user/g)];
-  assert.deepEqual(leaks.map(m => m[0]), [],
-    '담당 칸이 지금 보는 사람 이름으로 떨어집니다. reportStaffName() 을 쓰세요');
-  assert.ok(/function reportStaffName\(/.test(src), 'reportStaffName 이 없습니다');
-  assert.ok(/createdByName/.test(code.slice(code.indexOf('function reportStaffName('))),
+  const strip = (s) => s.split('\n')
+    .filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+  // 표시하는 쪽(report.js·report-excel.js)과 정하는 쪽(domain/report-stamps.js)을
+  // 함께 본다. 이름 판정이 도메인으로 내려갔어도 새는 자리는 화면에 생긴다.
+  for (const rel of ['../public/modules/report.js', '../public/modules/report-excel.js']) {
+    const code = strip(readFileSync(new URL(rel, import.meta.url), 'utf8'));
+    const leaks = [...code.matchAll(/submittedByName\s*\|\|[^\n]*S\.user/g)];
+    assert.deepEqual(leaks.map(m => m[0]), [],
+      `${rel}: 담당 칸이 지금 보는 사람 이름으로 떨어집니다. reportStaffName() 을 쓰세요`);
+  }
+  const stamps = readFileSync(new URL('../public/domain/report-stamps.js', import.meta.url), 'utf8');
+  assert.ok(/function reportStaffName\(/.test(stamps), 'reportStaffName 이 없습니다');
+  assert.ok(/createdByName/.test(strip(stamps).slice(strip(stamps).indexOf('function reportStaffName('))),
     '제출 전에는 작성자 이름을 써야 합니다');
 });

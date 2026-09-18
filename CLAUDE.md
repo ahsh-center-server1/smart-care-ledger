@@ -28,8 +28,9 @@
 | `state.js` | `public/state.js` | 전역 상태(S) |
 | `parser-config.js` | `public/parser-config.js` | 은행별 엑셀 파서 설정 (ES 모듈, 유일한 설정) |
 | `manifest.json` / `sw.js` | `public/` | PWA 매니페스트 / 서비스 워커 |
-| 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions, fixed-items, report-actor, settings-permissions |
+| 기능 모듈 | `public/modules/*.js` | auth, core, dashboard, transactions, report, settings, modals, permissions, fixed-items, report-actor, report-accounts(계좌 현황 계산), report-excel(엑셀 저장), settings-permissions |
 | 서비스 | `public/services/*.js` | firestore, image(이미지 압축), storage, balance(잔액 계산), excel-parser, receipt-upload, scoped-fetch, in-query |
+| 도메인 | `public/domain/*.js` | 순수 판정 — 결재 전이표, 잔액·집계 규칙, `report-stamps`(결재 도장 날짜), `ledger-edit-window`(§6-1), `hangul-search`(초성 검색) |
 | 유틸 | `public/utils/ui.js` | UI 유틸리티 |
 | 아이콘 | `public/utils/icons.js` | 인라인 SVG 한 벌 (§7 모바일) |
 | `firestore.rules` | `firestore.rules` (루트) | Firestore 보안 규칙 |
@@ -81,8 +82,8 @@ archive_YYYY: 마감된 거래 데이터 백업
 |---|---|---|
 | 입력자 | 거래 입력·수정, 본인 거래에 증빙 | 동료 거래 조회, 엑셀, 보고서, 설정 |
 | 담당자 | 거래 입력·수정·자산이동, 엑셀·증빙·통장, 보고서 작성·제출·회수, 입주자별 분류·고정항목·예산, **담당 입주자의 계좌** | 결재, 시설 개설(입주자·공통분류), 변경 이력 |
-| 팀장 | 보고서 1차 결재·반려, 담당 배정, 시설 개설(입주자·계좌·공통분류) | **거래 입력·수정, 보고서 작성·제출**, 변경 이력 |
-| 센터장 | 팀장이 하는 일 + 최종 결재·결재 취소, 전 입주자 조회, 연도 마감 | **거래 입력·수정, 보고서 작성·제출**, 1차 결재 |
+| 팀장 | 보고서 1차 결재·반려, 담당 배정, 시설 개설(입주자·계좌·공통분류), **결재 전 거래 정정**(§6-1) | **거래 입력(신규)·자산이동, 보고서 작성·제출**, 변경 이력 |
+| 센터장 | 팀장이 하는 일 + 최종 결재·결재 취소, 전 입주자 조회, 연도 마감 | **거래 입력(신규)·자산이동, 보고서 작성·제출**, 1차 결재 |
 | 관리자(플래그) | 직원 계정 운영, 변경 이력, 감사·AI·백업 | 업무 권한 일체 — 역할과 **직교**한다 |
 
 > 계좌 관리(`settings.account`)는 담당자부터 갖는다. **키 자체에는 범위가 없고**,
@@ -175,21 +176,26 @@ archive_YYYY: 마감된 거래 데이터 백업
 제출 뒤에 지우면 결재자가 본 숫자와 장부가 달라지므로, **회수·결재 취소로
 `draft` 로 내린 뒤** 지우는 것이 정상 경로다.
 
-`config/lockedMonths` 문서가 색인을 **두 개** 담는다. 질문이 다르다.
+`config/lockedMonths` 문서가 색인을 **세 개** 담는다. 질문이 다르다.
 
 | 색인 | 질문 | 막는 것 | 채우는 상태 |
 |---|---|---|---|
-| `months` | 최종 결재가 끝났는가 | 수정 · 삭제 **둘 다** | `confirmed` |
-| `submittedMonths` | 결재 절차에 올라갔는가 | **삭제만** | `submitted` · `team_approved` · `confirmed` |
+| `months` | 최종 결재가 끝났는가 | 수정 · 삭제 **둘 다**, 누구에게나 | `confirmed` |
+| `approvedMonths` | 팀장 결재가 끝났는가 | **팀장의** 수정 | `team_approved` · `confirmed` |
+| `submittedMonths` | 결재 절차에 올라갔는가 | **담당자·입력자의** 수정, 그리고 삭제 | `submitted` · `team_approved` · `confirmed` |
 
 한 문서에 둔 이유: 거래 쓰기 한 번당 규칙 조회가 늘지 않게 하기 위해서다.
 판정은 `functions/locked-months.cjs` 한 곳이고, 화면은 같은 색인을 읽어
-`core.js` 의 `trxDeleteBlockReason()` 으로 답한다 — 근거가 갈라지면 버튼은
-보이는데 서버가 거부한다.
+`core.js` 의 `trxDeleteBlockReason()` · `trxEditBlockReason()` 으로 답한다 —
+근거가 갈라지면 버튼은 보이는데 서버가 거부한다.
 
-> ⚠️ **배포 시**: `submittedMonths` 는 처음에 없다. 그 상태에서는 결재 중인
-> 달의 거래도 지워진다(색인이 비면 "제출된 달 없음"으로 읽힌다). 배포 뒤
-> **설정 → 파생 문서 다시 만들기**(`rebuildLockedMonths`)를 눌러 백필한다.
+세 색인은 층을 이룬다(`months ⊂ approvedMonths ⊂ submittedMonths`). 깨지면
+「팀장은 못 고치는데 담당자는 고칠 수 있는 달」처럼 뜻이 없는 상태가 생긴다 —
+`test/locked-months.test.mjs` 가 이 포함 관계를 지킨다.
+
+> ⚠️ **배포 시**: `submittedMonths` · `approvedMonths` 는 처음에 없다. 그 상태에서는
+> 결재 중인 달의 거래도 지워지고 고쳐진다(색인이 비면 "제출된 달 없음"으로 읽힌다).
+> 배포 뒤 **설정 → 파생 문서 다시 만들기**(`rebuildLockedMonths`)를 눌러 백필한다.
 > 센터장(`settings.archive`) 또는 관리자(`system.backup`)가 실행할 수 있다.
 
 > ⚠️ 닫힌 키는 반드시 둘 중 한 부류에 속해야 한다. 분류되지 않은 채 닫히면
@@ -208,10 +214,10 @@ archive_YYYY: 마감된 거래 데이터 백업
 
 ```
 draft ──submit──▶ submitted ──approveTeam──▶ team_approved ──approveCenter──▶ confirmed
-  ▲                   │                          │                               │
-  └─recall/revert─────┘                          │                               │
+  ▲                   │  ▲                       │                               │
+  └─recall(작성자)────┘  └──────revert(팀장)─────┘                               │
   ▲                   └───reject──▶ rejected ◀───┘                               │
-  └─submit────────────────────────────┘          ◀────────────revert─────────────┘
+  └─submit────────────────────────────┘          ◀────────revert(센터장)─────────┘
 ```
 
 | 액션 | 필요 권한 | 비고 |
@@ -221,8 +227,26 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 | `approveTeam` | `report.approve.team` + 배정 팀장 | |
 | `approveCenter` | `report.approve.center` | |
 | `reject` | `report.reject` + 지금 결재할 차례인 사람 | 사유 필수 |
-| `recall` | 작성자(`createdBy`)+`report.recall`, 또는 팀장 이상 | |
+| `recall` | **작성자(`createdBy`)**+`report.recall` | 팀장 결재 전까지 |
 | `revert` | 직전 단계의 결재 권한 (confirmed는 `report.revert`) | 한 단계씩 |
+
+### 회수·반려·결재 취소 — 셋이 같은 일을 하지 않게
+
+한때 팀장 화면에 「회수」·「반려」·「수정(초안)」이 나란히 떴고, 앞의 둘은
+결과가 같았다(둘 다 draft 로 내렸다). 결재자는 무엇을 눌러야 하는지 알 수 없었고,
+회수로 내리면 **사유가 남지 않아** 담당자는 왜 내려왔는지 알 방법이 없었다.
+
+| 누가 | 무엇을 | 언제 | 어디로 |
+|---|---|---|---|
+| 담당자 | 회수(`recall`) | 팀장 결재 전 | submitted → draft |
+| 팀장 | 반려(`reject`) | 내가 결재하기 전에 오류를 봤을 때 | submitted → rejected (사유 필수) |
+| 팀장 | 회수(`revert`) | 내가 결재한 뒤, 센터장 결재 전 | team_approved → submitted |
+| 센터장 | 최종 결재 취소(`revert`) | 최종 결재 뒤 | confirmed → team_approved |
+
+`submitted` 에서 `revert`(수정(초안))와 `team_approved` 에서 `recall` 은
+**전이표에서 지웠다.** 앞의 것은 회수와 결과가 같고, 뒤의 것은 "되가져올 제출"이
+아니라 "취소할 결재"가 있는 자리다. 팀장이 초안까지 내리려면 revert → 담당자
+recall 두 걸음이고, 각 걸음의 주인이 분명하다.
 
 **전이표에 없는 동작** — 이름만 남기지 않는다. 표에 없으면 권한 검사에 닿기
 전에 거부된다.
@@ -230,6 +254,7 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 | 없는 동작 | 왜 없나 |
 |---|---|
 | `submitAsLeader` | 팀장은 `report.submit`을 갖지 않는다(역할 분리). 어떤 주체로도 성립하지 않아 제거했다 |
+| 팀장의 `recall` | 반려와 결과가 같으면서 사유가 남지 않는 길이었다. 결재자가 내리는 동작은 `reject` 하나다 |
 | `approveTeamProxy` | 자리가 비었다는 이유만으로 팀장 단계를 건너뛰면 2단 결재가 1단이 된다. 공석은 **정식 대행 지정**으로 푼다(절차 미구현) |
 | `release` | 반려건은 작성·제출 절차로만 다시 올라간다. 담당자 부재는 담당 배정 변경으로 푼다 |
 
@@ -275,6 +300,36 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 > `node tools/recalc-balances.mjs`(먼저 드라이런)로 `currentBalance` 를
 > 다시 만든다.
 
+## 6-1. 장부를 고칠 수 있는 창 — 「내가 결재하기 전까지」
+
+결재는 **"그 시점의 숫자를 내가 봤다"는 서명**이다. 서명한 뒤에 장부가 바뀌면
+서명이 가리키는 대상이 사라진다. 반대로 아직 서명하지 않은 사람은 지금 보고 있는
+것을 고칠 수 있어야 한다 — 그러지 않으면 오타 하나에도 반려하고 담당자를
+기다렸다가 다시 결재하는 왕복이 생긴다.
+
+| 역할 | 고칠 수 있는 동안 | 닫히는 순간 |
+|---|---|---|
+| 입력자 · 담당자 | `draft` · `rejected` | 제출 |
+| 팀장 | `draft` · `rejected` · `submitted` | 팀장 결재 |
+| 센터장 | 최종 결재 전 전부 | 최종 결재 |
+
+닫힌 뒤에 고치려면 **회수·반려·결재 취소로 상태를 되돌린다**(§5). 문구도 그것을
+말한다 — 못 한다는 말만 남기면 사용자가 다음에 할 일을 모른다.
+
+- 판정은 `public/domain/ledger-edit-window.js` 하나이고, 규칙의
+  `editableStage()` 가 같은 표를 손으로 들고 있다(규칙은 import 를 못 한다).
+  `test/ledger-edit-window.test.mjs` 가 둘을 대조한다.
+- 근거는 §4의 **세 색인**이다. 규칙은 거래를 쓸 때 그 달의 보고서를 찾아 읽을 수
+  없다 — 쓰기 한 번마다 조회가 늘고, 애초에 쿼리를 못 한다.
+- 그래서 **팀장·센터장에게 `trx.edit` 이 있다.** 「작성자와 결재자의 분리」가
+  막는 것은 *내가 쓴 것을 내가 결재하는 것*이고, 서명 전 숫자를 고치는 것은 결재가
+  아니라 검토다. `trx.create` · `trx.transfer` · `report.submit` 은 여전히 없다 —
+  오타를 고치는 것과 없는 거래를 만들어 넣는 것은 다른 일이다.
+- 보고서 표의 각 행에 편집 버튼이 뜬다(`openTrxFromReport`). 수기 입력 폼을
+  그대로 열므로 검증이 두 벌이 되지 않는다. 저장하면 열려 있는 보고서가 스스로
+  다시 그린다 — 신호는 **모든 거래 쓰기가 지나는 자리**(`invalidateReportTrxCache`)
+  에서 온다. 저장하는 쪽마다 콜백을 꿰면 언젠가 한 곳을 빠뜨린다.
+
 ### 결제수단(`method`)
 
 분류(무엇에 썼나)와 **다른 축**이다. 통장 적요에서 읽어
@@ -311,7 +366,7 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 ### 거래내역
 - [x] 입주자/계좌/구분/증빙/기간 필터
 - [x] 계좌 필터 (입주자 변경 시 자동 갱신)
-- [x] 키워드(내용) 검색
+- [x] 키워드(내용) 검색 — **초성으로도 찾는다**(「ㄱㅂ」→ 김밥천국, `domain/hangul-search.js`)
 - [x] 장부 순서 정렬: **날짜 → 그 날 안의 순서(sortOrder) → 시각**
 - [x] 날짜/카테고리/내용/계좌/수입/지출/증빙 컬럼 헤더 정렬 (토글)
 - [x] 목록 뷰 ↔ 달력 뷰 전환
@@ -385,7 +440,13 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 - [x] 팀장/센터장 결재 대기 목록 (네비 뱃지 포함)
 - [x] 반려/수정(초안)/삭제 기능
 - [x] 담당자 제출 회수(recall) — 팀장 결재 전
-- [x] 의견란 (담당자/팀장/센터장 각각)
+- [x] 의견란 (담당자/팀장/센터장 각각) — **자동 저장**. 칸을 떠날 때 저장하고,
+      결재 버튼은 저장되지 않은 초안을 전이에 함께 실어 보낸다(저장을 누르지 않고
+      결재해서 글이 사라지던 자리)
+- [x] 인쇄물의 날짜는 **제출일**(제출 전에만 작성일). 결재란에 단계별 이름과 날짜를
+      함께 찍는다 — 값은 결재한 순간 문서에 박힌 것이라 담당·팀장이 바뀌어도
+      과거 문서는 그대로다 (`domain/report-stamps.js`)
+- [x] 보고서 표에서 거래 직접 수정 — **내가 결재하기 전까지만**(§6-1)
 - [x] 계좌 현황: 기초잔액+기준일이후~보고서월말 거래 직접 계산
 - [x] 분류별 지출: 비율순 정렬 + 바 시각화 (원차트 제거)
 - [x] 월별 추이 차트 (최근 6개월) *삭제해도 될 듯(한눈에 안보임)
@@ -399,7 +460,7 @@ draft ──submit──▶ submitted ──approveTeam──▶ team_approved �
 
 ### 설정 (관리 통합)
 - [x] 직원/입주자/계좌 관리 (설정 탭으로 통합)
-- [x] 담당 직원 고르기: 검색 · 팀별 묶음 · 고른 사람 요약 (`modules/staff-picker.js`)
+- [x] 담당 직원 고르기: 검색(초성 포함) · 팀별 묶음 · 고른 사람 요약 (`modules/staff-picker.js`)
 
 > ⚠️ 피커는 **지정된 퇴직자를 목록에 남긴다.** 예전에는 `active !== false` 로
 > 먼저 걸렀는데, 저장은 「체크된 것 전부」를 보내므로 담당자가 퇴직 처리되면

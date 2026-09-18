@@ -170,6 +170,7 @@ module.exports = function ledgerTriggers(ctx) {
   LOCKED_MONTHS_DOC,
   buildLockIndex,
   buildSubmitIndex,
+  buildApproveIndex,
   SUBMITTED_STATUSES,
   } = require('./locked-months.cjs');
 
@@ -197,22 +198,28 @@ module.exports = function ledgerTriggers(ctx) {
       throw new HttpsError('permission-denied', '마감 색인 재생성 권한이 없습니다.');
     }
 
-  // 마감·제출 두 색인을 한 번에 다시 만든다. confirmed 는 제출 상태의
-  // 부분집합이므로 쿼리 하나로 족하다.
+  // 마감·제출·결재 세 색인을 한 번에 다시 만든다. confirmed ⊂ team_approved ⊂
+  // 제출 상태이므로 쿼리 하나로 족하다.
   const snap = await db.collection(REPORTS).where('status', 'in', [...SUBMITTED_STATUSES]).get();
   const reports = snap.docs.map((d) => d.data());
   const months = buildLockIndex(reports);
   const submittedMonths = buildSubmitIndex(reports);
+  const approvedMonths = buildApproveIndex(reports);
 
   // set(merge 없이)으로 통째로 교체한다 — 지워져야 할 낡은 키가 남지 않게.
   await db.collection(CONFIG).doc(LOCKED_MONTHS_DOC).set({
     months,
     submittedMonths,
+    approvedMonths,
     updatedAt: new Date().toISOString(),
     rebuiltBy: request.auth.uid,
   });
 
-  return { count: Object.keys(months).length, submitted: Object.keys(submittedMonths).length };
+  return {
+    count: Object.keys(months).length,
+    submitted: Object.keys(submittedMonths).length,
+    approved: Object.keys(approvedMonths).length,
+  };
   });
 
   /**

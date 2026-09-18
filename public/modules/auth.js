@@ -167,6 +167,7 @@ function clearSessionState() {
   S.reportData=null; S.reportOpen=null;
   S.confirmedMonths=new Set();
   S.submittedMonths=new Set();
+  S.approvedMonths=new Set();
   S.reportList=null; S.rptTrxCache=null; S.rptListAllYears=false;
   S.permOverride=null; S.caps=null; S.accessibleClientIds=[];
   S.authz=null; S.authzStatus='idle'; S.leaderClientIds=[]; S.settingsGuideOnly=false;

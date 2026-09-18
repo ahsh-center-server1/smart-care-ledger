@@ -14,6 +14,7 @@
 import { toast, skeleton } from '../utils/ui.js';
 import { fetchRecentAuditLogs, auditWriteToken } from '../services/audit.js';
 import { actionLabel, actionResource, summaryText, AUDIT_RESOURCES } from '../domain/audit.js';
+import { searchMatchesAny } from '../domain/hangul-search.js';
 
 const PAGE_SIZE = 100;
 
@@ -42,12 +43,13 @@ function formatTime(ts) {
 function matches(entry) {
   if (filterResource && actionResource(entry.action) !== filterResource) return false;
   if (!filterText) return true;
-  const hay = [
+  // 칸을 이어 붙여 한 문자열로 보지 않는다. 붙이면 띄어쓰기가 든 질의가
+  // 칸 경계를 넘어 걸려서, 아무 칸에도 없는 말로 결과가 나온다.
+  return searchMatchesAny([
     entry.actorName, entry.actorUid, entry.actorRole,
     actionLabel(entry.action), entry.action,
     entry.resourceId, summaryText(entry.summary),
-  ].join(' ').toLowerCase();
-  return hay.includes(filterText.toLowerCase());
+  ], filterText);
 }
 
 export async function renderSettingsAudit() {

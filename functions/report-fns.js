@@ -27,7 +27,8 @@
 const { planTransition, normalizeStatus } = require('./report-workflow.cjs');
 const { fixedCan } = require('./fixed-role-policy.cjs');
 const {
-  LOCKED_MONTHS_DOC, lockIndexChange, submitIndexChange, SUBMITTED_STATUSES,
+  LOCKED_MONTHS_DOC, lockIndexChange, submitIndexChange, approveIndexChange,
+  SUBMITTED_STATUSES,
 } = require('./locked-months.cjs');
 
 const AUTHZ = 'authz';
@@ -164,6 +165,7 @@ module.exports = function reportFns(ctx) {
       const { isAssignedLeader, leaderVacant } = await leaderState(clientId, auth.uid, tx);
       let lockChange = null;
       let submitChange = null;
+      let approveChange = null;
       let reportRef;
       let currentReport = null;
       if (reportId) {
@@ -208,7 +210,8 @@ module.exports = function reportFns(ctx) {
       const afterDoc = { ...(currentReport || {}), clientId, year, month, status: plan.next };
       lockChange = lockIndexChange(beforeDoc, afterDoc);
       submitChange = submitIndexChange(beforeDoc, afterDoc);
-      if (lockChange || submitChange) await tx.get(lockRef);
+      approveChange = approveIndexChange(beforeDoc, afterDoc);
+      if (lockChange || submitChange || approveChange) await tx.get(lockRef);
 
       if (currentReport) {
         const full = { ...patch };
@@ -228,7 +231,7 @@ module.exports = function reportFns(ctx) {
         });
       }
 
-      if (lockChange || submitChange) {
+      if (lockChange || submitChange || approveChange) {
         const indexPatch = { updatedAt: FieldValue.serverTimestamp() };
         if (lockChange) {
           indexPatch.months = {
@@ -238,6 +241,11 @@ module.exports = function reportFns(ctx) {
         if (submitChange) {
           indexPatch.submittedMonths = {
             [submitChange.key]: submitChange.submitted ? true : FieldValue.delete(),
+          };
+        }
+        if (approveChange) {
+          indexPatch.approvedMonths = {
+            [approveChange.key]: approveChange.approved ? true : FieldValue.delete(),
           };
         }
         tx.set(lockRef, indexPatch, { merge: true });

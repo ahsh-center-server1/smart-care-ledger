@@ -15,6 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import { lockKey, LOCKED_MONTHS_DOC } from '../public/constants.js';
 
 const require = createRequire(import.meta.url);
@@ -190,4 +191,74 @@ test('두 색인의 범위가 다르다 — 마감은 최종 결재만', () => {
   ];
   assert.equal(Object.keys(server.buildSubmitIndex(reports)).length, 2);
   assert.deepEqual(Object.keys(server.buildLockIndex(reports)), [lockKey('c2', 2026, 9)]);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 결재 색인 — 세 번째 질문: 팀장 결재가 끝났는가
+// ─────────────────────────────────────────────────────────────
+
+test('팀장 결재로 결재 색인에 들어가고, 취소하면 빠진다', () => {
+  const base = { clientId: 'c1', year: 2026, month: 9 };
+  const key = lockKey('c1', 2026, 9);
+  assert.deepEqual(
+    server.approveIndexChange({ ...base, status: 'submitted' }, { ...base, status: 'team_approved' }),
+    { key, approved: true },
+  );
+  // 팀장이 자기 결재를 무르면(회수) 그 달은 다시 열린다.
+  assert.deepEqual(
+    server.approveIndexChange({ ...base, status: 'team_approved' }, { ...base, status: 'submitted' }),
+    { key, approved: false },
+  );
+  assert.deepEqual(
+    server.approveIndexChange({ ...base, status: 'confirmed' }, { ...base, status: 'rejected' }),
+    { key, approved: false },
+  );
+});
+
+test('제출·최종 결재 사이 이동은 결재 색인을 건드리지 않는다', () => {
+  const base = { clientId: 'c1', year: 2026, month: 9 };
+  for (const [from, to] of [
+    ['draft', 'submitted'], ['team_approved', 'confirmed'], ['confirmed', 'team_approved'],
+    ['draft', 'rejected'],
+  ]) {
+    assert.equal(
+      server.approveIndexChange({ ...base, status: from }, { ...base, status: to }), null,
+      `${from} → ${to}`,
+    );
+  }
+});
+
+test('세 색인의 범위가 층을 이룬다 — 마감 ⊂ 결재 ⊂ 제출', () => {
+  // 이 포함 관계가 깨지면 "팀장은 못 고치는데 담당자는 고칠 수 있는 달"처럼
+  // 뜻이 없는 상태가 생긴다.
+  const reports = [
+    { clientId: 'c1', year: 2026, month: 9, status: 'submitted' },
+    { clientId: 'c2', year: 2026, month: 9, status: 'team_approved' },
+    { clientId: 'c3', year: 2026, month: 9, status: 'confirmed' },
+    { clientId: 'c4', year: 2026, month: 9, status: 'draft' },
+  ];
+  const submitted = new Set(Object.keys(server.buildSubmitIndex(reports)));
+  const approved = new Set(Object.keys(server.buildApproveIndex(reports)));
+  const locked = new Set(Object.keys(server.buildLockIndex(reports)));
+  assert.equal(submitted.size, 3);
+  assert.equal(approved.size, 2);
+  assert.equal(locked.size, 1);
+  for (const k of approved) assert.ok(submitted.has(k), `${k}가 제출 색인에 없습니다`);
+  for (const k of locked) assert.ok(approved.has(k), `${k}가 결재 색인에 없습니다`);
+});
+
+test('결재 색인도 세 곳이 함께 유지된다 — 전이·백필·규칙', () => {
+  // 한 곳만 고치면 색인이 어긋나고, 어긋난 색인은 "결재했는데 아직 고쳐지는 달"로
+  // 조용히 나타난다. 화면으로는 티가 나지 않는다.
+  const read = (rel) => readFileSync(new URL('../' + rel, import.meta.url), 'utf8');
+  assert.match(read('functions/report-fns.js'), /approveIndexChange/,
+    '결재 전이가 결재 색인을 갱신하지 않습니다');
+  assert.match(read('functions/report-fns.js'), /indexPatch\.approvedMonths/,
+    '결재 색인을 문서에 쓰지 않습니다');
+  assert.match(read('functions/ledger-triggers.js'), /buildApproveIndex/,
+    '색인 재생성이 결재 색인을 빼먹습니다');
+  assert.match(read('firestore.rules'), /function approvedMonths\(\)/,
+    '규칙이 결재 색인을 읽지 않습니다');
+  assert.match(read('public/modules/core.js'), /S\.approvedMonths/,
+    '화면이 결재 색인을 읽지 않습니다');
 });

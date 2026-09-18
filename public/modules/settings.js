@@ -127,10 +127,10 @@ export function renderManagement(){
         </span>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'재직':'퇴사'}</span>
       </div>`:'';
-      const editButton=canManageStaff&&isActive?`<button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button>`:'';
+      const editButton=canManageStaff&&isActive?`<button class="icon-btn edit" title="수정" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">${iconSvg('pen',18)}</button>`:'';
       // 비밀번호 재설정 — 관리자만. 결재에 닿는 계정은 서버가 2인을 요구한다.
       const pwButton=canManageStaff&&isActive&&String(u.id)!==String(S.user?.userId||'')
-        ?`<button class="icon-btn pw-reset" data-id="${escAttr(u.id)}" data-name="${escAttr(u.name||u.userId)}" title="비밀번호 재설정(임시 비밀번호 발급)" style="color:#b45309;">${iconSvg('key')}</button>`:'';
+        ?`<button class="icon-btn pw-reset" data-id="${escAttr(u.id)}" data-name="${escAttr(u.name||u.userId)}" title="비밀번호 재설정(임시 비밀번호 발급)" style="color:#b45309;">${iconSvg('key',18)}</button>`:'';
       d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${escHtml(u.name||u.userId)}</div><div style="font-size:12px;color:var(--muted);">${escHtml(u.role||'')} ${u.team?'· '+escHtml(u.team):''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${pwButton}${editButton}</div>`;
       d.querySelector('.pw-reset')?.addEventListener('click',ev=>{
         const b=ev.currentTarget;
@@ -169,7 +169,7 @@ export function renderManagement(){
         </span>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'활성':'비활성'}</span>
       </div>`:'';
-      const editButton=(canManageClients||canManageAssignments)?`<button class="icon-btn" onclick="openModal('client',(S.allClients||S.clients).find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">✏️</button>`:'';
+      const editButton=(canManageClients||canManageAssignments)?`<button class="icon-btn edit" title="수정" onclick="openModal('client',(S.allClients||S.clients).find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">${iconSvg('pen',18)}</button>`:'';
       d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${c.name}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${editButton}</div>`;
       cl.appendChild(d);
     });
@@ -193,7 +193,7 @@ export function renderManagement(){
         </span>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'활성':'비활성'}</span>
       </div>`:'';
-      const editButton=canManageAccounts?`<button class="icon-btn" onclick="openModal('account',(S.allAccounts||S.accounts).find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">✏️</button>`:'';
+      const editButton=canManageAccounts?`<button class="icon-btn edit" title="수정" onclick="openModal('account',(S.allAccounts||S.accounts).find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">${iconSvg('pen',18)}</button>`:'';
       d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${a.label}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:${isActive?'var(--blue)':'#94a3b8'};">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${editButton}</div>`;
       al.appendChild(d);
     });
@@ -341,8 +341,8 @@ export function renderCatTags(type){
     tag.dataset.order=String(catDoc.sortOrder??i);
     tag.innerHTML=`<span style="font-size:11px;color:#94a3b8;margin-right:2px;">⠿</span><span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-size:13px;font-weight:700;color:${color};">${escHtml(cat)}</span>`
       +(isPersonal?`<span style="font-size:10px;background:${color}22;color:${color};padding:1px 5px;border-radius:4px;margin-left:2px;">${clientName}</span>`:'')
-      +(isCommonReadOnly?'':`<button class="cat-edit" title="이름·색상 수정">${iconSvg('pen')}</button>`)
-      +(cat==='확인필요'||isCommonReadOnly?'':`<button class="cat-del">×</button>`);
+      +(isCommonReadOnly?'':`<button class="cat-edit" title="이름·색상 수정">${iconSvg('pen',14)}</button>`)
+      +(cat==='확인필요'||isCommonReadOnly?'':`<button class="cat-del" title="삭제">${iconSvg('trash',14)}</button>`);
     if(!isCommonReadOnly){
       tag.addEventListener('dragstart',e=>{dragSrc=tag;tag.style.opacity='0.5';e.dataTransfer.effectAllowed='move';});
       tag.addEventListener('dragend',()=>{tag.style.opacity='1';dragSrc=null;});

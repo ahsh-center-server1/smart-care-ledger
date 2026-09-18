@@ -58,10 +58,10 @@ const STAGE_STAMPS = {
  * 허용 전이표. 여기 없는 조합은 거부한다.
  *
  *   draft ──submit──▶ submitted ──approveTeam──▶ team_approved ──approveCenter──▶ confirmed
- *     ▲                   │                          │                               │
- *     └──recall/revert────┘                          │                               │
+ *     ▲                   │  ▲                       │                               │
+ *     └──recall(작성자)───┘  └──────revert(팀장)─────┘                               │
  *     ▲                   └──reject──▶ rejected ◀────┘                               │
- *     └──release/submit───────────────────┘          ◀───────────revert──────────────┘
+ *     └──submit───────────────────────────┘          ◀───────────revert(센터장)──────┘
  */
 const TRANSITIONS = {
   draft:         { save: 'draft', submit: 'submitted' },
@@ -70,10 +70,20 @@ const TRANSITIONS = {
   // 정식 대행 지정으로 푸는 것이고, 그 절차는 아직 없다.
   //   근거 테스트: test/report-transition.test.mjs
   //               「배정 팀장이 퇴사해도 암묵적 대행을 허용하지 않는다」
-  submitted:     { approveTeam: 'team_approved',
-                   reject: 'rejected', recall: 'draft', revert: 'draft' },
-  team_approved: { approveCenter: 'confirmed', reject: 'rejected',
-                   recall: 'draft', revert: 'submitted' },
+  // submitted 에서 draft 로 내려오는 길은 **회수 하나**다.
+  //   예전에는 recall 과 revert 가 둘 다 draft 로 갔다. 그래서 팀장 화면에
+  //   「회수」·「수정(초안)」·「반려」 세 버튼이 나란히 떴고, 앞의 둘은 하는 일이
+  //   같았다. 결재자가 세 개 중 무엇을 눌러야 하는지 알 수 없는 화면이었다.
+  //
+  //   역할마다 쓰는 것이 다르다:
+  //     담당자 — 내가 올린 것을 되가져온다(recall)
+  //     팀장   — 결재하기 전에 오류를 보면 담당자에게 돌려보낸다(reject)
+  submitted:     { approveTeam: 'team_approved', reject: 'rejected', recall: 'draft' },
+  // team_approved 에서 recall 도 **의도적으로 없다.** 회수는 "제출한 것을
+  // 되가져오는 것"이고, 팀장이 이미 결재한 뒤에는 되가져올 제출이 아니라
+  // 취소할 결재가 있다. 팀장은 revert 로 자기 결재를 무르고(→submitted),
+  // 그다음 담당자가 회수한다 — 두 걸음이지만 각 걸음의 주인이 분명하다.
+  team_approved: { approveCenter: 'confirmed', reject: 'rejected', revert: 'submitted' },
   confirmed:     { revert: 'team_approved' },
   // release 도 **의도적으로 없다.** 반려된 보고서는 작성·제출 절차로만 다시
   // 올라간다 — 결재 단계를 건너뛰는 탈출구를 두지 않는다. 담당자가 부재면
@@ -143,14 +153,21 @@ function permissionError(action, from, ctx) {
       if (isAssignedLeader || can('report.approve.center')) return null;
       return '이 입주자의 담당 팀장이 아닙니다.';
 
-    // 회수는 두 갈래다: 본인이 제출한 것을 되가져오거나(작성자),
-    // 결재자가 잘못 올라온 것을 내리거나(팀장 이상).
+    // 회수는 **본인이 제출한 것을 되가져오는 것**이다. 한 갈래뿐이다.
+    //
+    // 예전에는 팀장 이상도 회수할 수 있었는데, 팀장에게 그것은 반려와 결과가
+    // 같으면서 사유가 남지 않는 길이었다 — 담당자는 자기 보고서가 왜 내려왔는지
+    // 알 방법이 없다. 결재자가 잘못 올라온 것을 내리는 동작은 reject 다.
+    //
+    // 담당자가 부재라 아무도 회수할 수 없다면 담당 배정을 바꾼다(반려 해제와
+    // 같은 판단 — 결재 단계를 건너뛰는 탈출구를 두지 않는다).
     case 'recall':
-      if (isAuthor && can('report.recall')) return null;
-      if (can('report.approve.team')) return null;
-      return '회수 권한이 없습니다.';
+      if (!isAuthor) return '본인이 제출한 보고서만 회수할 수 있습니다.';
+      return can('report.recall') ? null : '회수 권한이 없습니다.';
 
     // 결재 취소는 "직전 단계를 무르는 것"이므로 그 단계의 결재 권한이 필요하다.
+    // 팀장이 「회수」라고 부르는 것이 이것이다 — 센터장에게 올려 놓고 결재 전에
+    // 실수를 발견했을 때 자기 도장을 거둔다(team_approved → submitted).
     case 'revert':
       if (from === 'confirmed') {
         return can('report.revert') ? null : '최종 결재를 취소할 권한이 없습니다.';

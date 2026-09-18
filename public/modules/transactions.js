@@ -12,7 +12,7 @@ import {
 import { auditOp } from '../services/audit.js';
 import { calcAccountBalance } from '../services/balance.js';
 import { deleteFromStorage } from '../services/storage.js';
-import { loadTransactions, isConfirmedLocked, trxDeleteBlockReason } from './core.js';
+import { loadTransactions, isConfirmedLocked, trxDeleteBlockReason, trxEditBlockReason } from './core.js';
 import { openModal, getUnpaidMandatoryItems, openReceiptModal, openReceiptUpload } from './modals.js';
 import { can, unavailableMessage } from './permissions.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
@@ -20,6 +20,7 @@ import {
   renderUnclassifiedBadge, isUnclassifiedTrx, resetFiltersUI,
   openCatDropdownUI, closeCatDropdowns, methodBadge, excludedBadge, readTrxFilters,
 } from './transactions-widgets.js';
+import { searchMatches } from '../domain/hangul-search.js';
 
 // 필수 고정항목 미납 배너 렌더 (당월 기준)
 function renderTrxMandatoryBanner(){
@@ -90,8 +91,9 @@ export function applyFilters(opts) {
     return;
   }
   S.filteredTrx=S.transactions.filter(t=>{
-    const desc=String(t.description||'').toLowerCase();
-    return desc.includes(kw)
+    // 초성 검색도 같은 판정을 쓴다(domain/hangul-search.js).
+    // 「ㄱㅂ」로 김밥천국을 찾을 수 있어야 통장 적요를 훑는 속도가 달라진다.
+    return searchMatches(t.description,kw)
       &&(!sd||t.date>=sd)&&(!ed||t.date<=ed)
       &&(tf==='all'||t.type===tf)
       &&(rf==='all'||(rf==='yes'?hasReceipt(t):!hasReceipt(t)))
@@ -318,7 +320,7 @@ export function moveCalendar(dir){
 export async function saveCatChange(trxId, newCat, chipEl) {
   if(!can('trx.category.edit')){toast('분류 수정 권한이 없습니다.','error');return;}
   const lk=S.transactions.find(x=>x.id===trxId);
-  if(lk&&isConfirmedLocked(lk.clientId,lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
+  const lkBlocked=lk&&trxEditBlockReason(lk.clientId,lk.date); if(lkBlocked){toast(lkBlocked,'error',5000);return;}
   const {doc,updateDoc}=fb();
   await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{category:newCat});
   invalidateReportTrxCache();
@@ -395,12 +397,18 @@ export async function saveTrx(data){
   // window에 노출되어 있어 콘솔에서 직접 호출하면 그대로 통과했다.
   // (실제 차단은 보안 규칙이 하지만, 여기서도 막아 무의미한 요청을 줄인다)
   const editingOthers = data.id && data.createdBy && data.createdBy !== S.user?.userId;
-  if(!can('trx.create')||(editingOthers&&!can('trx.view.all'))){
+  // 고치는 것과 새로 만드는 것은 다른 권한이다. 둘 다 trx.create 를 보면
+  // 검토 역할(팀장·센터장)은 오타 하나도 못 고친다 — 그들에게는 trx.edit 뿐이다.
+  const needed = data.id ? 'trx.edit' : 'trx.create';
+  if(!can(needed)||(editingOthers&&!can('trx.view.all'))){
     toast('거래 저장 권한이 없습니다.','error'); return;
   }
-  if(isConfirmedLocked(data.clientId,data.date)){toast('최종 결재 완료된 월의 거래는 추가/수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
-  // 편집 시: 원본 거래가 확정 월에 있으면 다른 월로 이동/수정 금지
-  if(data.id){const prev=S.transactions.find(x=>x.id===data.id);if(prev&&isConfirmedLocked(prev.clientId,prev.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}}
+  // 결재 단계 잠금 — **내가 결재한 뒤에는 회수하기 전까지 못 고친다.** 판정은
+  // core.js 한 곳이다(규칙과 같은 색인). 옮겨 갈 달과 원래 있던 달을 둘 다 본다 —
+  // 한쪽만 보면 잠긴 달의 거래를 열린 달로 끌어내 빠져나갈 수 있다.
+  const prevTrx=data.id&&S.transactions.find(x=>x.id===data.id);
+  const blocked=trxEditBlockReason(data.clientId,data.date)||(prevTrx&&trxEditBlockReason(prevTrx.clientId,prevTrx.date));
+  if(blocked){toast(blocked,'error',5000);return;}
   const {doc,addDoc,collection,updateDoc}=fb();
   const isEdit=!!data.id;
   if(isEdit){
@@ -440,7 +448,7 @@ export async function saveTrx(data){
 // 영수증 분실 표시 토글
 export async function toggleReceiptMissing(id){
   const t=S.transactions.find(x=>x.id===id); if(!t)return;
-  if(isConfirmedLocked(t.clientId,t.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
+  const tBlocked=trxEditBlockReason(t.clientId,t.date); if(tBlocked){toast(tBlocked,'error',5000);return;}
   const newVal=!t.receiptMissing;
   const{doc,updateDoc}=fb();
   try{
@@ -660,11 +668,8 @@ export async function reorderTrx(fromId,toId){
   if(!plan.changed.length)return;
 
   const client=S.transactions.find(x=>x.id===fromId)?.clientId;
-  if(isConfirmedLocked(client,plan.date)){
-    toast('최종 결재 완료된 월의 거래는 순서를 바꿀 수 없습니다. '
-      +'(센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error',6000);
-    return;
-  }
+  // 순서도 거래 문서를 고치는 일이다 — 규칙이 같은 단계 잠금을 건다.
+  const orderBlocked=trxEditBlockReason(client,plan.date); if(orderBlocked){toast('순서를 바꿀 수 없습니다. '+orderBlocked,'error',6000);return;}
 
   await batchUpdateDocs(plan.changed.map(c=>
     ({col:COLS.TRANSACTIONS,docId:c.id,data:{sortOrder:c.sortOrder}})));

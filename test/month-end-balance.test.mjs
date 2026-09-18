@@ -174,7 +174,9 @@ test('서버 트리거가 잔액과 함께 색인을 쓴다', () => {
 });
 
 test('보고서가 색인을 먼저 보고, 모르면 계산한다', () => {
-  const src = read('public/modules/report.js');
+  // 계산은 report-accounts.js 로 나갔다 — 화면과 엑셀이 같은 숫자를 찍어야
+  // 하는데, report.js 안에 사적으로 있으면 엑셀 쪽이 순환 없이 못 가져다 쓴다.
+  const src = read('public/modules/report-accounts.js');
   const fn = src.slice(src.indexOf('function getReportAccountRows'));
   const body = fn.slice(0, fn.indexOf('\n}'));
   // **두 줄 다** 확인한다. 전월 말과 당월 말은 따로 계산되므로, 한쪽만

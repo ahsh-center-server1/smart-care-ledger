@@ -27,6 +27,7 @@ import * as Trx      from './transactions.js';
 import * as Rpt      from './report.js';
 import * as Settings from './settings.js';
 import { can, hasLoadedIdentity } from './permissions.js';
+import { ledgerEditBlockedBy, ledgerEditBlockMessage } from '../domain/ledger-edit-window.js';
 
 /** 지금 로그인한 사람의 조회 범위. 규칙이 보는 것과 같은 근거(authz)를 쓴다. */
 export function myScope(field) {
@@ -129,6 +130,10 @@ export async function fetchBaseData(opts) {
     // 색인이라, 여기서 버튼을 숨기면 서버 거부와 어긋나지 않는다.
     const submitted = (data && data.submittedMonths) || {};
     S.submittedMonths = new Set(Object.keys(submitted).filter(k => submitted[k]));
+    // 팀장 결재가 끝난 달 — 팀장의 수정을 막는다(센터장은 아직 고칠 수 있다).
+    // 세 색인이 한 문서에 있어 조회는 여전히 1회다.
+    const approved = (data && data.approvedMonths) || {};
+    S.approvedMonths = new Set(Object.keys(approved).filter(k => approved[k]));
   }
 
   // 당월 수입/지출 집계 (대시보드 카드 표시용)
@@ -230,6 +235,38 @@ export function isSubmittedLocked(clientId, dateStr){
   const ym=(dateStr||'').substring(0,7);
   if(ym.length!==7)return false;
   return !!(S.submittedMonths?.has(lockKey(clientId, ym.substring(0,4), ym.substring(5,7))));
+}
+
+/**
+ * 팀장 결재가 끝난 달인가 — **팀장의 수정만** 막는다.
+ *
+ * 규칙이 읽는 바로 그 색인(config/lockedMonths.approvedMonths)을 본다.
+ * 다른 근거를 쓰면 버튼은 보이는데 서버가 거부한다.
+ */
+export function isTeamApprovedLocked(clientId, dateStr){
+  const ym=(dateStr||'').substring(0,7);
+  if(ym.length!==7)return false;
+  return !!(S.approvedMonths?.has(lockKey(clientId, ym.substring(0,4), ym.substring(5,7))));
+}
+
+/**
+ * 이 거래(또는 이 입주자·날짜)를 고칠 수 없는 이유. 고칠 수 있으면 null.
+ *
+ * 규칙은 하나다 — **내가 결재한 뒤에는 회수하기 전까지 못 고친다.** 그 경계가
+ * 역할마다 다르므로 판정은 domain/ledger-edit-window.js 한 곳에 있고,
+ * 여기는 색인 세 벌을 그 판정에 넘겨 주기만 한다.
+ *
+ * 예전에는 최종 결재(isConfirmedLocked)만 봤다. 그래서 담당자가 제출한 뒤에도
+ * 자기 거래를 고칠 수 있었고, 팀장이 결재한 숫자가 그 뒤에 조용히 달라졌다.
+ */
+export function trxEditBlockReason(clientId, dateStr){
+  const role = String(S.authz?.role || S.user?.role || '');
+  const blockedBy = ledgerEditBlockedBy(role, {
+    submitted:    isSubmittedLocked(clientId, dateStr),
+    teamApproved: isTeamApprovedLocked(clientId, dateStr),
+    confirmed:    isConfirmedLocked(clientId, dateStr),
+  });
+  return blockedBy ? ledgerEditBlockMessage(blockedBy) : null;
 }
 
 /**

@@ -70,15 +70,17 @@ service cloud.firestore {
           // 담당 입주자의 계좌. 범위는 아래 accounts 규칙의 seesClient 가 잡는다.
           'settingsAccount'
         ])
+        // trxEdit 은 **결재 전까지만** 쓸 수 있다. 권한이 아니라 단계가 막는다
+        // (editableStage) — 팀장이 자기 결재를 마치면 그 달은 닫힌다.
         || (role == '팀장' && name in [
-          'navReport', 'navSettings', 'navStaff', 'trxViewAll', 'trxCsv',
+          'navReport', 'navSettings', 'navStaff', 'trxViewAll', 'trxCsv', 'trxEdit',
           'receiptPrint', 'reportOwn', 'reportApproveTeam', 'reportReject',
           'assignmentsManage',
           'settingsClient', 'settingsAccount', 'settingsCategoryCommon'
         ])
         || (role == '센터장' && name in [
           'navReport', 'navSettings', 'navStaff', 'clientViewAll', 'trxViewAll',
-          'trxCsv', 'receiptPrint', 'reportOwn', 'reportViewAll',
+          'trxCsv', 'trxEdit', 'receiptPrint', 'reportOwn', 'reportViewAll',
           'reportApproveCenter', 'reportReject', 'reportRevert', 'settingsArchive',
           'auditView', 'assignmentsManage', 'staffRoleApprove',
           'settingsClient', 'settingsAccount', 'settingsCategoryCommon'
@@ -147,9 +149,49 @@ service cloud.firestore {
         data.get('clientId', '') + '_' + data.get('date', '')[0:7], false) == true;
     }
 
+    /**
+     * 팀장 결재가 끝난 달인가 — **팀장의 수정만** 막는다.
+     *
+     * 세 번째 색인이다(functions/locked-months.cjs). 앞의 둘과 질문이 다르다:
+     *   months           최종 결재가 끝났는가 → 아무도 못 고친다
+     *   submittedMonths  결재 절차에 올라갔는가 → 담당자가 못 고친다
+     *   approvedMonths   팀장 결재가 끝났는가 → 팀장도 못 고친다
+     *
+     * 같은 문서라 조회는 여전히 1회다.
+     */
+    function approvedMonths() {
+      return exists(/databases/$(database)/documents/config/lockedMonths)
+        ? get(/databases/$(database)/documents/config/lockedMonths).data.get('approvedMonths', {})
+        : {};
+    }
+
+    function isApprovedMonth(data) {
+      return approvedMonths().get(
+        data.get('clientId', '') + '_' + data.get('date', '')[0:7], false) == true;
+    }
+
     /** 잠긴 달은 역할이나 관리자 자격으로 직접 우회하지 않는다. */
     function editableMonth(data) {
       return !isLocked(data);
+    }
+
+    /**
+     * **내가 결재한 뒤에는 회수하기 전까지 못 고친다.**
+     *
+     * 경계가 역할마다 다르다 — 담당자는 제출하는 순간, 팀장은 팀장 결재하는
+     * 순간, 센터장은 최종 결재하는 순간(그것은 editableMonth 가 이미 막는다).
+     *
+     * 왜 상태가 아니라 색인인가: 규칙은 거래를 쓸 때 그 달의 보고서를 찾아
+     * 읽을 수 없다. 색인 세 벌이 한 문서에 있어 조회가 늘지 않는다.
+     *
+     * 판정은 public/domain/ledger-edit-window.js 와 같은 표다. 어긋나면
+     * 버튼은 보이는데 서버가 거부한다.
+     */
+    function editableStage(data) {
+      let role = me().get('role', '');
+      return role == '센터장' ? true
+           : role == '팀장'   ? !isApprovedMonth(data)
+           : !isSubmittedMonth(data);
     }
 
     function myUid() { return request.auth.uid; }
@@ -283,6 +325,7 @@ service cloud.firestore {
     //   1. 담당 범위    seesClient — 배정 밖 입주자의 금전 기록은 보이지 않는다
     //   2. 작성자 범위  trxViewAll 이 없으면 본인이 입력한 것만
     //   3. 마감 잠금    최종 결재가 끝난 달은 lockBypass 없이 못 고친다
+    //   4. 결재 단계    내가 결재한 뒤에는 회수하기 전까지 못 고친다(editableStage)
     //
     // ⚠️ 목록 조회는 클라이언트가 where('clientId','==',…)를 걸어야 한다.
     //    규칙 엔진이 결과 전체의 조건 충족을 증명할 수 없으면 쿼리가 통째로
@@ -298,7 +341,8 @@ service cloud.firestore {
                     && isAuthor(request.resource.data)
                     && transactionCreateFieldsOk()
                     && transactionAccountMatches(request.resource.data)
-                    && editableMonth(request.resource.data);
+                    && editableMonth(request.resource.data)
+                    && editableStage(request.resource.data);
 
       // clientId·createdBy 는 불변이다. 바꿀 수 있으면 남의 거래를 자기 것으로
       // 옮기거나, 담당 밖 입주자에게 거래를 밀어 넣을 수 있다.
@@ -311,7 +355,9 @@ service cloud.firestore {
                        == resource.data.get('clientId', '')
                     && transactionAccountMatches(request.resource.data)
                     && editableMonth(resource.data)
-                    && editableMonth(request.resource.data);
+                    && editableMonth(request.resource.data)
+                    && editableStage(resource.data)
+                    && editableStage(request.resource.data);
 
       // 삭제는 제출 전에만. 권한(trxDelete)과 상태(제출 색인)를 함께 본다 —
       // 권한만 보면 결재 중인 달의 거래가 사라지고, 상태만 보면 아무나 지운다.

@@ -47,10 +47,15 @@ test('팀장과 센터장은 검토 권한만 받고 입력 권한을 상속하�
   as('팀장');
   assert.equal(can('report.approve.team'), true);
   assert.equal(can('assignments.manage'), true);
-  // 장부에 직접 쓰는 권한은 검토 역할에 없다 — 이것이 이 테스트의 요점이다.
-  for (const key of ['trx.create', 'trx.edit', 'trx.transfer', 'report.submit']) {
+  // 장부를 **새로 쓰는** 권한은 검토 역할에 없다 — 이것이 이 테스트의 요점이다.
+  for (const key of ['trx.create', 'trx.transfer', 'report.submit']) {
     assert.equal(can(key), false, `팀장이 입력 권한 ${key}를 상속했습니다`);
   }
+  // trx.edit 은 예외다. 결재자는 **자기가 서명하기 전까지** 눈앞의 숫자를
+  // 고칠 수 있어야 한다(오타 하나에 반려하고 담당자를 기다리는 왕복을 없앤다).
+  // 서명한 뒤에는 닫힌다 — 그 경계는 권한이 아니라 단계가 잡는다
+  // (domain/ledger-edit-window.js · firestore.rules 의 editableStage).
+  assert.equal(can('trx.edit'), true);
   as('센터장');
   assert.equal(can('report.approve.center'), true);
   assert.equal(can('settings.archive'), true);

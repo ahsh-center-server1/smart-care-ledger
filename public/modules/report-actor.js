@@ -88,10 +88,17 @@ export const TRANSITION_AUDIT={
   revert:'report.revert',
 };
 
-// 결재 취소 버튼은 되돌아가는 단계에 따라 문구가 달라야 한다
-export const REVERT_LABEL={confirmed:'↩️ 최종 결재 취소',team_approved:'↩️ 팀장 결재 취소',submitted:'✏️ 수정(초안)'};
+// 결재 취소 버튼은 되돌아가는 단계에 따라 문구가 달라야 한다.
+//
+// team_approved 의 문구가 「회수」인 이유: 팀장에게 이 동작은 "센터장에게
+// 올려 놓고 결재 전에 실수를 발견해 내 도장을 거두는 것"이다. 사용자가 그것을
+// 회수라고 부르므로 버튼도 그렇게 부른다 — 무엇으로 되돌아가는지는 괄호에 적는다.
+//
+// submitted 는 여기 없다. 그 상태에서 결재 취소로 초안까지 내려가는 길
+// (「수정(초안)」)은 회수와 결과가 같아 전이표에서 지웠다 —
+// public/domain/report-workflow.js 의 TRANSITIONS 참고.
+export const REVERT_LABEL={confirmed:'↩️ 최종 결재 취소',team_approved:'↩ 회수(팀장 결재 취소)'};
 export const REVERT_MSG={
   confirmed:'최종 결재를 취소하고 팀장결재 상태로 되돌립니다.',
-  team_approved:'팀장 결재를 취소하고 제출 상태로 되돌립니다.',
-  submitted:'제출을 취소하고 초안 상태로 되돌립니다.',
+  team_approved:'내 팀장 결재를 취소하고 제출 상태로 되돌립니다.\n센터장 결재 전에만 할 수 있습니다.',
 };

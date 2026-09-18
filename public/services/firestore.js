@@ -25,12 +25,23 @@ import { COLS } from '../constants.js';
 // (test/report-trx-cache.test.mjs 가 빠진 곳을 잡는다).
 // ─────────────────────────────────────────────
 
+/** 거래가 바뀌었다는 신호. 열려 있는 보고서가 스스로 다시 그리려고 듣는다. */
+export const TRX_WRITE_EVENT = 'scl:trx-written';
+
 /**
- * 거래가 바뀌었다 — 보고서 캐시를 버린다.
+ * 거래가 바뀌었다 — 보고서 캐시를 버리고, 듣는 화면에 알린다.
+ *
+ * 알림을 여기 두는 이유: **모든 거래 쓰기 경로가 이미 이 함수를 지난다.**
+ * 저장하는 쪽(폼·엑셀·일괄삭제)마다 콜백을 실로 꿰면 언젠가 한 곳을 빠뜨리고,
+ * 그러면 보고서에서 고친 숫자가 화면에만 옛날 값으로 남는다.
+ *
  * @param {string} [clientId] 알면 그 입주자 것만. 모르면 무조건 버린다(안전한 쪽).
  */
 export function invalidateReportTrxCache(clientId) {
   if (!clientId || S.rptTrxCache?.clientId === clientId) S.rptTrxCache = null;
+  if (typeof document !== 'undefined' && typeof CustomEvent === 'function') {
+    document.dispatchEvent(new CustomEvent(TRX_WRITE_EVENT, { detail: { clientId: clientId || '' } }));
+  }
 }
 
 /** 배치 항목 중 거래 쓰기가 있으면 캐시를 버린다. */

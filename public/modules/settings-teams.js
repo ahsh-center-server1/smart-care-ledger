@@ -48,7 +48,7 @@ function row(t, i) {
       </label>
     </td>
     <td style="padding:8px 6px;text-align:right;">
-      <button type="button" class="icon-btn" data-team-del="${i}" title="삭제">${iconSvg('trash')}</button>
+      <button type="button" class="icon-btn del" data-team-del="${i}" title="삭제">${iconSvg('trash',18)}</button>
     </td>
   </tr>`;
 }

@@ -10,11 +10,12 @@
 
 'use strict';
 
+import { searchMatchesAny } from './hangul-search.js';
+
 /** 팀이 비어 있는 사람들을 모으는 이름. 마지막에 온다. */
 export const NO_TEAM = '팀 미지정';
 
 const text = (v) => String(v ?? '').trim();
-const norm = (v) => text(v).toLowerCase();
 
 /**
  * ⚠️ 비활성(퇴직) 직원이라도 **이미 담당으로 지정돼 있으면 목록에 남긴다.**
@@ -30,11 +31,12 @@ export function keepsAssignedEvenIfInactive(user, selectedIds) {
   return user.active !== false || selectedIds.includes(text(user.userId));
 }
 
-/** 검색어와 맞는가 — 이름·아이디·팀 중 하나라도. */
+/**
+ * 검색어와 맞는가 — 이름·아이디·팀 중 하나라도.
+ * 초성(「ㅎㄱㄷ」→ 홍길동)도 같은 판정으로 친다.
+ */
 export function matchesQuery(user, query) {
-  const q = norm(query);
-  if (!q) return true;
-  return [user.name, user.userId, user.team].some(v => norm(v).includes(q));
+  return searchMatchesAny([user.name, user.userId, user.team], query);
 }
 
 /**

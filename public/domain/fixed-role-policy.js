@@ -33,15 +33,30 @@ const grants = {
   // 절차가 생겼으므로(아래 근거) 연다:
   //   · saveClient 가 신규 등록을 담당 자동 배정과 함께 트랜잭션으로 처리
   //   · accounts 규칙이 seesClient·입주자 실재·필드 타입을 검사
+  // trx.edit — 검토 역할도 **자기가 결재하기 전까지는** 장부를 고친다.
+  //
+  //   이것이 「작성자와 결재자의 분리」를 깨지 않는 이유: 분리가 막는 것은
+  //   "내가 쓴 것을 내가 결재하는 것"이다. 결재자가 아직 서명하지 않은 숫자를
+  //   고치는 것은 결재 행위가 아니라 검토 행위이고, 그 뒤에 반드시 자기 서명이
+  //   따로 남는다. 반대로 **서명한 뒤에는 아무것도 못 고친다** — 서명이
+  //   가리키는 숫자가 나중에 달라지면 서명이 뜻을 잃기 때문이다.
+  //
+  //   경계는 권한이 아니라 **단계**가 잡는다(domain/ledger-edit-window.js,
+  //   firestore.rules 의 editableStage): 담당자는 제출하는 순간, 팀장은 팀장
+  //   결재하는 순간, 센터장은 최종 결재하는 순간부터 닫힌다.
+  //
+  //   trx.create 는 주지 않는다. 오타·분류를 고치는 것과 없는 거래를 만들어
+  //   넣는 것은 다른 일이고, 후자는 담당자의 일이다.
   '팀장': [
     'nav.report', 'nav.settings', 'nav.staff', 'trx.view.all', 'trx.csv',
+    'trx.edit',
     'receipt.print', 'report.own', 'report.approve.team', 'report.reject',
     'assignments.manage',
     'settings.client', 'settings.account', 'settings.category.common',
   ],
   '센터장': [
     'nav.report', 'nav.settings', 'nav.staff', 'client.view.all', 'trx.view.all',
-    'trx.csv', 'receipt.print', 'report.own', 'report.view.all',
+    'trx.csv', 'trx.edit', 'receipt.print', 'report.own', 'report.view.all',
     'report.approve.center', 'report.reject', 'report.revert',
     'settings.archive', 'audit.view', 'assignments.manage', 'staff.role.approve',
     'settings.client', 'settings.account', 'settings.category.common',

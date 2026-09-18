@@ -736,11 +736,20 @@ describe('마감 잠금 · 불변 필드', () => {
   before(async () => {
     await seed('config/lockedMonths', {
       months: { [`${MY_CLIENT}_2026-03`]: true },
-      // 제출된 달 — 수정은 되고 삭제만 막힌다.
-      submittedMonths: { [`${MY_CLIENT}_2026-05`]: true },
+      // 제출된 달 — 담당자는 여기서 닫히고, 결재자는 아직 열려 있다.
+      submittedMonths: {
+        [`${MY_CLIENT}_2026-05`]: true,
+        [`${MY_CLIENT}_2026-06`]: true,
+        [`${MY_CLIENT}_2026-03`]: true,
+      },
+      // 팀장 결재까지 끝난 달 — 팀장도 닫히고 센터장만 남는다.
+      approvedMonths: { [`${MY_CLIENT}_2026-06`]: true, [`${MY_CLIENT}_2026-03`]: true },
     });
     await seed('transactions/t-submitted', {
       clientId: MY_CLIENT, date: '2026-05-15', amountOut: 1000, createdBy: 'staff-owner',
+    });
+    await seed('transactions/t-team-approved', {
+      clientId: MY_CLIENT, date: '2026-06-15', amountOut: 1000, createdBy: 'staff-owner',
     });
     // 삭제 테스트 전용 — 다른 테스트가 쓰는 문서를 지우면 실행 순서에 따라
     // 그쪽이 깨진다(실제로 t-open 을 쓰다가 그랬다).
@@ -772,9 +781,46 @@ describe('마감 잠금 · 불변 필드', () => {
     await assertFails(deleteDoc(doc(as(ACTORS.담당자), 'transactions/t-submitted')));
   });
 
-  it('제출된 달이라도 수정은 된다 — 삭제만 막는 잠금이다', async () => {
-    await assertSucceeds(
+  // ── 수정은 「내가 결재하기 전」까지 ──
+  //
+  // 결재는 "그 시점의 숫자를 내가 봤다"는 서명이다. 서명한 뒤에 장부가 바뀌면
+  // 서명이 가리키는 대상이 사라진다. 그래서 경계가 역할마다 다르다 —
+  // 담당자는 제출하는 순간, 팀장은 팀장 결재하는 순간, 센터장은 최종 결재.
+  //
+  // 예전에는 제출된 달도 담당자가 그대로 고칠 수 있었고(삭제만 막혔다),
+  // 팀장이 결재한 숫자가 그 뒤에 조용히 달라졌다.
+  it('제출한 달의 거래는 담당자가 고칠 수 없다 — 회수한 뒤에 고친다', async () => {
+    await assertFails(
       updateDoc(doc(as(ACTORS.담당자), 'transactions/t-submitted'), { amountOut: 1500 }));
+  });
+
+  it('제출된 달의 거래를 팀장은 고칠 수 있다 — 아직 결재하지 않았다', async () => {
+    await assertSucceeds(
+      updateDoc(doc(as(ACTORS.팀장), 'transactions/t-submitted'), { amountOut: 1500 }));
+  });
+
+  it('팀장 결재를 마친 달은 팀장도 고칠 수 없다', async () => {
+    await assertFails(
+      updateDoc(doc(as(ACTORS.팀장), 'transactions/t-team-approved'), { amountOut: 1500 }));
+  });
+
+  it('팀장 결재를 마친 달을 센터장은 고칠 수 있다 — 최종 결재 전이다', async () => {
+    await assertSucceeds(
+      updateDoc(doc(as(ACTORS.센터장), 'transactions/t-team-approved'), { amountOut: 1500 }));
+  });
+
+  it('제출한 달에 담당자가 거래를 새로 넣을 수 없다', async () => {
+    await assertFails(setDoc(doc(as(ACTORS.담당자), 'transactions/t-new-submitted'), {
+      clientId: MY_CLIENT, date: '2026-05-20', amountOut: 500, createdBy: 'staff-owner',
+    }));
+  });
+
+  it('검토 역할은 거래를 새로 만들지 않는다 — 고치기만 한다', async () => {
+    for (const actor of [ACTORS.팀장, ACTORS.센터장]) {
+      await assertFails(setDoc(doc(as(actor), 'transactions/t-new-by-reviewer'), {
+        clientId: MY_CLIENT, date: '2026-04-02', amountOut: 1, createdBy: actor.uid,
+      }));
+    }
   });
 
   it('마감된 달의 거래는 삭제도 막힌다', async () => {

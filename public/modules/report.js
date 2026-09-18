@@ -9,13 +9,12 @@ import { S } from '../state.js';
 import { missingIndexMessage } from '../services/fn-errors.js';
 import { iconSvg } from '../utils/icons.js';
 import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
-import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml } from '../utils/ui.js';
+import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml, escAttr } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs } from '../services/firestore.js';
-import { chunkForInQuery } from '../services/in-query.js';
+import { chunkForInQuery, IN_QUERY_CHUNK_SIZE } from '../services/in-query.js';
 import { can, unavailableMessage } from './permissions.js';
-import {
-  calcAccountBalanceAsOf, sumIncomeExpense, monthEndBalanceOf,
-} from '../services/balance.js';
+import { monthEndBalanceOf } from '../services/balance.js';
+import { getReportAccountRows } from './report-accounts.js';
 import { planTransition, availableActions, normalizeStatus } from '../domain/report-workflow.js';
 // 신원 컨텍스트와 결재 문구 표는 report-actor.js 로 나갔다. 화살표는 한 방향이다.
 import {
@@ -26,16 +25,21 @@ export { actorContext, reportActorContext, TRANSITION_AUDIT };
 import { auditLog } from '../services/audit.js';
 import { getImageUrl } from '../services/storage.js';
 import { reportChecklist, checklistLines } from '../domain/report-checklist.js';
-import { getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
-import { isConfirmedLocked } from './core.js';
+import { openModal, getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
+import { isConfirmedLocked, trxEditBlockReason } from './core.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 import { rememberOpenReport, restorableReport } from '../domain/report-session.js';
+import { reportDateLine, approvalStamps, formatStampDate, reportStaffName } from '../domain/report-stamps.js';
 import { sortTrx, planReorder } from '../domain/trx-order.js';
 import { countsInTotals } from '../domain/trx-totals.js';
 import { excludedBadge } from './transactions-widgets.js';
 // 분석 칸(문장 생성·비우기)은 report-summary-panel.js 로 나갔다. 화살표는 한 방향이다.
 import { generateRuleBasedSummary, handleGenSummary, resetSummaryPanel } from './report-summary-panel.js';
 export { generateRuleBasedSummary, handleGenSummary };
+// 엑셀 저장은 report-excel.js 로 나갔다. 화살표는 한 방향이다 —
+// 그쪽은 report.js 를 부르지 않고 report-accounts.js 와 domain/ 만 본다.
+import { exportReportExcel } from './report-excel.js';
+export { exportReportExcel };
 
 // 보고서 필수 고정항목 미납 배너
 function renderRptMandatoryBanner(clientId,year,month,trxList){
@@ -68,6 +72,7 @@ function renderRptMandatoryBanner(clientId,year,month,trxList){
 // 거래가 바뀌면 보고서 캐시를 버린다 — 구현은 services/firestore.js 하나다.
 // 배치 헬퍼가 자기 안에서 부를 수 있어야 해서 그쪽에 둔다(여기에 두면 순환).
 export { invalidateReportTrxCache } from '../services/firestore.js';
+import { TRX_WRITE_EVENT } from '../services/firestore.js';
 import { reportWindow, getClientTrx } from './report-trx-source.js';
 
 // ─────────────────────────────────────────────
@@ -133,24 +138,6 @@ export async function loadAnnual(){
 }
 
 
-function getReportAccountRows(year,month,accs,allTrx){
-  const mStr=`${year}-${String(month).padStart(2,'0')}`;
-  const endDate=mStr+'-31';
-  const prevYM=month===1?`${year-1}-12`:`${year}-${String(month-1).padStart(2,'0')}`;
-  const prevEnd=prevYM+'-31';
-  return (accs||[]).map(a=>{
-    // 잔액은 services/balance.js 하나만 쓴다 (대시보드·설정과 값이 어긋나지 않도록)
-    // 말잔은 계좌 문서의 월말 색인에서 읽는다 — 서버 트리거가 잔액을 다시
-    // 만들 때 함께 적어 둔 것이라 **추가 읽기가 없다.** 색인이 없거나
-    // (백필 전) 구멍이 있으면 null 이 오고, 그때만 거래를 더해 계산한다.
-    const prevBal=monthEndBalanceOf(a,prevYM)??calcAccountBalanceAsOf(a,allTrx,prevEnd);
-    const bal=monthEndBalanceOf(a,mStr)??calcAccountBalanceAsOf(a,allTrx,endDate);
-    // 당월 수입/지출 집계 — 자산이동·취소는 제외
-    const monthTrx=(allTrx||[]).filter(t=>t.accountId===a.id&&(t.date||'').startsWith(mStr));
-    const {totalIn:monthlyIn,totalOut:monthlyOut}=sumIncomeExpense(monthTrx);
-    return {...a,prevBal,monthlyIn,monthlyOut,bal};
-  });
-}
 
 // ─────────────────────────────────────────────
 // 보고서
@@ -240,28 +227,24 @@ export function restoreOpenReport(){
   loadReport();
 }
 
-/**
- * 담당 칸에 적을 이름.
- *
- * 제출되면 제출한 사람, 아직이면 작성한 사람. **지금 보고 있는 사람은 아니다** —
- * 결재자가 열었을 뿐인데 인쇄물의 담당 칸에 결재자 이름이 찍히면, 보는 사람은
- * 결재 라인이 바뀐 것으로 읽는다.
- */
-function reportStaffName(report){
-  return report?.submittedByName||report?.createdByName||'-';
-}
 
 export function renderReportView(){
   const{clientId,year,month,trxList,accs,accountRows,report,summary}=S.reportData;
   const client=S.clients.find(c=>c.id===clientId)||{name:'-'};
-  const now=new Date(), curStatus=report?report.status:'';
+  const curStatus=report?report.status:'';
   resetSummaryPanel();   // 앞사람의 분석이 남지 않게 — 인쇄 영역까지 함께 지운다
   setText('rpt-period',`${year}년 ${month}월 거래 내역`);
-  // 작성일은 보고서가 처음 만들어진 날. 예전에는 항상 오늘을 찍어서
-  // 작년 보고서를 다시 인쇄하면 오늘 날짜가 나왔다.
-  const createdStr=new Date(report?.createdAt||now).toLocaleDateString('ko-KR');
-  setText('rpt-created',`작성: ${createdStr}`);
-  setText('rpt-created-bottom',createdStr);
+  // 인쇄물의 날짜는 **제출일**이다. 작성일은 담당자가 초안을 연 날이라
+  // 결재 라인의 누구에게도 근거가 되지 않는다. 아직 제출 전이면 작성일로
+  // 떨어진다 — 그때는 제출 도장이 없기 때문이다.
+  //
+  // ⚠️ createdAt 은 Firestore Timestamp 다. new Date() 에 그대로 넣으면
+  //    Invalid Date 가 되어 그대로 인쇄됐다. 변환은 domain/report-stamps.js
+  //    한 곳에서만 한다 — 도장은 ISO 문자열이라 한 문서에 두 모양이 섞여 있다.
+  const dateLine=reportDateLine(report);
+  setText('rpt-created',`${dateLine.label}: ${dateLine.date}`);
+  setText('rpt-created-bottom',dateLine.date);
+  setText('rpt-created-label',dateLine.label);
   setText('rpt-client-name',client.name);
   setText('rpt-month-label',`${year}년 ${month}월`);
   // 제출 전이면 **작성자**를 쓴다. 예전에는 지금 보는 사람 이름으로 떨어져서,
@@ -343,6 +326,14 @@ export function renderRptTrxTable(trxList){
     tbody.appendChild(tr); return;
   }
   const confirmedLocked=isConfirmedLocked(S.reportData?.clientId, S.reportData?.trxList?.[0]?.date||'');
+  // 보고서에서 바로 고친다 — 결재자가 오타 하나 때문에 거래내역 탭으로 건너가
+  // 입주자·기간을 다시 고르고 돌아올 이유가 없다.
+  //
+  // **본인이 결재한 뒤에는 닫힌다.** 경계는 역할마다 다르고(담당자는 제출,
+  // 팀장은 팀장 결재, 센터장은 최종 결재) 판정은 core.js 의 trxEditBlockReason
+  // 하나다 — 규칙이 보는 것과 같은 색인이라 버튼과 서버가 어긋나지 않는다.
+  const editBlocked=trxEditBlockReason(S.reportData?.clientId, `${S.reportData?.year}-${String(S.reportData?.month).padStart(2,'0')}-01`);
+  const canEditHere=can('trx.edit')&&!editBlocked;
   const byAccount=new Map();
   (S.reportData?.accs||[]).forEach(a=>byAccount.set(a.id,{account:a,items:[]}));  
   trxList.forEach(t=>{
@@ -360,7 +351,9 @@ export function renderRptTrxTable(trxList){
     group.items.forEach(t=>{    
     const tr=document.createElement('tr');
     tr.dataset.id=t.id;
-    const locked=confirmedLocked; // 최종 결재 완료 보고서는 드래그 불가
+    // 드래그 순서 변경도 거래 문서를 고치는 일이다 — 단계 잠금이 같이 걸리고,
+    // 전용 권한(trx.reorder)이 없는 검토 역할에게는 애초에 잡히지 않는다.
+    const locked=confirmedLocked||!!editBlocked||!can('trx.reorder');
     tr.draggable=!locked;
     tr.style.cssText=`border-bottom:1px solid #f3f4f6;cursor:${locked?'default':'grab'};`;
     let typeTag='';
@@ -381,9 +374,9 @@ export function renderRptTrxTable(trxList){
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#15803d;white-space:nowrap;">${Number(t.amountIn||0)>0?Number(t.amountIn).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#b91c1c;white-space:nowrap;">${Number(t.amountOut||0)>0?Number(t.amountOut).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:center;${t.type==='지출'&&!hasReceipt(t)&&t.receiptMissing?'background:#fee2e2;':''}">${
-        hasReceipt(t)?`<button class="icon-btn rpt-rv" title="증빙 보기">${iconSvg('clip')}</button>`:
+        hasReceipt(t)?`<button class="icon-btn rpt-rv" title="증빙 보기">${iconSvg('clip',18)}</button>`:
         (t.receiptMissing?'<span style="font-size:10px;font-weight:700;color:#b91c1c;background:#fecaca;padding:2px 6px;border-radius:4px;">분실</span>':'')
-      }</td>`;
+      }${canEditHere?`<button class="icon-btn edit rpt-edit no-print" title="이 거래 수정">${iconSvg('pen',18)}</button>`:''}</td>`;
     if(!locked){
       tr.addEventListener('dragstart',e=>{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',t.id);tr.style.opacity='0.4';});
       tr.addEventListener('dragend',()=>tr.style.opacity='1');
@@ -391,6 +384,8 @@ export function renderRptTrxTable(trxList){
       tr.addEventListener('dragleave',()=>tr.style.background='');
       tr.addEventListener('drop',e=>{e.preventDefault();tr.style.background='';const fid=e.dataTransfer.getData('text/plain');if(fid!==t.id)reorderRptTrx(fid,t.id);});
     }
+    const edBtn=tr.querySelector('.rpt-edit');
+    if(edBtn)edBtn.addEventListener('click',()=>openTrxFromReport(t));
     const rvBtn=tr.querySelector('.rpt-rv');
     if(rvBtn)rvBtn.addEventListener('click',async()=>{
       try{const a=await receiptAccess(t);openReceiptModal(a.url,t.id,{contentType:a.contentType});}
@@ -398,6 +393,41 @@ export function renderRptTrxTable(trxList){
     });
     tbody.appendChild(tr);
     });      
+  });
+}
+
+/**
+ * 보고서에서 거래 하나를 연다. 저장하면 **보고서를 다시 그린다.**
+ *
+ * 수기 입력 폼을 그대로 쓴다 — 보고서 전용 폼을 따로 두면 같은 검증이 두 벌이
+ * 되고, 둘 중 하나만 고쳐진다(이 앱이 이미 겪은 일이다).
+ *
+ * 다시 읽는 비용은 한 달치다. 쓰기가 보고서 캐시를 버리므로(§12-1) 여기서
+ * 따로 비울 것은 없고, loadReport 가 같은 창으로 다시 조회한다.
+ */
+export function openTrxFromReport(trx){
+  const blocked=trxEditBlockReason(trx.clientId,trx.date);
+  if(blocked){toast(blocked,'error',5000);return;}
+  openModal('trx',trx);
+}
+
+/**
+ * 거래가 바뀌면 열려 있는 보고서를 다시 그린다.
+ *
+ * 신호는 모든 거래 쓰기가 지나는 자리에서 온다(services/firestore.js 의
+ * invalidateReportTrxCache). 저장하는 쪽마다 콜백을 꿰지 않는 이유는 그쪽에
+ * 적어 두었다. 다시 읽는 것은 한 달치이고, 캐시는 방금 버려졌다.
+ */
+if(typeof document!=='undefined'){
+  document.addEventListener(TRX_WRITE_EVENT,(e)=>{
+    const open=S.reportData;
+    if(!open)return;
+    const who=e?.detail?.clientId;
+    if(who&&who!==open.clientId)return;
+    // 보고서 탭이 화면에 없으면 다시 읽지 않는다 — 거래내역 탭에서 입력할
+    // 때마다 보고서를 다시 조회하면 월초 읽기가 그대로 두 배가 된다.
+    if(document.getElementById('view-report')?.style.display==='none')return;
+    loadReport();
   });
 }
 
@@ -621,18 +651,70 @@ export function renderComments(report,curStatus){
     div.style.cssText='margin-bottom:12px;';
     div.innerHTML='<div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:6px;">'+s.label+'</div>';
     if(s.editable){
-      div.innerHTML+='<textarea id="comment-'+s.key+'" style="width:100%;min-height:60px;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font-size:14px;font-family:inherit;resize:vertical;" placeholder="'+s.label+'을 입력하세요...">'+escHtml(val)+'</textarea>'
-        +'<button onclick="saveComment(\''+s.key+'\')" style="margin-top:4px;font-size:12px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:4px 12px;border-radius:6px;cursor:pointer;">저장</button>';
+      div.innerHTML+='<textarea id="comment-'+s.key+'" data-saved="'+escAttr(val)+'" style="width:100%;min-height:60px;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font-size:14px;font-family:inherit;resize:vertical;" placeholder="'+s.label+'을 입력하세요...">'+escHtml(val)+'</textarea>'
+        +'<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">'
+        +'<button onclick="saveComment(\''+s.key+'\')" style="font-size:12px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:4px 12px;border-radius:6px;cursor:pointer;">저장</button>'
+        +'<span class="comment-hint" data-for="'+s.key+'" style="font-size:11px;color:var(--muted);">자리를 옮기면 자동 저장됩니다.</span>'
+        +'</div>';
     } else {
       div.innerHTML+='<div style="font-size:14px;color:#374151;min-height:30px;padding:8px 10px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">'+escHtml(val||'(없음)')+'</div>';
     }
     el.appendChild(div);
+    // ── 자동 저장 ──
+    //
+    // 의견을 적어 놓고 저장을 누르지 않은 채 결재를 누르면 **글이 사라졌다.**
+    // 결재는 화면을 다시 그리고(loadReport), 다시 그린 칸은 서버에 저장된
+    // 값으로 채워지기 때문이다. 반려 사유만 전이와 함께 실려 갔고 나머지는
+    // 아니었다.
+    //
+    // 두 겹으로 막는다. 여기서는 **칸을 떠날 때** 저장하고, 결재 실행부에서는
+    // 떠나지 않은 칸의 내용까지 전이에 실어 보낸다(commentDrafts). 한 겹만
+    // 두면 「적고 바로 결재」(포커스를 떠나지 않는 경로)나 「적고 다른 탭」이
+    // 각각 빠진다.
+    if(s.editable){
+      const ta=div.querySelector('#comment-'+s.key);
+      if(ta)ta.addEventListener('blur',()=>autoSaveComment(s.key));
+    }
   });
 }
 
-export async function saveComment(key){
-  if(!S.reportData){toast('먼저 조회하세요.','error');return;}
-  const val=document.getElementById('comment-'+key)?.value||'';
+/** 지금 화면에 열려 있는 의견 초안 — 저장되지 않은 것만. */
+export function commentDrafts(){
+  const out={};
+  for(const key of ['staffComment','leaderComment','centerComment']){
+    const ta=document.getElementById('comment-'+key);
+    if(!ta)continue;                      // 내가 쓸 수 있는 칸이 아니다
+    if(ta.value===(ta.dataset.saved||''))continue;
+    out[key]=ta.value;
+  }
+  return out;
+}
+
+/**
+ * 칸을 떠날 때 조용히 저장한다.
+ *
+ * 토스트를 띄우지 않는다 — 글을 쓰다 마우스를 옮길 때마다 알림이 뜨면
+ * 사용자는 알림을 읽지 않게 되고, 그러면 정말 필요한 알림도 안 읽는다.
+ * 실패했을 때만 말한다.
+ */
+async function autoSaveComment(key){
+  const ta=document.getElementById('comment-'+key);
+  if(!ta||ta.value===(ta.dataset.saved||''))return false;
+  const hint=document.querySelector('.comment-hint[data-for="'+key+'"]');
+  if(hint){hint.textContent='저장 중…';hint.style.color='var(--muted)';}
+  const ok=await saveComment(key,{quiet:true});
+  if(hint){
+    hint.textContent=ok?'자동 저장됨':'자동 저장 실패 — 저장 버튼을 눌러 주세요.';
+    hint.style.color=ok?'#15803d':'#dc2626';
+  }
+  return ok;
+}
+
+export async function saveComment(key,opts){
+  if(!S.reportData){toast('먼저 조회하세요.','error');return false;}
+  const ta=document.getElementById('comment-'+key);
+  const val=ta?.value||'';
+  const quiet=!!(opts&&opts.quiet);
   const{clientId,year,month}=S.reportData;
   try{
     // reports 는 서버만 쓴다 — 결재 상태가 브라우저에서 바뀌면 안 되기 때문이다.
@@ -641,10 +723,12 @@ export async function saveComment(key){
     if(!S.reportData.report)S.reportData.report={clientId,year,month,status:'draft'};
     S.reportData.report.id=res.data.reportId;
     S.reportData.report[key]=val;
+    if(ta)ta.dataset.saved=val;   // 다음 blur 가 같은 값을 또 보내지 않게
     patchReportCache(S.reportData.report);
     renderReportList();
-    toast('의견이 저장되었습니다.','success',2000);
-  }catch(e){toast('의견 저장 실패: '+(e.message||e),'error',5000);}
+    if(!quiet)toast('의견이 저장되었습니다.','success',2000);
+    return true;
+  }catch(e){toast('의견 저장 실패: '+(e.message||e),'error',5000);return false;}
 }
 
 // ─────────────────────────────────────────────
@@ -686,9 +770,16 @@ export function renderApproval(report,curStatus){
 
   // 결재란
   const grid=document.getElementById('rpt-approval-grid'); grid.innerHTML='';
-  [{label:'담당',name:report?.submittedByName||''},{label:'팀장',name:report?.teamApprovedByName||''},{label:'센터장',name:report?.centerApprovedByName||''}].forEach((s,i,arr)=>{
+  // 이름도 날짜도 **결재한 그 순간 문서에 박힌 값**이다(domain/report-stamps.js).
+  // 지금의 담당 배정에서 다시 찾으면, 담당자나 팀장이 바뀐 뒤 과거 결재
+  // 문서의 결재란이 조용히 달라진다 — 공문서 산출물이라 그럴 수 없다.
+  approvalStamps(report).forEach((s,i,arr)=>{
     const cell=document.createElement('div'); cell.style.cssText='width:88px;'+(i<arr.length-1?'border-right:1px solid #d1d5db;':'');
-    cell.innerHTML='<div style="background:#f9fafb;padding:6px 8px;text-align:center;font-size:11px;font-weight:700;color:#6b7280;border-bottom:1px solid #d1d5db;">'+s.label+'</div><div style="height:58px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:7px;">'+(s.name?'<div style="font-size:12px;font-weight:700;color:#374151;">'+s.name+'</div>':'')+'</div>';
+    cell.innerHTML='<div style="background:#f9fafb;padding:6px 8px;text-align:center;font-size:11px;font-weight:700;color:#6b7280;border-bottom:1px solid #d1d5db;">'+escHtml(s.label)+'</div>'
+      +'<div style="height:58px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:7px;gap:2px;">'
+      +(s.name?'<div style="font-size:12px;font-weight:700;color:#374151;">'+escHtml(s.name)+'</div>':'')
+      +(s.date?'<div style="font-size:10px;color:#9ca3af;">'+escHtml(s.date)+'</div>':'')
+      +'</div>';
     grid.appendChild(cell);
   });
 
@@ -698,7 +789,8 @@ export function renderApproval(report,curStatus){
   [{key:'submitted',label:'제출',icon:'✍️',name:report?.submittedByName||'',date:report?.submittedAt||''},{key:'team_approved',label:'팀장 결재',icon:'✔️',name:report?.teamApprovedByName||'',date:report?.teamApprovedAt||''},{key:'confirmed',label:'센터장 최종',icon:'🏁',name:report?.centerApprovedByName||'',date:report?.centerApprovedAt||''}].forEach((s,i,arr)=>{
     const done=curIdx>=ORDER.indexOf(s.key);
     const el=document.createElement('div'); el.style.cssText='display:flex;align-items:center;';
-    el.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;"><div style="width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;background:'+(done?'var(--blue)':'#f1f5f9')+';color:'+(done?'#fff':'#94a3b8')+';">'+(done?s.icon:i+1)+'</div><div style="font-size:11px;font-weight:700;margin-top:5px;color:'+(done?'var(--blue)':'#94a3b8')+';">'+s.label+'</div>'+(s.name&&done?'<div style="font-size:10px;color:#94a3b8;">'+s.name+'</div>':'')+'</div>';
+    const stampDate=done?formatStampDate(s.date):'';
+    el.innerHTML='<div style="display:flex;flex-direction:column;align-items:center;"><div style="width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;background:'+(done?'var(--blue)':'#f1f5f9')+';color:'+(done?'#fff':'#94a3b8')+';">'+(done?s.icon:i+1)+'</div><div style="font-size:11px;font-weight:700;margin-top:5px;color:'+(done?'var(--blue)':'#94a3b8')+';">'+s.label+'</div>'+(s.name&&done?'<div style="font-size:10px;color:#94a3b8;">'+escHtml(s.name)+'</div>':'')+(stampDate?'<div style="font-size:10px;color:#cbd5e1;">'+escHtml(stampDate)+'</div>':'')+'</div>';
     track.appendChild(el);
     if(i<arr.length-1){const line=document.createElement('div');line.style.cssText='flex:1;height:2px;margin:0 6px;background:'+(done&&curIdx>ORDER.indexOf(s.key)?'var(--blue)':'#e2e8f0')+';';track.appendChild(line);}
   });
@@ -710,11 +802,10 @@ export function renderApproval(report,curStatus){
     '💾 임시저장':'제출하지 않고 작성 중인 상태로 저장합니다.',
     '📤 제출':'담당자가 팀장에게 결재를 요청합니다. 제출 후에는 회수하기 전까지 수정할 수 없어요.',
     '📤 직접 제출':'담당 팀장으로서 제출과 팀장 결재를 한 번에 처리합니다.',
-    '↩ 회수':'내가 제출한 보고서를 다시 가져와 작성 상태로 되돌립니다. (팀장 결재 전)',
-    '↩️ 반려':'담당자에게 되돌려 보내 수정을 요청합니다. 사유를 의견란에 적어 주세요.',
-    '↩️ 팀장 결재 취소':'팀장 결재를 취소하고 제출 상태로 되돌립니다.',
+    '↩ 회수':'내가 제출한 보고서를 다시 가져와 작성 상태로 되돌립니다. (팀장 결재 전, 작성자 본인만)',
+    '↩️ 반려':'결재하기 전에 오류를 발견했을 때, 담당자에게 돌려보내 수정을 요청합니다. 사유를 의견란에 적어 주세요.',
+    '↩ 회수(팀장 결재 취소)':'센터장 결재 전에 내 팀장 결재를 거두고 제출 상태로 되돌립니다.',
     '↩️ 최종 결재 취소':'최종 결재를 취소하고 팀장 결재 상태로 되돌립니다.',
-    '✏️ 수정(초안)':'제출을 취소하고 작성 초안 상태로 되돌려 다시 수정할 수 있게 합니다.',
     '🔓 반려 해제':'담당자가 부재일 때 반려 상태를 풀고 초안으로 되돌립니다.',
     '🗑️ 삭제':'보고서를 완전히 삭제합니다.',
   };
@@ -802,12 +893,17 @@ export async function applyReportTransition(action,extraSet){
   const plan=planTransition(action,report?.status,reportActorContext());
   if(!plan.ok){toast(plan.reason,'error',4000);return false;}
 
+  // 저장하지 않은 의견을 함께 싣는다. 저장 버튼을 누르지 않고 결재를 누르면
+  // 다시 그린 화면이 서버 값으로 덮어써서 **글이 사라졌다.**
+  // 명시적으로 넘어온 값(반려 사유)이 이긴다 — 그쪽은 사용자가 방금 확인한 값이다.
+  const extra={...commentDrafts(),...(extraSet||{})};
+
   showLoading(true);
   try{
     const res=await window._fbFn.call('applyReportTransition')({
       clientId,year,month,action,
       summary:JSON.stringify({totalIn:summary.totalIn,totalOut:summary.totalOut,balance:summary.balance}),
-      extraSet:extraSet||{},
+      extraSet:extra,
       userName:S.user?.name||'',
     });
     const out=res.data||{};
@@ -823,7 +919,7 @@ export async function applyReportTransition(action,extraSet){
     // 바뀐 것은 이 보고서 한 건이다. 목록 전체를 다시 읽지 않는다.
     // 지운 도장은 캐시에서도 비운다 — 그러지 않으면 회수한 뒤에도 목록의
     // '제출자' 칸에 이전 이름이 남는다.
-    const cachePatch={status:out.to,...(extraSet||{})};
+    const cachePatch={status:out.to,...extra};
     for(const f of (out.cleared||[]))cachePatch[f]='';
     patchReportCache({...(S.reportData.report||{}),clientId,year,month,...cachePatch,id:out.reportId});
     await loadReport(); renderReportList();
@@ -966,27 +1062,69 @@ function filterPendingForUser(list){
   });
 }
 
-// 대시보드 진입/로그인 시 결재 대기 신호 갱신 (보고서 탭을 열지 않아도 표시)
-// 대기 보고서(submitted/team_approved)만 조회해 read 비용 최소화.
-export async function refreshPendingApprovalBadge(){
-  const isApprover=can('report.approve.team')||can('report.approve.center');
+/** 배지·배너를 한 번에 — 두 곳에서 따로 쓰면 숫자가 어긋난다. */
+export function paintPendingApprovalSignals(count){
   const badge=document.getElementById('nav-rpt-badge');
   const banner=document.getElementById('dash-approval-banner');
-  if(!isApprover){ if(badge)badge.style.display='none'; if(banner)banner.style.display='none'; return; }
+  if(badge){
+    if(count>0){badge.textContent=String(count);badge.style.display='inline';}
+    else badge.style.display='none';
+  }
+  if(banner){
+    if(count>0){
+      banner.style.display='flex';
+      banner.textContent=`⏳ 결재 대기 ${count}건 — 눌러서 보고서로 이동`;
+    }else banner.style.display='none';
+  }
+}
+
+/** 내가 결재할 차례가 되는 상태들. 없으면 나는 결재자가 아니다. */
+function myApprovalStatuses(){
+  const out=[];
+  if(can('report.approve.team'))out.push('submitted');
+  if(can('report.approve.center'))out.push('team_approved');
+  return out;
+}
+
+// 대시보드 진입/로그인 시 결재 대기 신호 갱신 (보고서 탭을 열지 않아도 표시)
+// 대기 보고서만 조회해 read 비용 최소화.
+export async function refreshPendingApprovalBadge(){
+  const statuses=myApprovalStatuses();
+  if(!statuses.length){ paintPendingApprovalSignals(0); return; }
+  // 이미 목록을 읽어 두었으면 그것을 쓴다 — 보고서 탭을 한 번 연 뒤에는
+  // 대시보드로 돌아올 때마다 같은 조회를 또 할 이유가 없다.
+  if(Array.isArray(S.reportList)){
+    paintPendingApprovalSignals(filterPendingForUser(S.reportList).length);
+    return;
+  }
   let list=[];
   try{
     const{getDocs,collection,query,where}=fb();
-    const snap=await getDocs(query(collection(fdb(),COLS.REPORTS),where('status','in',['submitted','team_approved'])));
-    list=snap.docs.map(d=>({id:d.id,...d.data()}));
-  }catch(e){ return; }
-  const pending=filterPendingForUser(list);
-  if(badge){ if(pending.length){badge.textContent=pending.length;badge.style.display='inline';}else badge.style.display='none'; }
-  if(banner){
-    if(pending.length){
-      banner.style.display='flex';
-      banner.textContent=`⏳ 결재 대기 ${pending.length}건 — 눌러서 보고서로 이동`;
-    }else banner.style.display='none';
+    const db=fdb();
+    if(can('report.view.all')){
+      const snap=await getDocs(query(collection(db,COLS.REPORTS),where('status','in',statuses)));
+      list=snap.docs.map(d=>({id:d.id,...d.data()}));
+    }else{
+      // 팀장은 report.view.all 을 갖지 않는다. 전 보고서를 훑는 조회는 규칙이
+      // **쿼리째** 거부하므로(가져온 뒤 걸러내는 방식으로는 안 된다) 배지가
+      // 조용히 뜨지 않았다 — 보고서 탭을 눌러 목록을 읽어야 그때 숫자가 나왔다.
+      // 담당 범위로 좁혀서 로그인 직후에도 같은 숫자가 나오게 한다.
+      //
+      // 같음만 걸므로 복합 인덱스는 필요 없다. 다만 `in` 두 개의 곱이
+      // 30(분리 조건 상한)을 넘지 않도록 조각 크기를 상태 수로 나눈다.
+      const chunkSize=Math.floor(IN_QUERY_CHUNK_SIZE/statuses.length);
+      for(const chunk of chunkForInQuery((S.clients||[]).map(c=>c.id),chunkSize)){
+        const snap=await getDocs(query(collection(db,COLS.REPORTS),
+          where('clientId','in',chunk),where('status','in',statuses)));
+        snap.docs.forEach(d=>list.push({id:d.id,...d.data()}));
+      }
+    }
+  }catch(e){
+    // 조용히 멈추면 "배지가 원래 안 뜨는 것"으로 읽힌다 — 콘솔에는 남긴다.
+    console.warn('[report] 결재 대기 조회 실패:',e);
+    return;
   }
+  paintPendingApprovalSignals(filterPendingForUser(list).length);
 }
 
 /** confirmedMonths 키 — 서버 트리거와 같은 형식이어야 하므로 lockKey를 쓴다. */
@@ -1005,19 +1143,31 @@ export function patchReportCache(report){
   if(i>=0)S.reportList[i]={...S.reportList[i],...report};
   else S.reportList.push({...report});
   S.reportList.sort((a,b)=>(b.year*100+b.month)-(a.year*100+a.month));
-  // 결재 완료 월 잠금도 함께 유지한다.
+  // 단계 색인 세 벌도 함께 유지한다 — 결재하자마자 수정 버튼이 사라져야 한다.
+  // 서버가 같은 문서를 고치지만, 그 문서를 다시 읽는 것은 다음 로그인이다.
   // ⚠️ 목록에서 통째로 다시 만들면 안 된다 — 목록은 최근 연도만 담으므로
   //    예전 연도의 잠금이 통째로 풀린다.
-  if(!S.confirmedMonths)S.confirmedMonths=new Set();
-  if(report.status==='confirmed')S.confirmedMonths.add(monthKey(report));
-  else S.confirmedMonths.delete(monthKey(report));
+  const key=monthKey(report);
+  const st=normalizeStatus(report.status);
+  const sync=(name,on)=>{
+    if(!S[name])S[name]=new Set();
+    if(on)S[name].add(key); else S[name].delete(key);
+  };
+  sync('confirmedMonths', st==='confirmed');
+  sync('approvedMonths',  st==='team_approved'||st==='confirmed');
+  sync('submittedMonths', st==='submitted'||st==='team_approved'||st==='confirmed');
 }
 
 /** 보고서가 삭제되면 캐시에서도 뺀다 */
 export function dropReportFromCache(reportId){
   if(!Array.isArray(S.reportList))return;
   const r=S.reportList.find(x=>x.id===reportId);
-  if(r)S.confirmedMonths?.delete(monthKey(r));
+  if(r){
+    const key=monthKey(r);
+    S.confirmedMonths?.delete(key);
+    S.approvedMonths?.delete(key);
+    S.submittedMonths?.delete(key);
+  }
   S.reportList=S.reportList.filter(x=>x.id!==reportId);
 }
 
@@ -1103,8 +1253,7 @@ export function renderReportList(){
     });
     const pendingWrap=document.getElementById('rpt-pending-wrap');
     if(pendingWrap)pendingWrap.style.display=can('report.view.all')?'block':'none';
-    const badge=document.getElementById('nav-rpt-badge');
-    if(badge){if(pending.length>0){badge.textContent=pending.length;badge.style.display='inline';}else badge.style.display='none';}
+    paintPendingApprovalSignals(pending.length);
   }
   // 담당자 역할은 자신이 담당하는 대상자의 보고서만 표시 (S.clients는 이미 필터됨)
   const myClientIds=new Set(S.clients.map(c=>c.id));
@@ -1122,7 +1271,7 @@ export function renderReportList(){
     <th style="padding:8px 10px;text-align:center;font-weight:700;color:var(--muted);font-size:12px;text-transform:uppercase;">월</th>
     <th style="padding:8px 10px;text-align:center;font-weight:700;color:var(--muted);font-size:12px;text-transform:uppercase;">상태</th>
     <th style="padding:8px 10px;text-align:left;font-weight:700;color:var(--muted);font-size:12px;text-transform:uppercase;">제출자</th>
-    <th style="padding:8px 10px;text-align:left;font-weight:700;color:var(--muted);font-size:12px;text-transform:uppercase;">작성일</th>
+    <th style="padding:8px 10px;text-align:left;font-weight:700;color:var(--muted);font-size:12px;text-transform:uppercase;">제출일</th>
   </tr></thead>`;
   const tbody=document.createElement('tbody');
   visibleList.forEach(r=>{
@@ -1135,7 +1284,7 @@ export function renderReportList(){
       <td style="padding:9px 10px;text-align:center;color:var(--sub);">${r.month}월</td>
       <td style="padding:9px 10px;text-align:center;"><span class="${STATUS_CLASSES[r.status]||'rs-draft'}">${escHtml(STATUS_LABELS[r.status]||r.status)}</span></td>
       <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${escHtml(r.submittedByName||'-')}</td>
-      <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${r.createdAt?new Date(r.createdAt).toLocaleDateString('ko-KR'):'-'}</td>`;
+      <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${escHtml(reportDateLine(r).date)}</td>`;
     tr.addEventListener('mouseenter',()=>{if(S.reportData?.report?.id!==r.id)tr.style.background='var(--bg)';});
     tr.addEventListener('mouseleave',()=>{if(S.reportData?.report?.id!==r.id)tr.style.background='';});
     tr.addEventListener('click',()=>{
@@ -1159,205 +1308,4 @@ export function renderReportList(){
   });
   table.appendChild(tbody);
   el.appendChild(table);
-}
-
-export async function exportReportExcel(){
-  if(!S.reportData){toast('먼저 조회하세요.','error');return;}
-  const{clientId,year,month,trxList,accs,accountRows,report,summary}=S.reportData;
-  const client=S.clients.find(c=>c.id===clientId)||{name:'-'};
-  const XLSX=window.XLSX;
-  if(!XLSX){toast('엑셀 라이브러리가 없습니다.','error');return;}
-
-  // ── 스타일 헬퍼 ──
-  const border={top:{style:'thin',color:{rgb:'E5E7EB'}},bottom:{style:'thin',color:{rgb:'E5E7EB'}},left:{style:'thin',color:{rgb:'E5E7EB'}},right:{style:'thin',color:{rgb:'E5E7EB'}}};
-  const sTitle={font:{name:'맑은 고딕',sz:18,bold:true,color:{rgb:'111827'}},alignment:{horizontal:'left',vertical:'center'}};
-  const sBrand={font:{name:'맑은 고딕',sz:9,bold:true,color:{rgb:'9CA3AF'}},alignment:{horizontal:'left',vertical:'center'}};
-  const sPeriod={font:{name:'맑은 고딕',sz:11,color:{rgb:'6B7280'}},alignment:{horizontal:'left',vertical:'center'}};
-  const sMetaLabel={font:{name:'맑은 고딕',sz:9,bold:true,color:{rgb:'9CA3AF'}},alignment:{horizontal:'left',vertical:'center'},fill:{fgColor:{rgb:'F9FAFB'}}};
-  const sMetaValue={font:{name:'맑은 고딕',sz:12,bold:true,color:{rgb:'111827'}},alignment:{horizontal:'left',vertical:'center'},fill:{fgColor:{rgb:'F9FAFB'}}};
-  const sSectionLabel={font:{name:'맑은 고딕',sz:10,bold:true,color:{rgb:'9CA3AF'}},alignment:{horizontal:'left',vertical:'center'}};
-  const sSumIncLbl={font:{name:'맑은 고딕',sz:10,bold:true,color:{rgb:'16A34A'}},alignment:{horizontal:'center',vertical:'center'},fill:{fgColor:{rgb:'F0FDF4'}},border};
-  const sSumIncVal={font:{name:'맑은 고딕',sz:14,bold:true,color:{rgb:'15803D'}},alignment:{horizontal:'center',vertical:'center'},fill:{fgColor:{rgb:'F0FDF4'}},border,numFmt:'#,##0"원"'};
-  const sSumOutLbl={font:{name:'맑은 고딕',sz:10,bold:true,color:{rgb:'DC2626'}},alignment:{horizontal:'center',vertical:'center'},fill:{fgColor:{rgb:'FFF1F2'}},border};
-  const sSumOutVal={font:{name:'맑은 고딕',sz:14,bold:true,color:{rgb:'B91C1C'}},alignment:{horizontal:'center',vertical:'center'},fill:{fgColor:{rgb:'FFF1F2'}},border,numFmt:'#,##0"원"'};
-  const sSumBalLbl={font:{name:'맑은 고딕',sz:10,bold:true,color:{rgb:'2563EB'}},alignment:{horizontal:'center',vertical:'center'},fill:{fgColor:{rgb:'EFF6FF'}},border};
-  const sSumBalVal={font:{name:'맑은 고딕',sz:14,bold:true,color:{rgb:'1D4ED8'}},alignment:{horizontal:'center',vertical:'center'},fill:{fgColor:{rgb:'EFF6FF'}},border,numFmt:'#,##0"원"'};
-  const sThead={font:{name:'맑은 고딕',sz:10,bold:true,color:{rgb:'6B7280'}},alignment:{horizontal:'center',vertical:'center'},fill:{fgColor:{rgb:'F9FAFB'}},border};
-  const sTd={font:{name:'맑은 고딕',sz:10,color:{rgb:'374151'}},alignment:{horizontal:'left',vertical:'center'},border};
-  const sTdCtr={...sTd,alignment:{horizontal:'center',vertical:'center'}};
-  const sTdNum={...sTd,alignment:{horizontal:'right',vertical:'center'},numFmt:'#,##0"원"'};
-  const sTdNumIn={...sTdNum,font:{name:'맑은 고딕',sz:10,color:{rgb:'15803D'}}};
-  const sTdNumOut={...sTdNum,font:{name:'맑은 고딕',sz:10,color:{rgb:'B91C1C'}}};
-  const sTdPct={...sTd,alignment:{horizontal:'right',vertical:'center'},numFmt:'0"%"'};
-  const sFootLbl={font:{name:'맑은 고딕',sz:10,bold:true,color:{rgb:'374151'}},alignment:{horizontal:'center',vertical:'center'},fill:{fgColor:{rgb:'F3F4F6'}},border};
-  const sFootIn={...sTdNumIn,font:{name:'맑은 고딕',sz:11,bold:true,color:{rgb:'15803D'}},fill:{fgColor:{rgb:'F3F4F6'}}};
-  const sFootOut={...sTdNumOut,font:{name:'맑은 고딕',sz:11,bold:true,color:{rgb:'B91C1C'}},fill:{fgColor:{rgb:'F3F4F6'}}};
-  const sCmtLabel={font:{name:'맑은 고딕',sz:10,bold:true,color:{rgb:'9CA3AF'}},alignment:{horizontal:'left',vertical:'top'},fill:{fgColor:{rgb:'F9FAFB'}},border};
-  const sCmtValue={font:{name:'맑은 고딕',sz:11,color:{rgb:'111827'}},alignment:{horizontal:'left',vertical:'top',wrapText:true},border};
-
-  const ws={};
-  const merges=[];
-  const rows=[];
-  let r=0;
-  const setRow=(h)=>{rows[r]={hpt:h};};
-  const set=(c,addr,style,val,fmt)=>{ws[addr]={t:typeof val==='number'?'n':'s',v:val,s:style};if(fmt)ws[addr].z=fmt;};
-  const cell=(col,row)=>XLSX.utils.encode_cell({c:col,r:row});
-  // 병합 범위 전체에 스타일을 채워 테두리가 끊기지 않도록 함
-  // 값은 첫 셀에만, 나머지는 빈 문자열 + 동일 스타일
-  const mergeCell=(c1,c2,row,style,val,fmt)=>{
-    for(let cc=c1;cc<=c2;cc++){
-      const addr=cell(cc,row);
-      if(cc===c1){set(null,addr,style,val,fmt);}
-      else {ws[addr]={t:'s',v:'',s:style};}
-    }
-    if(c2>c1)merges.push({s:{c:c1,r:row},e:{c:c2,r:row}});
-  };
-  const COLS_N=8; // 컬럼 0~7 (A~H)
-
-  // ── 1. 타이틀 블록 ──
-  mergeCell(0,COLS_N-1,r,sBrand,'CARE LEDGER');         setRow(20); r++;
-  mergeCell(0,COLS_N-1,r,sTitle,'월별 금전관리 보고서');  setRow(30); r++;
-  mergeCell(0,COLS_N-1,r,sPeriod,year+'년 '+month+'월 거래 내역'); setRow(20); r++;
-  r++; // 공백 행
-
-  // ── 2. 메타데이터 (입주자/기간/담당자) ──
-  mergeCell(0,1,r,sMetaLabel,'입주자');
-  mergeCell(2,3,r,sMetaLabel,'기간');
-  mergeCell(4,COLS_N-1,r,sMetaLabel,'담당자');
-  setRow(18); r++;
-  mergeCell(0,1,r,sMetaValue,client.name);
-  mergeCell(2,3,r,sMetaValue,year+'년 '+month+'월');
-  mergeCell(4,COLS_N-1,r,sMetaValue,reportStaffName(report));
-  setRow(22); r++;
-  r++;
-
-  // ── 3. 수입/지출/잔액 요약 ──
-  mergeCell(0,COLS_N-1,r,sSectionLabel,'수입 / 지출 요약'); setRow(18); r++;
-  // 라벨 행
-  mergeCell(0,1,r,sSumIncLbl,'총 수입');
-  mergeCell(2,4,r,sSumOutLbl,'총 지출');
-  mergeCell(5,COLS_N-1,r,sSumBalLbl,'잔액');
-  setRow(18); r++;
-  // 값 행
-  mergeCell(0,1,r,sSumIncVal,Number(summary.totalIn||0));
-  mergeCell(2,4,r,sSumOutVal,Number(summary.totalOut||0));
-  mergeCell(5,COLS_N-1,r,sSumBalVal,Number(summary.balance||0));
-  setRow(28); r++;
-  r++;
-
-  // ── 4. 계좌 현황 ──
-  mergeCell(0,COLS_N-1,r,sSectionLabel,'계좌 현황'); setRow(18); r++;
-  mergeCell(0,2,r,sThead,'계좌');
-  mergeCell(3,3,r,sThead,'전월 잔액');
-  mergeCell(4,4,r,sThead,'수입');
-  mergeCell(5,5,r,sThead,'지출');
-  mergeCell(6,COLS_N-1,r,sThead,'현재 잔액');
-  setRow(20); r++;
-  (accountRows||getReportAccountRows(year,month,accs,S.reportData.allTrx)).forEach(a=>{
-    mergeCell(0,2,r,sTd,a.label||'-');
-    mergeCell(3,3,r,sTdNum,Number(a.prevBal||0));
-    mergeCell(4,4,r,sTdNumIn,Number(a.monthlyIn||0));
-    mergeCell(5,5,r,sTdNumOut,Number(a.monthlyOut||0));
-    mergeCell(6,COLS_N-1,r,{...sTdNum,font:{name:'맑은 고딕',sz:11,bold:true,color:{rgb:Number(a.bal||0)>=0?'111827':'DC2626'}}},Number(a.bal||0));
-    setRow(20); r++;
-  });
-  r++;
-
-  // ── 5. 분류별 지출 ──
-  const catKeys=Object.keys(summary.catStats||{});
-  if(catKeys.length){
-    mergeCell(0,COLS_N-1,r,sSectionLabel,'분류별 지출'); setRow(18); r++;
-    mergeCell(0,3,r,sThead,'분류');
-    mergeCell(4,6,r,sThead,'금액');
-    mergeCell(7,7,r,sThead,'비율');
-    setRow(20); r++;
-    const sortedCatKeys=[...catKeys].sort((a,b)=>(summary.catStats[b]?.total||0)-(summary.catStats[a]?.total||0));
-    sortedCatKeys.forEach(k=>{
-      const v=summary.catStats[k];
-      const pct=summary.totalOut>0?Math.round(v.total/summary.totalOut*100):0;
-      mergeCell(0,3,r,sTd,k);
-      mergeCell(4,6,r,sTdNumOut,Number(v.total||0));
-      mergeCell(7,7,r,sTdPct,pct);
-      setRow(20); r++;
-    });
-    r++;
-  }
-
-  // ── 6. 거래 내역 ──
-  mergeCell(0,COLS_N-1,r,sSectionLabel,'거래 내역'); setRow(18); r++;
-  mergeCell(0,1,r,sThead,'날짜');
-  mergeCell(2,2,r,sThead,'분류');
-  mergeCell(3,5,r,sThead,'내용');
-  mergeCell(6,6,r,sThead,'수입');
-  mergeCell(7,7,r,sThead,'지출');
-  setRow(22); r++;
-  const excelByAccount=new Map();
-  (accs||[]).forEach(a=>excelByAccount.set(a.id,{account:a,items:[]}));  
-  (trxList||[]).forEach(t=>{
-    if(!excelByAccount.has(t.accountId))excelByAccount.set(t.accountId,{account:S.accounts.find(a=>a.id===t.accountId)||{label:'미지정 계좌'},items:[]});
-    excelByAccount.get(t.accountId).items.push(t);
-  });
-  excelByAccount.forEach(group=>{
-    if(!group.items.length)return;
-    const subIn=group.items.reduce((sum,t)=>countsInTotals(t)?sum+Number(t.amountIn||0):sum,0);
-    const subOut=group.items.reduce((sum,t)=>countsInTotals(t)?sum+Number(t.amountOut||0):sum,0);
-    mergeCell(0,COLS_N-1,r,{...sThead,alignment:{horizontal:'left',vertical:'center'}},`🏦 ${group.account.label||'미지정 계좌'} (${group.items.length}건 · 수입 ${subIn.toLocaleString()}원 · 지출 ${subOut.toLocaleString()}원)`);
-    setRow(20); r++;
-    group.items.forEach(t=>{    
-    mergeCell(0,1,r,sTdCtr,t.date||'');
-    mergeCell(2,2,r,sTdCtr,t.category||'');
-    let descTxt=t.description||'';
-    if(t.type==='자산이동'){
-      const srcId=Number(t.amountOut||0)>0?t.accountId:t.linkedAccountId;
-      const dstId=Number(t.amountOut||0)>0?t.linkedAccountId:t.accountId;
-      const src=S.accounts.find(a=>a.id===srcId)?.label||'?';
-      const dst=S.accounts.find(a=>a.id===dstId)?.label||'?';
-      descTxt=(descTxt?descTxt+' ':'')+'[↕이동 '+src+' → '+dst+']';
-    } else if(t.type==='취소'){
-      const sub=Number(t.amountIn||0)>0?'수입':'지출';
-      descTxt=(descTxt?descTxt+' ':'')+'[취소('+sub+')]';
-    }
-    mergeCell(3,5,r,sTd,descTxt);
-    const amtIn=Number(t.amountIn||0);
-    const amtOut=Number(t.amountOut||0);
-    mergeCell(6,6,r,amtIn>0?sTdNumIn:sTd,amtIn>0?amtIn:'');
-    mergeCell(7,7,r,amtOut>0?sTdNumOut:sTd,amtOut>0?amtOut:'');
-    setRow(18); r++;
-    });      
-  });
-  // 거래내역 합계 행
-  mergeCell(0,5,r,sFootLbl,'합계');
-  mergeCell(6,6,r,sFootIn,Number(summary.totalIn||0));
-  mergeCell(7,7,r,sFootOut,Number(summary.totalOut||0));
-  setRow(22); r++;
-  r++;
-
-  // ── 7. 의견 (있을 때만) ──
-  const cmts=[
-    {label:'담당자 의견',value:report?.staffComment||''},
-    {label:'팀장 의견',value:report?.leaderComment||''},
-    {label:'센터장 의견',value:report?.centerComment||''}
-  ].filter(c=>c.value);
-  if(cmts.length){
-    mergeCell(0,COLS_N-1,r,sSectionLabel,'의견'); setRow(18); r++;
-    cmts.forEach(c=>{
-      mergeCell(0,1,r,sCmtLabel,c.label);
-      mergeCell(2,COLS_N-1,r,sCmtValue,c.value);
-      setRow(48); r++;
-    });
-  }
-
-  // ── 워크시트 설정 ──
-  ws['!ref']=XLSX.utils.encode_range({s:{c:0,r:0},e:{c:COLS_N-1,r:r-1}});
-  ws['!merges']=merges;
-  ws['!cols']=[{wch:12},{wch:8},{wch:12},{wch:18},{wch:10},{wch:10},{wch:14},{wch:14}];
-  ws['!rows']=rows;
-  // 인쇄 옵션
-  ws['!pageSetup']={orientation:'portrait',paperSize:9,fitToWidth:1,fitToHeight:0};
-  ws['!margins']={left:0.4,right:0.4,top:0.5,bottom:0.5,header:0.3,footer:0.3};
-
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,year+'년'+month+'월');
-  XLSX.writeFile(wb,client.name+'_'+year+'년'+month+'월_금전관리.xlsx');
-  toast('엑셀 저장 완료','success');
 }
