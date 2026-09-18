@@ -17,7 +17,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { bankbookRowsToParsed, explicitYearOf } from '../public/domain/receipt.js';
+import { bankbookRowsToParsed, explicitYearOf, normalizeReceiptDate } from '../public/domain/receipt.js';
 
 const SRC = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 
@@ -95,6 +95,67 @@ test('연도가 적힌 줄이 이기는 것은 가장 많이 나온 연도다', 
   }, { today: new Date(2026, 8, 18) });
   assert.equal(out.rows[3].date, '2026-01-04');
   assert.equal(out.rows[0].date, '2025-12-30', '연도가 적힌 줄은 그대로여야 합니다');
+});
+
+// ── ⑶ 국내 통장의 날짜 꼴 ──────────────────────────────────────────
+//
+// 현장에서 올라온 통장 석 장(IBK기업은행 · 신한은행 두 장)이 전부 **YYMMDD 6자리**
+// 였다(`240119` · `260803` · `251231`). 해석기는 8자리(`20240119`)와 구분자 있는
+// 꼴만 알아서 **모든 줄이 「날짜를 읽을 수 없음」으로 제외**됐다. 사진도 판독도
+// 멀쩡했고 여기서 못 읽었다.
+//
+// IBK 통장은 거래일자 칸과 거래내용 칸이 붙어 인쇄돼 `240119체크` 가 통째로
+// 넘어오기도 한다 — 뒤에 글자가 붙어 있다고 날짜가 없는 것은 아니다.
+
+test('통장의 YYMMDD 6자리를 읽는다', () => {
+  const on = (raw) => normalizeReceiptDate(raw, new Date(2026, 8, 18));
+  assert.equal(on('240119'), '2024-01-19', 'IBK기업은행');
+  assert.equal(on('260803'), '2026-08-03', '신한은행');
+  assert.equal(on('251231'), '2025-12-31', '해가 바뀌는 줄');
+  assert.equal(on('260102'), '2026-01-02');
+});
+
+test('날짜 뒤에 적요가 붙어 있어도 읽는다', () => {
+  const on = (raw) => normalizeReceiptDate(raw, new Date(2026, 8, 18));
+  for (const raw of ['240119체크', '240119타CD', '240119 체크', '260820급여']) {
+    assert.equal(on(raw), raw.startsWith('2401') ? '2024-01-19' : '2026-08-20', raw);
+  }
+});
+
+test('6자리라고 아무거나 날짜로 읽지는 않는다', () => {
+  const on = (raw) => normalizeReceiptDate(raw, new Date(2026, 8, 18));
+  assert.equal(on('143022'), '', '시각을 2014년으로 읽으면 안 됩니다');
+  assert.equal(on('202609'), '', 'YYYYMM 은 하루를 가리키지 않습니다');
+  // 연도 기준을 세는 쪽도 같은 규칙이어야 한다 — 갈라지면 기준이 조용히 틀어진다.
+  assert.equal(explicitYearOf('143022'), null);
+  assert.equal(explicitYearOf('240119체크'), 2024);
+});
+
+test('통장 한 장이 통째로 읽힌다 — 제외되는 줄이 없다', async () => {
+  // 첫 번째 사진(IBK)의 앞 네 줄을 그대로 옮긴 것.
+  const out = bankbookRowsToParsed({
+    rows: [
+      { dateRaw: '240119타CD', description: '', withdraw: '*30,000', deposit: '' },
+      { dateRaw: '240119체크', description: '메가엠지씨커피', withdraw: '*5,000', deposit: '' },
+      { dateRaw: '240119체크', description: '한솔약국', withdraw: '*13,000', deposit: '' },
+      { dateRaw: '240120체크', description: '(주)에프알엘코', withdraw: '*39,900', deposit: '' },
+    ],
+  }, { today: new Date(2026, 8, 18) });
+
+  assert.equal(out.skipped.length, 0, `제외된 줄: ${JSON.stringify(out.skipped)}`);
+  assert.deepEqual(out.rows.map(r => r.date),
+    ['2024-01-19', '2024-01-19', '2024-01-19', '2024-01-20']);
+  assert.equal(out.rows[1].out, 5000);
+});
+
+test('엑셀 쪽도 6자리를 읽고, 틀린 연도를 만들지 않는다', async () => {
+  // `240119` 가 `240119-01-01`(연도 24만년)로 **통과**했다. 거부가 아니라 조용한
+  // 오답이라 그대로 저장된다 — 못 읽는 것보다 나쁘다.
+  const { fixDate } = await import('../public/services/excel-parser.js');
+  assert.equal(fixDate('240119'), '2024-01-19');
+  assert.equal(fixDate('260803'), '2026-08-03');
+  assert.equal(fixDate('202609'), null);
+  assert.equal(fixDate('143022'), null);
 });
 
 // ── 사진 경로는 파서 설정을 쓰지 않는다 ─────────────────────────────

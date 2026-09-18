@@ -125,10 +125,29 @@ const BANKBOOK_TOOL = {
           type: 'object',
           additionalProperties: false,
           properties: {
-            dateRaw: { type: 'string', description: '인쇄된 그대로. 연도를 채우지 말 것.' },
-            description: { type: 'string', description: '적요·거래기록사항' },
-            withdraw: { type: 'string', description: '출금액. 인쇄된 그대로. 없으면 빈 문자열.' },
-            deposit: { type: 'string', description: '입금액. 인쇄된 그대로. 없으면 빈 문자열.' },
+            dateRaw: {
+              type: 'string',
+              description:
+                '거래일자를 **인쇄된 그대로**. 통장은 대개 `240119` 처럼 연도 두 자리를 '
+                + '붙여 찍는다(YYMMDD) — 그대로 옮긴다. 연도를 네 자리로 늘리거나 '
+                + '구분자를 넣지 말 것. 날짜 칸에 적요가 붙어 인쇄돼 있으면'
+                + '(`240119체크`) **날짜 부분만** 여기 쓰고 나머지는 description 으로 보낸다.',
+            },
+            description: {
+              type: 'string',
+              description:
+                '적요·거래기록사항·가맹점명. 통장은 금액 칸 오른쪽에 상호가 붙어 '
+                + '인쇄되기도 한다(`*5,000메가엠지씨커피`) — 그때 상호만 여기 쓰고 '
+                + '금액은 withdraw/deposit 으로 보낸다.',
+            },
+            withdraw: {
+              type: 'string',
+              description: '출금(찾으신) 금액. 인쇄된 그대로(`*30,000` 의 `*` 는 빼도 된다). 없으면 빈 문자열.',
+            },
+            deposit: {
+              type: 'string',
+              description: '입금(맡기신) 금액. 인쇄된 그대로. 없으면 빈 문자열.',
+            },
             balance: { type: 'string', description: '잔액. 인쇄된 그대로. 없으면 빈 문자열.' },
           },
           required: ['dateRaw', 'description', 'withdraw', 'deposit', 'balance'],
@@ -150,6 +169,9 @@ const SYSTEM_PROMPT = [
   '- 분류(식비·교통비 등)를 판단하지 않습니다. 그것은 앱이 정합니다.',
   '- 흐릿하거나 잘려서 확실하지 않으면 confidence를 낮게 줍니다. 추측해서',
   '  채우는 것보다 낮은 확신도를 주는 것이 낫습니다 — 사람이 확인합니다.',
+  '- 통장은 칸 사이가 붙어 인쇄됩니다. 날짜·적요·금액이 한 덩어리로 보여도',
+  '  **각각 제 칸으로 나눠** 적습니다. 나누기 애매하면 버리지 말고 보이는 대로',
+  '  적어 주세요 — 빠진 줄은 사람이 알아차리지 못합니다.',
 ].join('\n');
 
 function geminiSchemaFromTool(tool) {

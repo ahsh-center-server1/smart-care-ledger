@@ -74,7 +74,14 @@ export function toNum(v) {
 // 날짜
 // ─────────────────────────────────────────────
 
-/** 여러 표기를 YYYY-MM-DD로. 인식 못 하면 null. */
+/**
+ * 여러 표기를 YYYY-MM-DD로. 인식 못 하면 null.
+ *
+ * ⚠️ 마지막 `new Date(s)` 폴백은 **조용한 오답을 만든 자리**다. 국내 통장·명세서에
+ * 흔한 6자리 `240119` 를 넣으면 `240119-01-01` (연도 24만년)이 나왔고, null 이
+ * 아니라 값이므로 그대로 저장됐다. 6자리를 규칙으로 받고, 폴백에도 연도 상한을
+ * 뒀다 — 못 읽는 것보다 틀리게 읽는 것이 나쁘다.
+ */
 export function fixDate(val) {
   if (val === undefined || val === null || val === '') return null;
 
@@ -92,6 +99,9 @@ export function fixDate(val) {
   let s = String(val).replace(/[.\/]/g, '-').trim();
   if (s.includes(' ')) s = s.split(' ')[0];
   if (/^\d{8}$/.test(s)) s = s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8);
+  // 구분자 없는 6자리 YYMMDD — 통장·명세서에서 가장 흔한 꼴이다.
+  // 20xx 로 읽는다(이 장부에 19xx 거래는 없다).
+  else if (/^\d{6}$/.test(s)) s = '20' + s.slice(0, 2) + '-' + s.slice(2, 4) + '-' + s.slice(4, 6);
 
   const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (m) {
@@ -104,7 +114,8 @@ export function fixDate(val) {
   }
 
   const d = new Date(s);
-  if (isNaN(d.getTime()) || d.getFullYear() < 2000) return null;
+  // 연도 상한이 없으면 `240119` 가 240119년으로 통과한다(실제로 그랬다).
+  if (isNaN(d.getTime()) || d.getFullYear() < 2000 || d.getFullYear() > 2100) return null;
   return d.getFullYear() + '-'
     + String(d.getMonth() + 1).padStart(2, '0') + '-'
     + String(d.getDate()).padStart(2, '0');

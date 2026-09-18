@@ -41,12 +41,19 @@ function assemble(y, m, d) {
 /**
  * 영수증에 인쇄된 날짜 문자열을 YYYY-MM-DD로 정규화한다.
  *
- * 지원 형태 (한국 영수증에서 실제로 나오는 것들)
+ * 지원 형태 (한국 영수증·통장에서 실제로 나오는 것들)
  *   2026-09-07 / 2026.09.07 / 2026/09/07 / 20260907
  *   26.09.07 / 26-09-07
+ *   **260907** (구분자 없는 6자리)  ← 국내 통장 인쇄가 이 꼴이다
  *   2026년 9월 7일 / 9월 7일
  *   09/07 · 09.07        (연도 없음)
  *   2026-09-07 14:32:11  (시각이 뒤에 붙은 경우)
+ *   **240119체크 · 240119타CD** (뒤에 적요가 붙어 인쇄된 경우)
+ *
+ * 뒤의 둘이 실제 고장이었다. 통장 사진을 올리면 「날짜를 읽을 수 없음」으로 전부
+ * 제외됐는데, 사진도 판독도 멀쩡했고 **여기서 못 읽었다.** 6자리는 규칙에 아예
+ * 없었고, 통장은 거래일자 칸과 거래내용 칸이 붙어 인쇄돼서 `240119체크` 가 통째로
+ * 넘어온다 — 뒤에 글자가 붙어 있다고 날짜가 없는 것은 아니다.
  *
  * 연도가 없으면 `today`의 연도를 쓴다. 다만 그 결과가 **미래**가 되면
  * 작년으로 본다 — 12월 영수증을 1월에 올리는 일이 흔하고, 미래 날짜 거래는
@@ -62,14 +69,22 @@ export function normalizeReceiptDate(raw, today = new Date()) {
 
   // 시각 부분을 떼어낸다 (' 14:32', 'T14:32' 등)
   const datePart = s.split(/[T\s]/)[0] || s;
+  // 앞머리의 날짜 꼴만 떼어 낸다 — 통장은 `240119체크` 처럼 적요가 붙어 나온다.
+  const head = dateHead(datePart);
 
   // 1) 구분자 있는 3부분: 2026-09-07 / 26.9.7 / 2026/09/07
-  let m = datePart.match(/^(\d{2,4})[.\-/](\d{1,2})[.\-/](\d{1,2})\.?$/);
+  let m = head.match(/^(\d{2,4})[.\-/](\d{1,2})[.\-/](\d{1,2})\.?$/);
   if (m) return assemble(expandYear(m[1]), m[2], m[3]);
 
   // 2) 구분자 없는 8자리: 20260907
-  m = datePart.match(/^(\d{4})(\d{2})(\d{2})$/);
+  m = head.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (m) return assemble(m[1], m[2], m[3]);
+
+  // 2-1) 구분자 없는 6자리: 260907 (YYMMDD) — 국내 통장 인쇄
+  //   `202609` 같은 YYYYMM 이 잘못 들어와도 달이 26이 되어 assemble 이 거른다.
+  //   시각(`143022`)도 같은 이유로 걸린다 — 지어내는 것보다 빈 값이 낫다.
+  m = head.match(/^(\d{2})(\d{2})(\d{2})$/);
+  if (m) return assemble(expandYear(m[1]), m[2], m[3]);
 
   // 3) 한글: 2026년 9월 7일 / 9월 7일
   m = s.match(/(?:(\d{2,4})\s*년\s*)?(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
@@ -79,10 +94,22 @@ export function normalizeReceiptDate(raw, today = new Date()) {
   }
 
   // 4) 연도 없는 2부분: 09/07 · 09.07 · 9-7
-  m = datePart.match(/^(\d{1,2})[.\-/](\d{1,2})\.?$/);
+  m = head.match(/^(\d{1,2})[.\-/](\d{1,2})\.?$/);
   if (m) return withInferredYear(m[1], m[2], today);
 
   return '';
+}
+
+/**
+ * 문자열 앞머리의 「숫자와 날짜 구분자」만. 뒤에 붙은 글자는 버린다.
+ *
+ * 통장은 거래일자 칸과 거래내용 칸이 붙어 인쇄돼서 `240119체크` · `240119타CD` 가
+ * 통째로 넘어온다. 예전에는 이런 줄이 전부 「날짜를 읽을 수 없음」이 됐다.
+ */
+function dateHead(value) {
+  const s = String(value == null ? '' : value).trim();
+  const m = s.match(/^\d+(?:[.\-/]\d+)*\.?/);
+  return m ? m[0] : s;
 }
 
 /**
@@ -109,11 +136,16 @@ function withInferredYear(month, day, today) {
 export function explicitYearOf(raw) {
   const s = String(raw == null ? '' : raw).trim();
   if (!s) return null;
-  const datePart = s.split(/[T\s]/)[0] || s;
-  let m = datePart.match(/^(\d{2,4})[.\-/](\d{1,2})[.\-/](\d{1,2})\.?$/);
+  // 연도를 읽는 규칙은 날짜를 읽는 규칙과 **같아야 한다.** 갈라지면 「날짜는
+  // 읽히는데 연도 기준에는 안 세어지는 줄」이 생겨 기준이 조용히 틀어진다.
+  const head = dateHead(s.split(/[T\s]/)[0] || s);
+  let m = head.match(/^(\d{2,4})[.\-/](\d{1,2})[.\-/](\d{1,2})\.?$/);
   if (m) { const y = expandYear(m[1]); return Number.isFinite(y) ? y : null; }
-  m = datePart.match(/^(\d{4})(\d{2})(\d{2})$/);
+  m = head.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (m) return Number(m[1]);
+  m = head.match(/^(\d{2})(\d{2})(\d{2})$/);
+  // 달·일이 말이 되는 6자리만 연도로 센다(시각 `143022` 를 2014년으로 읽지 않는다).
+  if (m && assemble(expandYear(m[1]), m[2], m[3])) return expandYear(m[1]);
   m = s.match(/(\d{2,4})\s*년\s*\d{1,2}\s*월/);
   if (m) { const y = expandYear(m[1]); return Number.isFinite(y) ? y : null; }
   return null;
