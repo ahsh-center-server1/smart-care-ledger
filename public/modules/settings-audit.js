@@ -12,6 +12,7 @@
 'use strict';
 
 import { toast, skeleton } from '../utils/ui.js';
+import { formatDateTime } from '../domain/timestamps.js';
 import { fetchRecentAuditLogs, auditWriteToken } from '../services/audit.js';
 import { actionLabel, actionResource, summaryText, AUDIT_RESOURCES } from '../domain/audit.js';
 
@@ -27,17 +28,14 @@ let cacheToken = -1;
 let filterResource = '';
 let filterText = '';
 
-/** Firestore Timestamp | Date | number | ISO 문자열을 사람이 읽는 시각으로. */
-function formatTime(ts) {
-  if (!ts) return '';
-  const d = typeof ts?.toDate === 'function' ? ts.toDate()
-    : ts instanceof Date ? ts
-    : new Date(ts);
-  if (Number.isNaN(d.getTime())) return '';
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} `
-    + `${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+/**
+ * 시각 변환은 domain/timestamps.js 하나다.
+ *
+ * 여기 있던 사본은 Timestamp 를 올바로 다뤘는데, 보고서 쪽은 `new Date()` 를
+ * 그냥 써서 「작성일: Invalid Date」가 인쇄됐다. 같은 일을 두 벌로 두면
+ * 고친 쪽만 고쳐진다.
+ */
+const formatTime = ts => formatDateTime(ts);
 
 function matches(entry) {
   if (filterResource && actionResource(entry.action) !== filterResource) return false;

@@ -7,6 +7,7 @@
 
 import { S } from '../state.js';
 import { missingIndexMessage } from '../services/fn-errors.js';
+import { formatDate, reportDateLine } from '../domain/timestamps.js';
 import { iconSvg } from '../utils/icons.js';
 import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml } from '../utils/ui.js';
@@ -257,11 +258,15 @@ export function renderReportView(){
   const now=new Date(), curStatus=report?report.status:'';
   resetSummaryPanel();   // 앞사람의 분석이 남지 않게 — 인쇄 영역까지 함께 지운다
   setText('rpt-period',`${year}년 ${month}월 거래 내역`);
-  // 작성일은 보고서가 처음 만들어진 날. 예전에는 항상 오늘을 찍어서
-  // 작년 보고서를 다시 인쇄하면 오늘 날짜가 나왔다.
-  const createdStr=new Date(report?.createdAt||now).toLocaleDateString('ko-KR');
-  setText('rpt-created',`작성: ${createdStr}`);
-  setText('rpt-created-bottom',createdStr);
+  // 결재 문서에서 의미가 있는 날짜는 **담당자가 올린 날**이다. 작성일(createdAt)은
+  // 임시저장을 처음 누른 시점이라 결재자가 본 날짜와 어긋난다 — 제출 전에만 쓰고
+  // 이름표도 함께 바꾼다. 게다가 createdAt 은 서버 타임스탬프라 `new Date()` 에
+  // 그냥 넣으면 Invalid Date 가 된다(실제로 그렇게 인쇄돼 나갔다).
+  const line=reportDateLine(report);
+  const dateStr=formatDate(line.date, formatDate(now));
+  setText('rpt-created',`${line.label==='제출일'?'제출':'작성'}: ${dateStr}`);
+  setText('rpt-date-label',line.label);
+  setText('rpt-created-bottom',dateStr);
   setText('rpt-client-name',client.name);
   setText('rpt-month-label',`${year}년 ${month}월`);
   // 제출 전이면 **작성자**를 쓴다. 예전에는 지금 보는 사람 이름으로 떨어져서,
@@ -1122,7 +1127,7 @@ export function renderReportList(){
     <th style="padding:8px 10px;text-align:center;font-weight:700;color:var(--muted);font-size:12px;text-transform:uppercase;">월</th>
     <th style="padding:8px 10px;text-align:center;font-weight:700;color:var(--muted);font-size:12px;text-transform:uppercase;">상태</th>
     <th style="padding:8px 10px;text-align:left;font-weight:700;color:var(--muted);font-size:12px;text-transform:uppercase;">제출자</th>
-    <th style="padding:8px 10px;text-align:left;font-weight:700;color:var(--muted);font-size:12px;text-transform:uppercase;">작성일</th>
+    <th style="padding:8px 10px;text-align:left;font-weight:700;color:var(--muted);font-size:12px;text-transform:uppercase;">제출일</th>
   </tr></thead>`;
   const tbody=document.createElement('tbody');
   visibleList.forEach(r=>{
@@ -1135,7 +1140,7 @@ export function renderReportList(){
       <td style="padding:9px 10px;text-align:center;color:var(--sub);">${r.month}월</td>
       <td style="padding:9px 10px;text-align:center;"><span class="${STATUS_CLASSES[r.status]||'rs-draft'}">${escHtml(STATUS_LABELS[r.status]||r.status)}</span></td>
       <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${escHtml(r.submittedByName||'-')}</td>
-      <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${r.createdAt?new Date(r.createdAt).toLocaleDateString('ko-KR'):'-'}</td>`;
+      <td style="padding:9px 10px;color:var(--muted);font-size:12px;">${escHtml(formatDate(r.submittedAt,'미제출'))}</td>`;
     tr.addEventListener('mouseenter',()=>{if(S.reportData?.report?.id!==r.id)tr.style.background='var(--bg)';});
     tr.addEventListener('mouseleave',()=>{if(S.reportData?.report?.id!==r.id)tr.style.background='';});
     tr.addEventListener('click',()=>{
