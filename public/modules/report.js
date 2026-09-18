@@ -27,6 +27,9 @@ import { auditLog } from '../services/audit.js';
 import { getImageUrl } from '../services/storage.js';
 import { reportChecklist, checklistLines } from '../domain/report-checklist.js';
 import { openModal, getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
+// 분류 인라인 드롭다운은 거래내역 탭과 **같은 것**을 쓴다. 목록·최근 순서·저장이
+// 두 벌이 되면 한쪽만 고쳐진다.
+import { openCatDropdown } from './transactions.js';
 import { isConfirmedLocked, trxEditBlockReason } from './core.js';
 import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
 import { rememberOpenReport, restorableReport } from '../domain/report-session.js';
@@ -342,10 +345,15 @@ export function renderRptTrxTable(trxList){
   // 아이콘은 두 가지가 나빴다. 눈이 고친 값(분류·내용)에서 줄 끝까지 갔다가
   // 돌아와야 했고, 인쇄 영역 안에 화면 전용 버튼이 한 칸을 차지했다.
   // 고치고 싶은 것이 곧 누를 것이면 설명할 것이 없다.
-  const cellAttr=canEditHere?' class="rpt-cell-edit" title="클릭해서 이 거래를 수정"':'';
+  // 분류와 내용은 **고치는 방법이 다르다.**
+  //   분류 — 거기서 바로 고르는 것이 전부다. 폼을 띄우면 날짜·금액·계좌까지
+  //          눈앞에 놓고 정작 할 일은 한 칸 고르기다.
+  //   내용 — 글자를 고쳐 쓰는 일이고, 대개 금액·날짜도 함께 본다. 폼을 연다.
+  const descAttr=canEditHere?' class="rpt-cell-edit" title="클릭해서 이 거래를 수정"':'';
+  const catAttr=canEditHere?' class="rpt-cell-cat" title="클릭해서 분류 바꾸기"':'';
   // 눌러도 되는 줄이라는 것은 hover 로만 말한다(인쇄물에는 흔적이 남지 않는다).
   // 그래서 표 머리에 한 줄로 알려 준다 — 그것도 인쇄에서는 빠진다.
-  if(hintEl&&canEditHere)hintEl.textContent='분류·내용을 클릭하면 그 거래를 수정할 수 있습니다';
+  if(hintEl&&canEditHere)hintEl.textContent='분류를 누르면 분류만, 내용을 누르면 거래 전체를 고칩니다';
   const byAccount=new Map();
   (S.reportData?.accs||[]).forEach(a=>byAccount.set(a.id,{account:a,items:[]}));  
   trxList.forEach(t=>{
@@ -381,8 +389,9 @@ export function renderRptTrxTable(trxList){
     } else { typeTag=excludedBadge(t); }
     const catClr=cs(t.category||'');
     tr.innerHTML=`<td style="padding:7px 4px;font-family:monospace;font-size:13px;color:#6b7280;white-space:nowrap;">${escHtml(t.date||'')}</td>`
-      +`<td${cellAttr} style="padding:4px 4px;overflow:hidden;white-space:nowrap;"><span style="display:inline-block;background:${catClr.bg};color:${catClr.text};border:1px solid ${catClr.border};border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.category||'')}</span></td>`
-      +`<td${cellAttr} style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.description||'')}${typeTag}</td>`
+      +`<td${catAttr} style="padding:4px 4px;overflow:visible;white-space:nowrap;position:relative;"><span style="display:inline-block;background:${catClr.bg};color:${catClr.text};border:1px solid ${catClr.border};border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.category||'')}</span>`
+        +(canEditHere?`<div class="cat-dd no-print" id="rdd-${escAttr(t.id)}"></div>`:'')+`</td>`
+      +`<td${descAttr} style="padding:7px 4px;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(t.description||'')}${typeTag}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#15803d;white-space:nowrap;">${Number(t.amountIn||0)>0?Number(t.amountIn).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#b91c1c;white-space:nowrap;">${Number(t.amountOut||0)>0?Number(t.amountOut).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:center;${t.type==='지출'&&!hasReceipt(t)&&t.receiptMissing?'background:#fee2e2;':''}">${
@@ -397,6 +406,21 @@ export function renderRptTrxTable(trxList){
       tr.addEventListener('drop',e=>{e.preventDefault();tr.style.background='';const fid=e.dataTransfer.getData('text/plain');if(fid!==t.id)reorderRptTrx(fid,t.id);});
     }
     tr.querySelectorAll('.rpt-cell-edit').forEach(td=>td.addEventListener('click',()=>openTrxFromReport(t)));
+    // 분류는 그 자리에서 고른다. stopPropagation 이 없으면 같은 클릭이 문서까지
+    // 올라가 방금 연 드롭다운을 곧바로 닫는다(app.js 의 바깥 클릭 닫기).
+    tr.querySelector('.rpt-cell-cat')?.addEventListener('click',e=>{
+      e.stopPropagation();
+      const blocked=trxEditBlockReason(t.clientId,t.date);
+      if(blocked){toast(blocked,'error',5000);return;}
+      // chipEl 은 넘기지 않는다 — 보고서 칩에는 거래내역 탭의 `.cat-dot`·
+      // `.cat-label` 이 없다. 저장이 거래 쓰기 신호를 내므로 보고서가 스스로
+      // 다시 그린다(§6-1).
+      openCatDropdown(t.id,null,t.type,{
+        ddId:'rdd-'+t.id,
+        clientId:S.reportData?.clientId||'',
+        transactions:S.reportData?.allTrx||S.transactions,
+      });
+    });
     const rvBtn=tr.querySelector('.rpt-rv');
     if(rvBtn)rvBtn.addEventListener('click',async()=>{
       try{const a=await receiptAccess(t);openReceiptModal(a.url,t.id,{contentType:a.contentType});}

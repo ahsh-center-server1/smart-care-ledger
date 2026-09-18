@@ -75,14 +75,22 @@ export function resetFiltersUI(reapply) {
  *
  * `onPick` 을 받는 이유: 저장은 transactions.js 에 있고, 직접 import 하면
  * 순환이 된다.
+ *
+ * `opts` 를 받는 이유: 같은 거래가 **두 화면에 동시에 있을 수 있다**(거래내역
+ * 탭과 보고서). 칸 id 를 `dd-<trxId>` 로 고정하면 id 가 겹쳐서, 보고서에서 누른
+ * 드롭다운이 숨어 있는 거래내역 탭에서 열린다. 부르는 쪽이 자기 칸을 지정한다.
+ *   opts.ddId        드롭다운을 그릴 칸의 id (기본 `dd-<trxId>`)
+ *   opts.clientId    「최근」·입주자 전용 분류의 기준 (기본 S.activeClient)
+ *   opts.transactions 「최근」을 셀 목록 (기본 S.transactions)
  */
-export function openCatDropdownUI(trxId, chipEl, type, onPick) {
+export function openCatDropdownUI(trxId, chipEl, type, onPick, opts = {}) {
   closeCatDropdowns();
-  const dd = document.getElementById('dd-' + trxId);
+  const dd = document.getElementById(opts.ddId || ('dd-' + trxId));
   if (!dd) return;
   const { recent, all } = orderedCategories({
-    categories: S.categories, transactions: S.transactions,
-    type, clientId: S.activeClient || '',
+    categories: S.categories,
+    transactions: opts.transactions || S.transactions,
+    type, clientId: opts.clientId ?? (S.activeClient || ''),
   });
   dd.innerHTML = '';
   const addItem = (cat) => {

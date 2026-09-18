@@ -224,9 +224,8 @@ export function renderHistoryTable() {
   document.addEventListener('click',closeCatDropdowns,{once:true});
 }
 
-// 분류 인라인 드롭다운은 transactions-widgets.js 에 있다. saveCatChange 를
-// 넘겨 순환을 만들지 않는다.
-export const openCatDropdown=(trxId,chipEl,type)=>openCatDropdownUI(trxId,chipEl,type,saveCatChange);
+// 분류 인라인 드롭다운은 transactions-widgets.js 에 있다 — saveCatChange 를 넘겨 순환을 피한다.
+export const openCatDropdown=(trxId,chipEl,type,opts)=>openCatDropdownUI(trxId,chipEl,type,saveCatChange,opts);
 export { closeCatDropdowns };
 
 // 달력형 뷰
@@ -318,7 +317,8 @@ export function moveCalendar(dir){
 }
 
 export async function saveCatChange(trxId, newCat, chipEl) {
-  if(!can('trx.category.edit')){toast('분류 수정 권한이 없습니다.','error');return;}
+  // 분류만 바꾸는 것은 trx.edit 으로도 된다(규칙의 transactionUpdateFieldsOk).
+  if(!can('trx.category.edit')&&!can('trx.edit')){toast('분류 수정 권한이 없습니다.','error');return;}
   const lk=S.transactions.find(x=>x.id===trxId);
   const lkBlocked=lk&&trxEditBlockReason(lk.clientId,lk.date); if(lkBlocked){toast(lkBlocked,'error',5000);return;}
   const {doc,updateDoc}=fb();
