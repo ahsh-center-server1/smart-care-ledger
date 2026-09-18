@@ -19,6 +19,7 @@
 'use strict';
 
 import { toast, escHtml } from '../utils/ui.js';
+import { iconSvg } from '../utils/icons.js';
 import { can } from './permissions.js';
 import { auditLog } from '../services/audit.js';
 import { fnErrorMessage } from '../services/fn-errors.js';
@@ -90,7 +91,7 @@ export async function rebuildDerivedDocs() {
     toast('다시 만들기 실패: ' + msg, 'error', 5000);
     await auditLog('archive.failed', { summary: { target: 'derived', message: msg } });
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔁 다시 만들기'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = iconSvg('refresh') + '다시 만들기'; }
   }
 }
 
@@ -154,6 +155,6 @@ export async function rebuildBalanceIndex() {
     toast('다시 만들기 실패: ' + msg, 'error', 5000);
     await auditLog('archive.failed', { summary: { target: 'balances', message: msg } });
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '💰 잔액 색인 다시 만들기'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = iconSvg('coin') + '잔액 색인 다시 만들기'; }
   }
 }

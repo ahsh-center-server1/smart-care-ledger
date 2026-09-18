@@ -1,6 +1,7 @@
 'use strict';
 
 import { S } from '../state.js';
+import { iconSvg } from '../utils/icons.js';
 import { compareTrx, nextOrderInDay, planReorder, sortTrx } from '../domain/trx-order.js';
 import { inLoadedRange, needsBroaderRange } from '../domain/trx-range.js';
 import { COLS, cs } from '../constants.js';
@@ -177,7 +178,7 @@ export function renderHistoryTable() {
       }</td>
       <td data-label="증빙" style="text-align:center;">
         ${hasReceipt(t)
-          ?`<button class="icon-btn receipt-view" data-id="${t.id}" title="증빙 보기">📎</button>`
+          ?`<button class="icon-btn receipt-view" data-id="${t.id}" title="증빙 보기">${iconSvg('clip')}</button>`
           :`<span style="display:inline-flex;align-items:center;gap:3px;justify-content:center;">${
               can('receipt.upload')?`<button class="icon-btn receipt-add" data-id="${t.id}" title="증빙 추가" style="color:#94a3b8;">＋</button>`:''
             }${
@@ -193,8 +194,8 @@ export function renderHistoryTable() {
         <button class="icon-btn trx-down-btn" data-id="${t.id}" title="아래로 이동" style="color:#94a3b8;font-size:12px;" onmouseover="this.style.background='#e0f2fe';this.style.color='#0369a1';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">▼</button>`
           :'';
         return canEdit
-          ?`${moveBtns}<button class="icon-btn trx-edit-btn" data-id="${t.id}" title="수정" style="color:#64748b;" onmouseover="this.style.background='#dbeafe';this.style.color='#2563eb';" onmouseout="this.style.background='transparent';this.style.color='#64748b';">✏️</button>
-        <button class="icon-btn trx-del-btn"  data-id="${t.id}" data-acc="${t.accountId}" title="삭제" style="color:#94a3b8;" onmouseover="this.style.background='#fee2e2';this.style.color='#dc2626';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">🗑️</button>`
+          ?`${moveBtns}<button class="icon-btn trx-edit-btn" data-id="${t.id}" title="수정" style="color:#64748b;" onmouseover="this.style.background='#dbeafe';this.style.color='#2563eb';" onmouseout="this.style.background='transparent';this.style.color='#64748b';">${iconSvg('pen')}</button>
+        <button class="icon-btn trx-del-btn"  data-id="${t.id}" data-acc="${t.accountId}" title="삭제" style="color:#94a3b8;" onmouseover="this.style.background='#fee2e2';this.style.color='#dc2626';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">${iconSvg('trash')}</button>`
           :'';
       })()}</div></td>`;
     tr.querySelector('.trx-edit')?.addEventListener('click',    ()=>editTrx(t.id));
@@ -284,7 +285,7 @@ export function showCalendarDayDetail(dateStr){
   const allTrx=S.transactions.length?S.transactions:S.filteredTrx;
   const dayTrx=allTrx.filter(t=>t.date===dateStr);
   detail.style.display='block';
-  const addBtn=`<button onclick="openModalWithDate('${escAttr(dateStr)}')" style="font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--green);color:var(--green);background:#fff;cursor:pointer;">✍️ 거래 추가</button>`;
+  const addBtn=`<button onclick="openModalWithDate('${escAttr(dateStr)}')" style="font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--green);color:var(--green);background:#fff;cursor:pointer;">${iconSvg('pen')}거래 추가</button>`;
   detail.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
     <div style="font-weight:700;font-size:13px;color:var(--text);">${dateStr} 거래 내역 (${dayTrx.length}건)</div>
     ${addBtn}

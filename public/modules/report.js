@@ -6,6 +6,7 @@
 'use strict';
 
 import { S } from '../state.js';
+import { iconSvg } from '../utils/icons.js';
 import { COLS, STATUS_LABELS, STATUS_CLASSES, cs, lockKey } from '../constants.js';
 import { toast, showConfirm, showLoading, setText, makeDraggable, escHtml } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs } from '../services/firestore.js';
@@ -379,7 +380,7 @@ export function renderRptTrxTable(trxList){
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#15803d;white-space:nowrap;">${Number(t.amountIn||0)>0?Number(t.amountIn).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#b91c1c;white-space:nowrap;">${Number(t.amountOut||0)>0?Number(t.amountOut).toLocaleString()+'원':''}</td>`
       +`<td style="padding:7px 4px;text-align:center;${t.type==='지출'&&!hasReceipt(t)&&t.receiptMissing?'background:#fee2e2;':''}">${
-        hasReceipt(t)?'<button class="icon-btn rpt-rv" title="증빙 보기">📎</button>':
+        hasReceipt(t)?`<button class="icon-btn rpt-rv" title="증빙 보기">${iconSvg('clip')}</button>`:
         (t.receiptMissing?'<span style="font-size:10px;font-weight:700;color:#b91c1c;background:#fecaca;padding:2px 6px;border-radius:4px;">분실</span>':'')
       }</td>`;
     if(!locked){

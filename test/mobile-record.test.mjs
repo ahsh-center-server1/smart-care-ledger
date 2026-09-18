@@ -9,7 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { S } from '../public/state.js';
 import {
   RECORD_ACTIONS, availableRecordActions, applyCaptureMode,
@@ -178,6 +178,28 @@ test('아이콘 채우기는 두 번 불러도 한 번만 한다', () => {
   assert.equal(hydrateIcons(root), 1);
   assert.match(el.innerHTML, /<svg/);
   assert.equal(hydrateIcons(root), 0);
+});
+
+test('버튼 맨 앞에 이모지를 쓰지 않는다 — 모달·설정·보고서까지', () => {
+  // 네비만 바꾸고 모달을 두면 같은 화면에서 SVG 와 이모지가 섞여 통일감은
+  // 바꾸기 전보다 나빠진다. 버튼 **선두** 아이콘만 본다(문장 속 이모지는 말투다).
+  const emoji = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{270E}\u{270F}]/u;
+  const files = ['public/index.html', ...readdirSync(new URL('../public/modules', import.meta.url))
+    .filter(f => f.endsWith('.js')).map(f => 'public/modules/' + f)];
+  const found = [];
+  for (const rel of files) {
+    const src = read(rel);
+    // /u 가 없으면 [^\s<] 가 **UTF-16 한 칸**만 잡는다 — 이모지는 두 칸이라
+    // 앞의 반쪽만 들어와 어떤 이모지도 걸리지 않았다(처음엔 ✕ 만 잡혔다).
+    for (const m of src.matchAll(/<button[^>]*>\s*([^\s<])/gu)) {
+      // ✕ 는 닫기 버튼의 글자다 — 기기마다 달리 그려지는 그림이 아니라 기호라서
+      // 그대로 둔다. 통일감을 깨는 것은 컬러 이모지 쪽이다.
+      if (m[1] !== '✕' && emoji.test(m[1])) found.push(`${rel}: ${m[1]}`);
+    }
+  }
+  assert.deepEqual(found, [],
+    `버튼 아이콘이 이모지입니다:\n  ${found.join('\n  ')}\n`
+    + 'utils/icons.js 의 iconSvg() 로 바꾸세요. 없는 그림이면 거기에 먼저 더합니다.');
 });
 
 test('앱 크롬에 이모지가 남아 있지 않다', () => {

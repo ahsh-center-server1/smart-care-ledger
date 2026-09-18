@@ -23,8 +23,8 @@ import { renderFixedItemForm, registerModalShell } from './fixed-items.js';
 // 호출부까지 번지지 않게 하는 것이 분리의 목적이다.
 export { getUnpaidMandatoryItems, renderFixedItemsList } from './fixed-items.js';
 import * as ExcelParser from '../services/excel-parser.js';
-import { dupKey, fetchExistingForDup, isImageFile, renderXlSkipped } from './excel-support.js';
-export { isImageFile };
+import { dupKey, fetchExistingForDup, isImageFile, renderXlSkipped } from './excel-support.js'; export { isImageFile };
+import { iconSvg } from '../utils/icons.js';   // 버튼 아이콘 한 벌 (utils/icons.js 머리말)
 import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
 import { staffPickerHtml, bindStaffPicker } from './staff-picker.js';
 import { bankbookRowsToParsed } from '../domain/receipt.js';
@@ -124,18 +124,18 @@ export function renderTrxForm(t){
           PAYMENT_METHODS.map(m=>`<option value="${m}"${isEdit&&t.method===m?' selected':''}>${m}</option>`).join('')}</select></div>
       <div>
         <label class="label">영수증 첨부 <span style="font-size:10px;color:var(--muted);">(선택)</span></label>
-        ${isEdit&&t.receiptUrl?`<div id="trx-receipt-current" style="margin-bottom:6px;"><a href="${escAttr(t.receiptUrl)}" target="_blank" style="font-size:12px;color:var(--blue);">📎 현재 첨부파일 보기</a>${can('receipt.replace')?` <button onclick="document.getElementById('trx-receipt-current').innerHTML='<span style=\\'font-size:12px;color:#dc2626;\\'>삭제됨</span>';window._trxReceiptClear=true;" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button>`:''}</div>`:''}
-        ${isEdit&&t.receiptPath?`<div id="trx-receipt-current" style="margin-bottom:6px;"><button type="button" id="f-receipt-view" style="font-size:12px;color:var(--blue);background:none;border:none;cursor:pointer;">📎 현재 첨부파일 보기</button>${can('receipt.replace')?` <button id="f-receipt-clear" type="button" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button>`:''}</div>`:''}
+        ${isEdit&&t.receiptUrl?`<div id="trx-receipt-current" style="margin-bottom:6px;"><a href="${escAttr(t.receiptUrl)}" target="_blank" style="font-size:12px;color:var(--blue);">${iconSvg('clip')}현재 첨부파일 보기</a>${can('receipt.replace')?` <button onclick="document.getElementById('trx-receipt-current').innerHTML='<span style=\\'font-size:12px;color:#dc2626;\\'>삭제됨</span>';window._trxReceiptClear=true;" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button>`:''}</div>`:''}
+        ${isEdit&&t.receiptPath?`<div id="trx-receipt-current" style="margin-bottom:6px;"><button type="button" id="f-receipt-view" style="font-size:12px;color:var(--blue);background:none;border:none;cursor:pointer;">${iconSvg('clip')}현재 첨부파일 보기</button>${can('receipt.replace')?` <button id="f-receipt-clear" type="button" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button>`:''}</div>`:''}
         ${hasCurrentReceipt&&!can('receipt.replace')?'<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">기존 증빙을 교체하려면 담당자 권한이 필요합니다.</div>':''}
         <div id="trx-receipt-drop" style="border:2px dashed var(--border);border-radius:8px;background:var(--bg);padding:12px;text-align:center;cursor:pointer;font-size:13px;color:var(--muted);${hasCurrentReceipt&&!can('receipt.replace')?'display:none;':''}" onclick="document.getElementById('trx-receipt-file').click()">
-          📎 영수증 클릭 또는 드래그
+          ${iconSvg('clip')}영수증 클릭 또는 드래그
           <input type="file" id="trx-receipt-file" accept="image/*" style="display:none;">
         </div>
         <div id="trx-receipt-preview" style="display:none;margin-top:6px;font-size:12px;color:var(--green);"></div>
       </div>
       <div style="display:flex;gap:8px;">
-        <button id="f-copy-btn" class="btn" style="flex:1;padding:11px;">📋 복사하기</button>
-        <button id="f-save-btn" class="btn" style="flex:1;padding:11px;">💾 저장하기</button>
+        <button id="f-copy-btn" class="btn" style="flex:1;padding:11px;">${iconSvg('copy')}복사하기</button>
+        <button id="f-save-btn" class="btn" style="flex:1;padding:11px;">${iconSvg('check')}저장하기</button>
       </div>
     </div>`;
   window._trxReceiptClear=false;
@@ -397,13 +397,13 @@ export function renderExcelForm(){
       <div id="xl-photo-box" data-receipt-intake style="display:none;background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:10px 14px;font-size:12px;color:#115e59;">
         📷 <strong>통장 거래내역 사진</strong>으로도 가져올 수 있습니다. 은행 파일이 없을 때 쓰세요.
         <input type="file" id="xl-photo-file" accept="image/*,.heic,.heif" style="display:none;">
-        <button id="xl-photo-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #0d9488;color:#0d9488;background:#fff;cursor:pointer;font-size:12px;">📷 사진 선택</button>
+        <button id="xl-photo-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #0d9488;color:#0d9488;background:#fff;cursor:pointer;font-size:12px;">${iconSvg('camera')}사진 선택</button>
       </div>
       <div style="background:#f0fdf4;border:1px solid #a7f3d0;border-radius:8px;padding:10px 14px;font-size:12px;color:#065f46;">
         💡 은행 파일이 없으신가요? <strong>수기 입력 양식</strong>을 다운로드하여 직접 작성 후 업로드하세요.
-        <button onclick="downloadManualTemplate()" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #059669;color:#059669;background:#fff;cursor:pointer;font-size:12px;">📥 양식 다운로드</button>
+        <button onclick="downloadManualTemplate()" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #059669;color:#059669;background:#fff;cursor:pointer;font-size:12px;">${iconSvg('download')}양식 다운로드</button>
       </div>
-      <button id="xl-btn" class="btn" style="width:100%;padding:10px;">📊 파일 분석 시작</button>
+      <button id="xl-btn" class="btn" style="width:100%;padding:10px;">${iconSvg('chart')}파일 분석 시작</button>
       <div id="xl-preview" style="display:none;"></div>
     </div>`;
   const accSel=document.getElementById('xl-acc');
@@ -492,7 +492,7 @@ export async function analyzeXlFile(){
   const acc=S.accounts.find(a=>a.id===accId);
   if(!acc){toast('먼저 계좌를 선택하세요. 계좌를 알아야 중복 여부를 판정할 수 있습니다.','error',4000);return;}
   const btn=document.getElementById('xl-btn'); btn.disabled=true; btn.textContent='분석 중...';
-  const reset=()=>{btn.disabled=false;btn.textContent='📊 파일 분석 시작';};
+  const reset=()=>{btn.disabled=false;btn.innerHTML=iconSvg('chart')+'파일 분석 시작';};
   const clientId=acc.clientId;
   // 입주자별 규칙 우선, 공통 규칙 후순위
   const parserCats=S.categories
@@ -555,7 +555,7 @@ export async function analyzeBankbookPhoto(file){
   if(!accId){toast('계좌를 선택하세요.','error');return;}
 
   const btn=document.getElementById('xl-photo-btn');
-  const setBusy=(on)=>{ if(btn){btn.disabled=on;btn.textContent=on?'판독 중…':'📷 사진 선택';} };
+  const setBusy=(on)=>{ if(btn){btn.disabled=on;btn.innerHTML=on?'판독 중…':iconSvg('camera')+'사진 선택';} };
 
   setBusy(true);
   try{
@@ -715,7 +715,7 @@ export function renderXlPreview(){
         <tbody id="xl-tbody"></tbody>
       </table>
     </div>
-    <button id="xl-save-btn" class="btn" style="width:100%;padding:11px;background:#10b981;">✅ 최종 저장 (원본 파일 백업 포함)</button>`;
+    <button id="xl-save-btn" class="btn" style="width:100%;padding:11px;background:#10b981;">${iconSvg('check')}최종 저장 (원본 파일 백업 포함)</button>`;
   const tbody=document.getElementById('xl-tbody');
   S.excelTemp.forEach((t,i)=>{
     const isIn=t.amountIn>0, amt=isIn?t.amountIn:Math.abs(t.amountOut), c=cs(t.category);
@@ -753,11 +753,11 @@ export async function saveExcelData(){
     toSave=S.excelTemp.filter(item=>!existSet.has(dupKey({...item,accountId:accId})));
     dupCount=S.excelTemp.length-toSave.length;
   }catch(e){
-    if(btn){btn.disabled=false;btn.textContent='✅ 최종 저장 (원본 파일 백업 포함)';}
+    if(btn){btn.disabled=false;btn.innerHTML=iconSvg('check')+'최종 저장 (원본 파일 백업 포함)';}
     toast('중복 확인 실패: '+e.message,'error',5000); return;
   }
   if(!toSave.length){
-    if(btn){btn.disabled=false;btn.textContent='✅ 최종 저장 (원본 파일 백업 포함)';}
+    if(btn){btn.disabled=false;btn.innerHTML=iconSvg('check')+'최종 저장 (원본 파일 백업 포함)';}
     toast(`${dupCount}건 모두 이미 등록된 거래입니다. 저장할 것이 없습니다.`,'info',5000); return;
   }
   // 한 건씩 addDoc하면 중간에 끊겼을 때 절반만 들어간다 → 배치로 묶는다
@@ -1120,7 +1120,7 @@ export function renderClientForm(c){
       <div><label class="label">성명</label><input type="text" id="fc-name" class="input" value="${isEdit?c.name:''}" ${canEditDetails?'':'disabled'}></div>
       ${canAssign?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div>${staffPickerHtml(isEdit?c.userIds:'')}`:''}
       <div><label class="label">메모</label><textarea id="fc-memo" class="input" style="height:64px;resize:none;" ${canEditDetails?'':'disabled'}>${isEdit?c.memo||'':''}</textarea></div>
-      <button id="fc-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
+      <button id="fc-save" class="btn" style="width:100%;padding:11px;">${iconSvg('check')}저장 완료</button>
     </div>`;
   bindStaffPicker();   // 검색·팀 묶음 — 저장은 그대로 input[name="fc-staff"]:checked 를 읽는다
   document.getElementById('fc-save').addEventListener('click',async()=>{
@@ -1173,8 +1173,8 @@ export function renderAccountForm(a){
         <div><label class="label">기초 잔액 (기준일 잔액)</label><input type="number" id="fa-init" class="input" value="${isEdit?a.initialBalance||0:0}" style="text-align:right;"></div>
       </div>
       <p style="font-size:11px;color:var(--muted);background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:8px 12px;">💡 기준일 이후의 거래내역을 기초 잔액에 합산하여 현재 잔액을 계산합니다.</p>
-      <button id="fa-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
-      ${isEdit?`<button id="fa-stmt-btn" class="btn-sub" style="width:100%;padding:9px;color:#0369a1;border-color:#bae6fd;margin-top:4px;">📸 통장 사진 관리 (${(a.bankStatements||[]).length}장)</button>`:''}
+      <button id="fa-save" class="btn" style="width:100%;padding:11px;">${iconSvg('check')}저장 완료</button>
+      ${isEdit?`<button id="fa-stmt-btn" class="btn-sub" style="width:100%;padding:9px;color:#0369a1;border-color:#bae6fd;margin-top:4px;">${iconSvg('camera')}통장 사진 관리 (${(a.bankStatements||[]).length}장)</button>`:''}
     </div>`;
   const sel=document.getElementById('fa-client');
   S.clients.forEach(c=>sel.add(new Option(c.name,c.id)));
@@ -1232,7 +1232,7 @@ export function renderStaffForm(u){
         <input type="checkbox" id="fs-admin" ${isEdit&&u.isAdmin===true?'checked':''} style="accent-color:var(--blue);width:18px;height:18px;">
         관리자 권한 (권한 설정·전체 초기화)
       </label>
-      <button id="fs-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
+      <button id="fs-save" class="btn" style="width:100%;padding:11px;">${iconSvg('check')}저장 완료</button>
     </div>`;
   document.getElementById('fs-save').addEventListener('click',async()=>{
     const btn=document.getElementById('fs-save');
@@ -1264,7 +1264,7 @@ export function renderStaffForm(u){
       }else toast('저장됨','success');
       closeModal(); await refetchUsers(); renderManagement();
     }catch(e){ toast('저장 오류: '+(e.message||'다시 시도하세요.'),'error'); }
-    finally{ btn.disabled=false; btn.textContent='💾 저장 완료'; }
+    finally{ btn.disabled=false; btn.innerHTML=iconSvg('check')+'저장 완료'; }
   });
 }
 
@@ -1327,7 +1327,7 @@ function renderBulkModal(title,desc,templateBtn,previewId){
     <h3 style="font-size:17px;font-weight:900;color:var(--text);margin-bottom:14px;">${title}</h3>
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:13px;color:#1e40af;">
-        💡 ${desc}<br><button id="bulk-tpl-btn" class="btn-sub" style="margin-top:8px;font-size:12px;padding:5px 12px;color:#2563eb;border-color:#bfdbfe;">📥 양식 다운로드</button>
+        💡 ${desc}<br><button id="bulk-tpl-btn" class="btn-sub" style="margin-top:8px;font-size:12px;padding:5px 12px;color:#2563eb;border-color:#bfdbfe;">${iconSvg('download')}양식 다운로드</button>
       </div>
       <div id="bulk-drop" style="border:2px dashed #cbd5e1;border-radius:12px;padding:28px;text-align:center;cursor:pointer;background:#f8fafc;">
         <input type="file" id="bulk-file" accept=".xlsx,.xls" style="display:none;">
@@ -1408,7 +1408,7 @@ function renderBulkStaffPreview(parsed){
     <div style="font-size:13px;font-weight:700;color:var(--text);">미리보기 — 총 ${parsed.length}행 (유효 ${validCount}건 / 오류 ${errCount}건)</div>
     ${errCount?`<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;">⚠️ 오류 행은 저장에서 제외됩니다. 빨간 행을 확인하세요.</div>`:''}
     <div id="bulk-staff-table" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
-    <button id="bulk-staff-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>✅ ${validCount}명 일괄 저장</button>`;
+    <button id="bulk-staff-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>${iconSvg('check')}${validCount}명 일괄 저장</button>`;
   renderBulkTable(document.getElementById('bulk-staff-table'),parsed,[
     {key:'name',label:'이름'},{key:'userId',label:'아이디'},{key:'password',label:'비밀번호',mask:true},{key:'role',label:'역할'},{key:'team',label:'팀'},
   ]);
@@ -1499,7 +1499,7 @@ function renderBulkClientPreview(parsed){
     <div style="font-size:13px;font-weight:700;color:var(--text);">미리보기 — 총 ${parsed.length}행 (유효 ${validCount}건 / 오류 ${errCount}건)</div>
     ${errCount?`<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;">⚠️ 오류 행은 저장에서 제외됩니다.</div>`:''}
     <div id="bulk-client-table" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
-    <button id="bulk-client-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>✅ ${validCount}명 일괄 저장</button>`;
+    <button id="bulk-client-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>${iconSvg('check')}${validCount}명 일괄 저장</button>`;
   renderBulkTable(document.getElementById('bulk-client-table'),parsed,[
     {key:'name',label:'이름'},{key:'userIds',label:'담당직원아이디'},{key:'teamLeader',label:'담당팀장아이디'},{key:'memo',label:'메모'},
   ]);
@@ -1571,7 +1571,7 @@ function renderBulkAccountPreview(parsed){
     <div style="font-size:13px;font-weight:700;color:var(--text);">미리보기 — 총 ${parsed.length}행 (유효 ${validCount}건 / 오류 ${errCount}건)</div>
     ${errCount?`<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;">⚠️ 오류 행은 저장에서 제외됩니다.</div>`:''}
     <div id="bulk-account-table" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
-    <button id="bulk-account-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>✅ ${validCount}개 일괄 저장</button>`;
+    <button id="bulk-account-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>${iconSvg('check')}${validCount}개 일괄 저장</button>`;
   renderBulkTable(document.getElementById('bulk-account-table'),parsed,[
     {key:'clientName',label:'입주자이름'},{key:'label',label:'계좌명'},{key:'balance',label:'초기잔액'},{key:'date',label:'기준일'},
   ]);

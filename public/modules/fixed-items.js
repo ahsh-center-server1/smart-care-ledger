@@ -14,6 +14,7 @@
 'use strict';
 
 import { S } from '../state.js';
+import { iconSvg } from '../utils/icons.js';
 import { parseAmount, attachAmountInput } from '../utils/amount-input.js';
 import { COLS } from '../constants.js';
 import { toast, showConfirm } from '../utils/ui.js';
@@ -62,7 +63,7 @@ export async function applyFixedItems(){
         <label class="label">입력 대상 월</label>
         <input type="month" id="fi-month-sel" class="input" value="${defaultYM}" style="padding:8px 12px;">
       </div>
-      <button id="fi-month-ok" class="btn" style="padding:11px;width:100%;">📌 이 달로 입력하기</button>
+      <button id="fi-month-ok" class="btn" style="padding:11px;width:100%;">${iconSvg('pin')}이 달로 입력하기</button>
     </div>`;
   document.getElementById('modal-wrap').classList.add('show');
   document.getElementById('fi-month-ok').addEventListener('click',async()=>{
@@ -153,7 +154,7 @@ export function renderFixedItemForm(item){
         <input type="checkbox" id="fi-mandatory" ${isEdit&&item.isMandatory?'checked':''} style="width:16px;height:16px;cursor:pointer;accent-color:#dc2626;">
         <label for="fi-mandatory" style="font-size:13px;color:#991b1b;cursor:pointer;">필수 항목 (미납 시 알림 표시)</label>
       </div>
-      <button id="fi-save" class="btn" style="width:100%;padding:11px;">💾 저장</button>
+      <button id="fi-save" class="btn" style="width:100%;padding:11px;">${iconSvg('check')}저장</button>
     </div>`;
   const accSel=document.getElementById('fi-acc');
   accs.forEach(a=>accSel.add(new Option(a.label,a.id)));
@@ -181,7 +182,7 @@ export async function renderFixedItemsList(clientId){
     const div=document.createElement('div');
     div.style.cssText='display:flex;justify-content:space-between;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 14px;';
     const mandBadge=f.isMandatory?' <span style="font-size:10px;background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:4px;font-weight:700;">필수</span>':'';
-    div.innerHTML='<div><div style="font-size:14px;font-weight:700;color:var(--text);">'+(f.description||'(이름없음)')+mandBadge+' <span style="font-size:12px;font-weight:400;color:var(--muted);">매월 '+(f.day||1)+'일</span></div><div style="font-size:12px;color:var(--muted);margin-top:2px;">'+acc+' · '+f.type+' · '+f.category+' · '+Number(f.amount||0).toLocaleString()+'원</div></div><div style="display:flex;gap:6px;"><button class="fi-edit-btn icon-btn" style="color:#64748b;">✏️</button><button class="fi-del-btn icon-btn" style="color:#94a3b8;">🗑️</button></div>';
+    div.innerHTML='<div><div style="font-size:14px;font-weight:700;color:var(--text);">'+(f.description||'(이름없음)')+mandBadge+' <span style="font-size:12px;font-weight:400;color:var(--muted);">매월 '+(f.day||1)+'일</span></div><div style="font-size:12px;color:var(--muted);margin-top:2px;">'+acc+' · '+f.type+' · '+f.category+' · '+Number(f.amount||0).toLocaleString()+'원</div></div><div style="display:flex;gap:6px;"><button class="fi-edit-btn icon-btn" style="color:#64748b;">'+iconSvg('pen')+'</button><button class="fi-del-btn icon-btn" style="color:#94a3b8;">'+iconSvg('trash')+'</button></div>';
     div.querySelector('.fi-edit-btn').addEventListener('click',()=>{S.activeClient=clientId;shell.open('fixed-item',f);});
     div.querySelector('.fi-del-btn').addEventListener('click',()=>showConfirm('삭제','"'+f.description+'" 고정항목을 삭제하시겠습니까?',async()=>{await deleteFixedItem(f.id);renderFixedItemsList(clientId);}));
     el.appendChild(div);

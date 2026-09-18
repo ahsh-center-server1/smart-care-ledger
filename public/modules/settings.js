@@ -12,6 +12,7 @@
 'use strict';
 
 import { S } from '../state.js';
+import { iconSvg } from '../utils/icons.js';
 import { toast, showConfirm, showLoading, escAttr, escHtml } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchMixedOps } from '../services/firestore.js';
 import { deleteManyFromStorage } from '../services/storage.js';
@@ -128,7 +129,7 @@ export function renderManagement(){
       const editButton=canManageStaff&&isActive?`<button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button>`:'';
       // 비밀번호 재설정 — 관리자만. 결재에 닿는 계정은 서버가 2인을 요구한다.
       const pwButton=canManageStaff&&isActive&&String(u.id)!==String(S.user?.userId||'')
-        ?`<button class="icon-btn pw-reset" data-id="${escAttr(u.id)}" data-name="${escAttr(u.name||u.userId)}" title="비밀번호 재설정(임시 비밀번호 발급)" style="color:#b45309;">🔑</button>`:'';
+        ?`<button class="icon-btn pw-reset" data-id="${escAttr(u.id)}" data-name="${escAttr(u.name||u.userId)}" title="비밀번호 재설정(임시 비밀번호 발급)" style="color:#b45309;">${iconSvg('key')}</button>`:'';
       d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${escHtml(u.name||u.userId)}</div><div style="font-size:12px;color:var(--muted);">${escHtml(u.role||'')} ${u.team?'· '+escHtml(u.team):''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${pwButton}${editButton}</div>`;
       d.querySelector('.pw-reset')?.addEventListener('click',ev=>{
         const b=ev.currentTarget;
@@ -339,7 +340,7 @@ export function renderCatTags(type){
     tag.dataset.order=String(catDoc.sortOrder??i);
     tag.innerHTML=`<span style="font-size:11px;color:#94a3b8;margin-right:2px;">⠿</span><span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-size:13px;font-weight:700;color:${color};">${escHtml(cat)}</span>`
       +(isPersonal?`<span style="font-size:10px;background:${color}22;color:${color};padding:1px 5px;border-radius:4px;margin-left:2px;">${clientName}</span>`:'')
-      +(isCommonReadOnly?'':`<button class="cat-edit" title="이름·색상 수정">✎</button>`)
+      +(isCommonReadOnly?'':`<button class="cat-edit" title="이름·색상 수정">${iconSvg('pen')}</button>`)
       +(cat==='확인필요'||isCommonReadOnly?'':`<button class="cat-del">×</button>`);
     if(!isCommonReadOnly){
       tag.addEventListener('dragstart',e=>{dragSrc=tag;tag.style.opacity='0.5';e.dataTransfer.effectAllowed='move';});

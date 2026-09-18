@@ -357,15 +357,18 @@
        반응형 통합 후에는 휴대폰에서 216px 사이드바가 화면을 잡아먹는다. */
     @media(max-width:768px){aside{display:none!important;}}
     /* 아이콘 — utils/icons.js 가 그리는 인라인 SVG.
-       크기·굵기·색을 여기서 한 벌로 정한다(아이콘마다 다르면 그 자리만 튄다). */
-    .icon{display:block;width:24px;height:24px;flex-shrink:0;}
+       크기·굵기·색을 **여기 한 곳에서** 정한다. 호출부가 저마다 크기를 적으면
+       같은 버튼 줄에서 아이콘 크기가 갈리고, 그게 이모지의 문제였다.
+
+       크기는 자리로 정한다(버튼 16 · 퀵 액션 30 · 네비 24 · 시트 26).
+       svg 의 width/height 속성보다 CSS 가 이기므로 여기가 결론이다. */
+    .icon{display:inline-block;vertical-align:-0.18em;width:24px;height:24px;flex-shrink:0;}
     [data-icon]{display:inline-flex;align-items:center;justify-content:center;line-height:0;}
-    /* 글자와 나란히 서는 아이콘 — 버튼 안에서 기준선을 맞추고 간격을 준다.
-       간격은 **svg 에** 준다. 감싼 span 에 주면 span 안의 svg 와 이중으로 붙는 곳이
-       생겨(같은 버튼을 어떤 곳은 span 으로, 어떤 곳은 svg 로 채운다) 폭이 갈린다. */
-    .btn-sub .icon,.nav-item .icon,.nav-sub .icon,#btn-filter-reset .icon,
-    #btn-trx-view-toggle .icon,#btn-csv-export .icon,#btn-bulk-del .icon{
-      width:16px;height:16px;margin-right:6px;}
+    /* 글자 옆에 서는 아이콘 — 간격은 **svg 에** 준다. 감싼 span 에 주면 어떤 곳은
+       span, 어떤 곳은 svg 로 채우는 탓에 간격이 두 배가 되는 자리가 생긴다. */
+    button .icon,.btn .icon,.btn-sub .icon{width:16px;height:16px;margin-right:6px;}
+    .dash-action-btn .icon{width:30px;height:30px;margin-right:0;}
+    .record-action__icon .icon{width:26px;height:26px;margin-right:0;}
     #btn-trx-view-toggle,#btn-csv-export,#btn-bulk-del,#btn-filter-reset,.btn-sub,.nav-item,.nav-sub{
       display:inline-flex;align-items:center;}
     /* 권한·화면폭으로 감추는 자리.
@@ -843,8 +846,8 @@
         <div id="view-report" style="display:none;" class="animate-in">
           <!-- 서브탭: 월간 보고서 / 연간 통계 -->
           <div id="rpt-subtabs" style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--border);" class="no-print">
-            <button class="rpt-subtab active" data-subtab="monthly" style="padding:8px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;border-bottom:2px solid var(--blue);margin-bottom:-2px;color:var(--blue);">📋 월간 보고서</button>
-            <button class="rpt-subtab" data-subtab="annual" style="padding:8px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;color:var(--muted);">📈 연간 통계</button>
+            <button class="rpt-subtab active" data-subtab="monthly" style="padding:8px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;border-bottom:2px solid var(--blue);margin-bottom:-2px;color:var(--blue);"><span data-icon="report"></span>월간 보고서</button>
+            <button class="rpt-subtab" data-subtab="annual" style="padding:8px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;color:var(--muted);"><span data-icon="chart"></span>연간 통계</button>
           </div>
           <!-- 월간 보고서 패널 -->
           <div id="rpt-subtab-monthly">
@@ -853,7 +856,7 @@
               <div><label class="label">입주자</label><select id="r-client" class="input" style="padding:8px 12px;"></select></div>
               <div><label class="label">연도</label><select id="r-year" class="input" style="padding:8px 12px;"></select></div>
               <div><label class="label">월</label><select id="r-month" class="input" style="padding:8px 12px;"></select></div>
-              <button class="btn" id="btn-rpt-load">📊 조회</button>
+              <button class="btn" id="btn-rpt-load"><span data-icon="search"></span>조회</button>
             </div>
           </div>
           <!-- ⑥ 결재 대기 섹션 -->
@@ -903,7 +906,7 @@
                   <label style="font-size:12px;color:var(--sub);display:flex;align-items:center;gap:4px;cursor:pointer;">
                     <input type="checkbox" id="rpt-summary-print" checked style="accent-color:var(--blue);"> 인쇄 포함
                   </label>
-                  <button class="btn" id="btn-gen-summary" style="font-size:12px;padding:6px 12px;">✨ 생성</button>
+                  <button class="btn" id="btn-gen-summary" style="font-size:12px;padding:6px 12px;"><span data-icon="sparkle"></span>생성</button>
                 </div>
               </div>
               <div id="rpt-summary-text" style="font-size:14px;color:var(--sub);line-height:1.7;min-height:40px;">조회 후 생성 버튼을 클릭하세요.</div>
@@ -953,8 +956,8 @@
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                   <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">통장 사진</div>
                   <div style="display:flex;gap:6px;" class="no-print">
-                    <button id="btn-view-bank-stmts" style="font-size:11px;font-weight:700;color:#059669;border:1px solid #a7f3d0;background:#ecfdf5;padding:3px 10px;border-radius:6px;cursor:pointer;">🔍 전체보기</button>
-                    <button id="btn-upload-bank-stmt" style="font-size:11px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:3px 10px;border-radius:6px;cursor:pointer;">📸 사진 추가</button>
+                    <button id="btn-view-bank-stmts" style="font-size:11px;font-weight:700;color:#059669;border:1px solid #a7f3d0;background:#ecfdf5;padding:3px 10px;border-radius:6px;cursor:pointer;"><span data-icon="search"></span>전체보기</button>
+                    <button id="btn-upload-bank-stmt" style="font-size:11px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:3px 10px;border-radius:6px;cursor:pointer;"><span data-icon="camera"></span>사진 추가</button>
                   </div>
                 </div>
                 <div id="rpt-bank-stmt-gallery" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;"></div>
@@ -1007,7 +1010,7 @@
               <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
                 <div><label class="label">입주자</label><select id="a-client" class="input" style="padding:8px 12px;min-width:140px;"></select></div>
                 <div><label class="label">연도</label><select id="a-year" class="input" style="padding:8px 12px;width:110px;"></select></div>
-                <button class="btn" id="btn-annual-load">📈 조회</button>
+                <button class="btn" id="btn-annual-load"><span data-icon="search"></span>조회</button>
               </div>
             </div>
             <div id="annual-content" style="display:none;">
@@ -1067,7 +1070,7 @@
                       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                         <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">👤</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">직원 목록</h3></div>
                         <div style="display:flex;gap:8px;">
-                          <button class="btn-sub" id="btn-bulk-staff" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄</button>
+                          <button class="btn-sub" id="btn-bulk-staff" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;"><span data-icon="download"></span>일괄</button>
                           <button class="btn" id="btn-add-staff" style="font-size:13px;padding:7px 14px;">+ 등록</button>
                         </div>
                       </div>
@@ -1079,7 +1082,7 @@
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                       <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏠</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">입주자 목록</h3></div>
                       <div style="display:flex;gap:8px;">
-                        <button class="btn-sub" id="btn-bulk-client" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄</button>
+                        <button class="btn-sub" id="btn-bulk-client" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;"><span data-icon="download"></span>일괄</button>
                         <button class="btn" id="btn-add-client" style="font-size:13px;padding:7px 14px;">+ 등록</button>
                       </div>
                     </div>
@@ -1090,7 +1093,7 @@
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                       <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏦</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">계좌 관리</h3></div>
                       <div style="display:flex;gap:8px;">
-                        <button class="btn-sub" id="btn-bulk-account" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄</button>
+                        <button class="btn-sub" id="btn-bulk-account" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;"><span data-icon="download"></span>일괄</button>
                         <button class="btn" id="btn-add-account" style="font-size:13px;padding:7px 14px;">+ 등록</button>
                       </div>
                     </div>
@@ -1182,7 +1185,7 @@
                   </div>
                   <div id="budget-form" style="display:none;">
                     <div id="budget-cat-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;"></div>
-                    <button id="btn-budget-save" class="btn" style="padding:10px 24px;">💾 예산 저장</button>
+                    <button id="btn-budget-save" class="btn" style="padding:10px 24px;"><span data-icon="check"></span>예산 저장</button>
                   </div>
                 </div>
               </div>
@@ -1199,7 +1202,7 @@
                   <p style="margin:0 0 15px 0;color:#7f1d1d;font-size:14px;">마감 연도 거래를 Archive_YYYY 컬렉션에 백업하고 계좌 기초잔액을 업데이트합니다. <span style="color:#dc2626;font-weight:700;">되돌릴 수 없습니다.</span></p>
                   <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:16px;">
                     <div><label class="label">마감할 연도</label><select id="archive-year" class="input" style="width:130px;padding:8px 12px;"></select></div>
-                    <button id="btn-archive" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;">📦 마감 실행</button>
+                    <button id="btn-archive" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;"><span data-icon="archive"></span>마감 실행</button>
                   </div>
                   <div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -1234,7 +1237,7 @@
                     권한 투영본은 <strong>관리자만</strong> 다시 만들 수 있습니다(센터장이 누르면
                     나머지만 처리되고 그렇게 알려 줍니다).
                   </p>
-                  <button id="btn-rebuild-derived" class="ui-btn ui-btn--primary">🔁 다시 만들기</button>
+                  <button id="btn-rebuild-derived" class="ui-btn ui-btn--primary"><span data-icon="refresh"></span>다시 만들기</button>
                   <div id="rebuild-derived-result" style="margin-top:12px;font-size:13px;"></div>
                 </div>
 
@@ -1260,7 +1263,7 @@
                     있습니다. 업무 시간이 아닐 때 한 번만 누르세요. 이미 끝난 계좌는 다시
                     읽지 않으므로 중간에 멈춰도 이어서 누르면 됩니다.
                   </p>
-                  <button id="btn-rebuild-balances" class="ui-btn ui-btn--primary">💰 잔액 색인 다시 만들기</button>
+                  <button id="btn-rebuild-balances" class="ui-btn ui-btn--primary"><span data-icon="coin"></span>잔액 색인 다시 만들기</button>
                   <div id="rebuild-balances-result" style="margin-top:12px;font-size:13px;"></div>
                 </div>
               </div>
