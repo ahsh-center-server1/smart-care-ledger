@@ -42,7 +42,7 @@ const MAX_LINES = 600;
  *   transactions.js   표 렌더 / 필터·정렬 / 저장
  */
 const PENDING_SPLIT = {
-  'public/modules/modals.js':         1593,
+  'public/modules/modals.js':         1592,
   'public/modules/report.js':         1370,
   'public/modules/settings.js':       924,
   'public/modules/transactions.js':   686,

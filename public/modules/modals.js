@@ -26,6 +26,7 @@ import * as ExcelParser from '../services/excel-parser.js';
 import { dupKey, fetchExistingForDup, isImageFile, renderXlSkipped } from './excel-support.js';
 export { isImageFile };
 import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
+import { staffPickerHtml, bindStaffPicker } from './staff-picker.js';
 import { bankbookRowsToParsed } from '../domain/receipt.js';
 import { orderedCategories } from '../domain/category-order.js';
 import { dayOrderAllocator } from '../domain/trx-order.js';
@@ -1117,10 +1118,11 @@ export function renderClientForm(c){
     <input type="hidden" id="fc-id" value="${isEdit?c.id:'cli_'+Date.now()}">
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div><label class="label">성명</label><input type="text" id="fc-name" class="input" value="${isEdit?c.name:''}" ${canEditDetails?'':'disabled'}></div>
-      ${canAssign?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div><div><label class="label">담당 직원</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:140px;overflow-y:auto;padding:4px;">${S.users.filter(u=>u.active!==false).map(u=>{const ex=isEdit?String(c.userIds||'').split(',').map(s=>s.trim()):[];const ch=ex.includes(String(u.userId));return`<label style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${ch?'#eff6ff':'#f8fafc'};border:1px solid ${ch?'#bfdbfe':'var(--border)'};border-radius:8px;cursor:pointer;font-size:13px;"><input type="checkbox" name="fc-staff" value="${u.userId}" ${ch?'checked':''} style="accent-color:var(--blue);"> ${u.name}</label>`;}).join('')}</div></div>`:''}
+      ${canAssign?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div>${staffPickerHtml(isEdit?c.userIds:'')}`:''}
       <div><label class="label">메모</label><textarea id="fc-memo" class="input" style="height:64px;resize:none;" ${canEditDetails?'':'disabled'}>${isEdit?c.memo||'':''}</textarea></div>
       <button id="fc-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
     </div>`;
+  bindStaffPicker();   // 검색·팀 묶음 — 저장은 그대로 input[name="fc-staff"]:checked 를 읽는다
   document.getElementById('fc-save').addEventListener('click',async()=>{
     const isAdm=can('assignments.manage');
     // 담당 직원·팀장은 관리 권한자만 편집한다(체크박스가 그들에게만 보인다).
