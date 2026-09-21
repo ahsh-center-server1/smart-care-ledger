@@ -241,6 +241,7 @@ function bindEvents(){
   // 휴대폰 하단 네비의 ＋ 기록, 헤더의 설정
   document.getElementById('btn-record')?.addEventListener('click',Record.toggleRecordSheet);
   document.getElementById('btn-mobile-settings')?.addEventListener('click',()=>Core.changeView('settings'));
+  document.getElementById('btn-mobile-logout')?.addEventListener('click',()=>Auth.handleLogout());
   // 로그인
   document.getElementById('login-id')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleLogin();});
   document.getElementById('login-pw')?.addEventListener('keydown',e=>{if(e.key==='Enter')Auth.handleLogin();});

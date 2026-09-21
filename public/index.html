@@ -513,6 +513,45 @@
     @media(max-width:768px){
       .nav-item[data-view="report"]{display:none!important;}
     }
+
+    /* ───────────────────────────────────────────────────────────
+       좁은 화면(휴대폰) — 거래내역에서 지금 안 쓰는 것을 내린다
+
+       휴대폰에서 이 화면을 여는 이유는 거의 하나다: **어떤 거래를 찾아
+       영수증을 붙이거나 한 칸 고치는 것**(§7). 그런데 화면은 데스크톱의
+       관리 도구를 그대로 접어 놓은 것이라, 필터 여섯 개와 버튼 아홉 개가
+       표보다 먼저 나왔다 — 찾으려는 거래에 닿기까지 두 번을 스크롤한다.
+
+       남기는 것: 입주자 · 계좌 · 기간, 그리고 줄마다 날짜 · 내용 · 증빙 · 수정.
+       내리는 것은 **데스크톱에 그대로 있다.** 여기서 지우는 것이 아니라
+       좁은 화면에서만 접는 것이고, 기록을 남기는 행동은 ＋ 시트가 덮는다.
+
+       ⚠️ 권한으로 감추는 쪽(auth.js 의 show())은 인라인 style 을 쓴다.
+       그쪽이 `display:''` 로 되돌려도 이 규칙이 이기도록 !important 를 둔다.
+       ─────────────────────────────────────────────────────────── */
+    @media(max-width:768px){
+      /* 필터 — 입주자·계좌·기간만 남긴다 */
+      .trx-filter-extra{display:none!important;}
+      /* 기간은 남기되 자주 안 쓰는 단축만 내린다 — 이 장부의 일은 「이번 달」과
+         「지난 달」에 몰린다(§12-1). 나머지는 날짜 칸으로 고른다. */
+      .period-btn[data-p="this-week"],
+      .period-btn[data-p="last-3month"],
+      .period-btn[data-p="this-year"],
+      #btn-filter-reset{display:none!important;}
+      /* 작업 버튼 — 수기 입력부터 엑셀 저장까지. 기록은 ＋ 시트가 받는다.
+         일괄 삭제도 함께 내린다: 체크박스 열이 이미 숨어 있어 누를 수는
+         있는데 고를 수가 없다 — 보이는데 안 되는 버튼이 가장 나쁘다. */
+      #btn-h-trx, #btn-h-excel, #btn-h-receipt-intake, #btn-h-fixed,
+      #btn-h-receipt-print, #h-unclassified,
+      #btn-trx-view-toggle, #btn-csv-export, #btn-bulk-del{display:none!important;}
+      /* 남는 것은 건수뿐이다. 구분선이 홀로 떠 보이지 않게 여백을 줄인다. */
+      #trx-actions{border-top:none!important;padding-top:0!important;}
+      /* 줄에서도 같은 기준 — 날짜 · 내용 · 증빙 · 수정 */
+      #history-table tbody td[data-label="카테고리"],
+      #history-table tbody td[data-label="계좌"],
+      #history-table tbody td.col-in,
+      #history-table tbody td.col-out{display:none!important;}
+    }
     /* Screen reader only */
     .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
     /* 대시보드 퀵 액션 버튼 — 창 너비에 따라 자동 조정 */
@@ -749,6 +788,14 @@
           <button id="btn-mobile-settings" type="button" class="header-icon-btn" aria-label="설정">
             <span data-icon="settings" data-icon-size="22"></span>
           </button>
+          <!-- 로그아웃도 휴대폰에서는 여기다. 데스크톱에서는 사이드바 맨 아래에
+               있는데 그 사이드바가 좁은 화면에서 통째로 숨는다 — 즉 휴대폰에는
+               로그아웃할 방법이 아예 없었다. 설정 안에 넣지 않은 이유는 찾는
+               사람이 설정을 먼저 열지 않기 때문이다(공용 단말에서 다음 사람에게
+               넘기기 전에 누르는 버튼이라 한 번에 보여야 한다). -->
+          <button id="btn-mobile-logout" type="button" class="header-icon-btn" aria-label="로그아웃">
+            <span data-icon="logout" data-icon-size="22"></span>
+          </button>
         </div>
       </header>
 
@@ -804,11 +851,11 @@
                 <div id="h-client-list" class="client-dd"></div>
                 <select id="h-client" class="input" style="display:none;"></select>
               </div>
-              <div style="flex:1;min-width:150px;">
+              <div class="trx-filter-extra" style="flex:1;min-width:150px;">
                 <label class="label">내용 검색</label>
                 <input id="h-search" class="input" placeholder="가맹점명..." style="padding:8px 12px;">
               </div>
-              <div>
+              <div class="trx-filter-extra">
                 <label class="label">구분</label>
                 <select id="h-type" class="input" style="padding:8px 12px;width:110px;">
                   <option value="all">전체</option>
@@ -824,13 +871,13 @@
                   <option value="">전체 계좌</option>
                 </select>
               </div>
-              <div>
+              <div class="trx-filter-extra">
                 <label class="label">증빙</label>
                 <select id="h-receipt" class="input" style="padding:8px 12px;width:90px;">
                   <option value="all">전체</option><option value="yes">있음</option><option value="no">없음</option>
                 </select>
               </div>
-              <div>
+              <div class="trx-filter-extra">
                 <label class="label">결제수단</label>
                 <select id="h-method" class="input" style="padding:8px 12px;width:110px;">
                   <option value="all">전체</option><option value="카드">카드</option>
@@ -850,7 +897,7 @@
               <input id="h-end" type="date" class="input" style="width:140px;padding:5px 10px;">
               <button id="btn-filter-reset" class="period-btn" style="margin-left:auto;color:var(--red);border-color:#fecaca;" title="검색·구분·계좌·증빙·기간 필터를 모두 초기화합니다"><span data-icon="refresh"></span>필터 초기화</button>
             </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:12px;">
+            <div id="trx-actions" style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:12px;">
               <div style="display:flex;gap:8px;align-items:center;">
                 <button class="btn-sub" id="btn-h-trx" style="color:var(--blue);border-color:#bfdbfe;"><span data-icon="pen"></span>수기 입력</button>
                 <button class="btn-sub" id="btn-h-excel" style="color:var(--amber);border-color:#fde68a;"><span data-icon="upload"></span>파일 업로드</button>
