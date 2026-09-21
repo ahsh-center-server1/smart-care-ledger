@@ -45,6 +45,9 @@ export function myScope(field) {
  * @param {Object} [opts]
  * @param {string[]} [opts.only] - 갱신할 컬렉션만 명시 ('users'|'clients'|'accounts'|'categories'|'reports'|'monthlyStats')
  *                                  미지정 시 전체 로드 (로그인·새로고침용)
+ * @param {boolean} [opts.fresh] - **방금 쓴 것을 다시 읽는다.** 직원·분류의 파생
+ *   명부를 건너뛰고 컬렉션을 직접 읽는다 — 명부를 다시 만드는 것은 비동기
+ *   트리거라, 쓰기 직후에는 바뀌기 전 값이 그대로 온다(services/directory.js).
  */
 export async function fetchBaseData(opts) {
   const { getDoc, doc } = fb();
@@ -62,8 +65,10 @@ export async function fetchBaseData(opts) {
   // 예전에는 컬렉션을 통째로 읽어 직원 25명 + 분류 60개 = 85 읽기였고,
   // 그것이 로그인마다 전 역할에 걸렸다. 명부가 없거나 낡으면 컬렉션 직접
   // 조회로 떨어지므로 트리거 미배포·실패가 화면을 깨뜨리지 않는다.
-  if (need('users'))      tasks.push(['users',      fetchStaffDirectory()]);
-  if (need('categories')) tasks.push(['categories', fetchCategoryDirectory()]);
+  // `fresh` 면 명부를 건너뛴다 — 쓰기 직후의 조회다(위 주석).
+  const dirOpts = { fresh: !!(opts && opts.fresh) };
+  if (need('users'))      tasks.push(['users',      fetchStaffDirectory(dirOpts)]);
+  if (need('categories')) tasks.push(['categories', fetchCategoryDirectory(dirOpts)]);
   // 입주자·계좌는 명부로 만들지 않는다.
   //   · 앱이 이 두 컬렉션의 **모든 필드**를 쓴다(설정 화면이 연락처·메모·계좌번호·
   //     기초잔액을 편집한다). 부분 명부로는 그 화면이 깨진다.
@@ -216,11 +221,19 @@ export async function fetchBaseData(opts) {
   if (snapMap.users) Settings.updateSignupBadge();
 }
 
-// 부분 갱신 헬퍼 (CRUD 후 호출)
-export const refetchUsers      = () => fetchBaseData({ only: ['users'] });
+// ── 부분 갱신 헬퍼 — **방금 쓴 것을 화면에 반영하려고** 부르는 것들 ──
+//
+// 직원·분류에 `fresh: true` 가 붙는 이유: 그 둘만 파생 명부(문서 1건)로 읽는데,
+// 명부를 다시 만드는 것은 **비동기 트리거**다. 이름을 바꾸고 곧바로 다시 읽으면
+// 트리거가 아직 안 돌아 **바뀌기 전 이름이 그대로 온다** — 사용자는 저장이 안
+// 된 줄 알고 다시 저장하고, 잠시 뒤 새로고침하면 낫는 것이 더 나쁘다(무엇이
+// 저장됐는지 확인할 방법이 없다). 입주자·계좌는 애초에 컬렉션을 직접 읽으므로
+// 이 문제가 없다. 로그인·새로고침(`fetchBaseData()` 인자 없이)은 그대로 명부
+// 1건으로 읽는다 — 아낄 곳은 거기다.
+export const refetchUsers      = () => fetchBaseData({ only: ['users'], fresh: true });
 export const refetchClients    = () => fetchBaseData({ only: ['clients','accounts','monthlyStats'] }); // 입주자 변경 시 권한 필터 + 계좌 매핑 + 통계 재계산
 export const refetchAccounts   = () => fetchBaseData({ only: ['accounts'] });
-export const refetchCategories = () => fetchBaseData({ only: ['categories'] });
+export const refetchCategories = () => fetchBaseData({ only: ['categories'], fresh: true });
 export const refetchReports    = () => fetchBaseData({ only: ['reports'] });
 
 export function isConfirmedLocked(clientId, dateStr){

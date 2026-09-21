@@ -173,16 +173,18 @@ test('감추기에 !important 가 있다 — 권한 판정이 인라인 style �
   }
 });
 
-test('휴대폰 줄에는 날짜·내용·증빙·수정만 남는다', () => {
+test('휴대폰 줄에는 날짜·내용·금액·증빙·수정이 남는다', () => {
   const narrow = narrowBlocks(htmlSrc);
   for (const label of ['카테고리', '계좌']) {
     const rules = rulesFor(narrow, `td[data-label="${label}"]`);
     assert.ok(rules.some(b => /display:none/.test(b)),
       `'${label}' 열이 좁은 화면에서 그대로 보입니다`);
   }
+  // 금액은 **남긴다.** 같은 날 같은 가맹점 두 건을 가르는 유일한 값이고,
+  // 장부에서 금액이 안 보이면 지금 무엇을 보고 있는지 알 수 없다.
   for (const cls of ['td.col-in', 'td.col-out']) {
-    assert.ok(rulesFor(narrow, cls, /display:none/).length,
-      `${cls}(수입·지출)를 좁은 화면에서 내리는 규칙이 없습니다`);
+    assert.equal(rulesFor(narrow, cls, /display:none!important/).length, 0,
+      `${cls}(수입·지출)가 좁은 화면에서 숨겨집니다 — 금액은 남아야 합니다`);
   }
   // 남겨야 하는 것 — 이 넷이 사라지면 휴대폰에서 할 일 자체가 없어진다.
   // (::before 같은 가상 요소 규칙은 열 자체를 숨기는 것이 아니므로 센다.)
