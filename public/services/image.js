@@ -51,16 +51,21 @@ export async function heicToJpeg(file) {
  * - HEIC/HEIF는 먼저 JPEG로 변환 (브라우저가 직접 디코딩하지 못함)
  * - 최대 너비/높이: 1200px (초과 시 비율 유지하며 축소)
  * - JPEG 품질: 0.78 (육안으로 거의 차이 없음, 용량 약 80~90% 감소)
- * - PDF, GIF 등 비이미지 파일은 그대로 반환
+ * - PDF 등 비이미지 파일은 그대로 반환 (브라우저가 다시 압축할 수 없다)
+ *
+ * GIF 도 압축한다 — 첫 프레임만 남는다
+ *   예전에는 애니메이션이 사라지는 것을 피하려고 GIF 를 그냥 올렸다. 그런데 이
+ *   앱이 받는 GIF 는 영수증·통장을 찍거나 캡처한 **정지 화면**이고, 움직이는
+ *   증빙은 애초에 증빙이 아니다. 반대로 압축을 건너뛴 GIF 는 수 MB 짜리가
+ *   그대로 Storage 에 쌓인다 — 잃는 것(있지도 않은 애니메이션)보다 치르는
+ *   비용(무료 한도 5GB)이 크다.
  */
 export async function compressImage(file, maxPx=1200, quality=0.78) {
   // HEIC/HEIF → JPEG 선변환 (변환 실패 시 원본 유지)
   file = await heicToJpeg(file);
   return new Promise((resolve) => {
-    // 이미지가 아니거나 GIF면 압축 없이 그대로 반환
-    if (!file.type.startsWith('image/') || file.type === 'image/gif') {
-      resolve(file); return;
-    }
+    // 이미지가 아니면 압축 없이 그대로 반환 (PDF 등)
+    if (!file.type.startsWith('image/')) { resolve(file); return; }
     const reader = new FileReader();
     reader.onload = e => {
       const img = new Image();

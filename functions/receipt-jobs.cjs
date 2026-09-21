@@ -66,8 +66,25 @@ const ATTACHED_STATES = [STATES.ATTACHED, STATES.CLEANUP_PENDING, STATES.COMPLET
 /** 선점 유효 시간. 판독이 아니라 복사·첨부에 걸리는 시간이 기준이다. */
 const LEASE_MS = 120 * 1000;
 
-/** 스테이징 파일 수명. 사용자가 검토를 중단하고 떠나는 경우가 실제로 있다. */
-const STAGING_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * 스테이징 파일 수명.
+ *
+ * 이 파일이 살아 있어야 하는 구간은 **검토 창 하나**다 — 판독이 끝나고 사용자가
+ * 「저장」을 누를 때까지. 사진 열 장을 하나씩 확인해도 그 안에 끝난다.
+ *
+ * 예전에는 24시간이었다. 그런데 사용자가 판독만 해 보고 창을 닫는 일이 흔하고
+ * (실제로 그것이 「영수증 사진」 버튼의 흔한 쓰임이다), 그 사진이 하루 동안
+ * Storage 에 남았다. 저장하지 않은 사진이 저장한 사진만큼 자리를 차지한 셈이다.
+ *
+ * 이제 두 갈래로 줄인다:
+ *   · 창을 닫거나 사진을 빼면 **그 자리에서** `discardReceiptUploads` 가 지운다
+ *   · 그 호출이 닿지 못한 것(탭을 그냥 닫는 등)은 이 TTL 이 받는다
+ *
+ * 그래서 TTL 은 "사람이 떠난 뒤 얼마나 기다릴까"가 아니라 "검토 창이 아무리
+ * 길어도 이보다는 짧다"로 정한다. 정리 작업은 한 시간마다 돌므로 실제 삭제는
+ * 2~3시간 뒤다.
+ */
+const STAGING_TTL_MS = 2 * 60 * 60 * 1000;
 
 function millis(value) {
   if (value && typeof value.toMillis === 'function') return value.toMillis();

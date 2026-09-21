@@ -126,7 +126,11 @@ module.exports = function receiptCleanup(ctx) {
     },
   );
 
-  return { cleanupReceiptJobs };
+  // cleanupExpiredJob 을 함께 내보낸다 — 「지금 버린다」(discardReceiptUploads)가
+  // 같은 절차를 써야 하기 때문이다. 즉시 삭제를 따로 구현하면 최종 객체 보존·
+  // generation 사전조건·orphan 감사 세 가지를 두 곳에서 맞춰야 하고, 어긋나는
+  // 순간 **거래에 붙어 있는 증빙이 지워진다.**
+  return { cleanupReceiptJobs, cleanupExpiredJob };
 };
 
 module.exports.CLEANUP_BATCH = CLEANUP_BATCH;

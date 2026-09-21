@@ -72,6 +72,30 @@ export async function uploadReceipt({
 }
 
 /**
+ * 판독만 하고 **저장하지 않기로 한** 사진을 지금 버린다.
+ *
+ * 판독은 사진을 먼저 스테이징에 올려야 성립한다(서버가 원본을 봐야 한다).
+ * 그래서 「건너뛰기」로 둔 사진, 창을 닫으며 남긴 사진도 이미 Storage 에 있다.
+ * TTL 이 받아 주기는 하지만, 사용자가 안 쓴다고 정한 순간이 지울 수 있는 가장
+ * 이른 때다 — 무료 한도(5GB)를 저장하지 않은 사진으로 채우지 않는다.
+ *
+ * **실패해도 던지지 않는다.** 이것은 정리이지 사용자가 하려던 일이 아니다.
+ * 창을 닫는데 "정리 실패" 가 뜨면 사용자는 무엇이 잘못됐는지 알 수 없고,
+ * 못 지운 것은 어차피 TTL 이 받는다.
+ */
+export async function discardReceiptUploads(uploadIds) {
+  const ids = (uploadIds || []).map((v) => String(v || '')).filter(Boolean);
+  if (!ids.length) return { discarded: 0, kept: 0 };
+  try {
+    const res = await window._fbFn.call('discardReceiptUploads')({ uploadIds: ids });
+    return res.data || { discarded: 0, kept: ids.length };
+  } catch (e) {
+    console.debug('[영수증] 임시 사진 정리 실패 — TTL 에 맡깁니다', e);
+    return { discarded: 0, kept: ids.length };
+  }
+}
+
+/**
  * 여러 장을 한꺼번에. 사진 묶음 자동입력이 쓴다.
  *
  * 올리기는 **한 장씩 순서대로** 한다 — 예전에 병렬로 올렸다가 모바일에서

@@ -772,6 +772,7 @@ Cloud Functions 콜러블로 옮겨 갔다. 규칙은 문서 하나만 보므로
 | 입주자 저장 | `saveClient` | 담당 배정과 투영본(`authz` · `clientAccess`)이 한 트랜잭션이어야 한다 |
 | 보고서 결재 | `applyReportTransition` · `saveReportComment` · `deleteReport` | 전이표가 순서를 강제해야 한다 |
 | 영수증 최종화 | `startReceiptUpload` · `finalizeReceipts` | 최종 경로 덮어쓰기 금지, generation 기록 |
+| 판독만 한 사진 버리기 | `discardReceiptUploads` | 붙은 증빙과 임시 파일을 가르는 판정이 서버에만 있다 — §13 |
 | 분류 이름·색상 | `saveCategory` | 이름을 바꾸면 거래가 따라와야 하는데, 공통 분류를 관리하는 팀장·센터장은 `trx.edit` 을 갖지 않는다 |
 | 자산이동 | `saveTransfer` | 상대편 조회까지 트랜잭션 안이어야 한다 |
 | 연도 마감 | `runArchive` | 잠긴 달의 삭제 + generation 사전조건 |
@@ -1061,13 +1062,40 @@ https://smart-care-ledger.web.app
 
 | 정책 | 구현 위치 | 설명 |
 |---|---|---|
-| 업로드 전 이미지 압축 | `image.js` `compressImage` | 1200px / JPEG 0.78 |
+| 업로드 전 이미지 압축 | `image.js` `compressImage` | 1200px / JPEG 0.78. **GIF 도 지난다**(첫 프레임) — 이 앱이 받는 GIF 는 캡처한 정지 화면이고, 건너뛰면 수 MB 가 그대로 쌓인다. PDF 만 원본 유지 |
 | 업로드 크기 상한 | `storage.js` `validateUploadSize` | 이미지·HEIC 15MB / 기타(PDF) 8MB, 초과 시 예외 |
 | HEIC→JPEG 변환 | `image.js` `heicToJpeg` | iPhone HEIC 업로드 시 heic2any(CDN 지연 로드)로 JPEG 변환 후 압축, 실패 시 원본 유지 |
 | 삭제 시 파일 정리 | `deleteFromStorage` / `deleteManyFromStorage` | 거래·영수증·통장사진 삭제, 전체 초기화 시 Storage 객체까지 삭제 (고아 파일 방지) |
 | 연도 마감 시 재압축 보관 | `functions/archive-fns.js runArchive` | 해당 연도 영수증·통장사진을 900px/60 으로 재압축(덮어쓰기), **삭제하지 않음**. 서버가 `ifGenerationMatch` 로 **읽은 그 객체일 때만** 덮어쓴다 — 브라우저 판은 동시 교체를 조용히 뭉갰다. sharp 가 없으면 건너뛴다(best-effort) |
 | 목록용 썸네일 | `uploadImageWithThumb` | 통장사진 업로드 시 320px 썸네일 동시 생성 → 갤러리/보고서 목록은 `thumbUrl` 사용 (다운로드 대역폭 절감) |
+| 판독용 임시 사진 즉시 삭제 | `discardReceiptUploads` + `receipt-cleanup.js` | 아래 |
 | 엑셀 원본 gzip 저장 | `storage.js` `uploadExcelOriginal` | 원본은 유지하되 gzip 압축 저장(다운로드 시 원본 복원), 중복 rawRows는 미저장 |
+
+### 판독만 하고 저장하지 않는 사진 — 남기지 않는다
+
+사진 판독에는 두 길이 있고, **Storage 를 쓰는 것은 한쪽뿐이다.**
+
+| 어디 | 사진이 어디로 가나 | 남는가 |
+|---|---|---|
+| 통장 사진 판독 | `compressForReading` → base64 로 콜러블에 실려 간다 | **애초에 저장되지 않는다** |
+| 영수증 사진 판독 | 스테이징(`receiptStaging/{uid}/{uploadId}/source`)에 올린 뒤 서버가 읽는다 | 저장을 눌러야 최종 경로로 간다 |
+
+영수증 쪽이 스테이징을 지나는 이유는 서버가 **원본과 job 소유권을 확인한 뒤에만**
+판독하기 때문이다(§10-2). 그래서 판독 결과만 보고 창을 닫아도 파일은 이미 올라가
+있다 — 그리고 그것이 이 버튼의 흔한 쓰임이다.
+
+- 사용자가 사진을 빼거나 창을 닫으면 **그 자리에서** `discardReceiptUploads` 가
+  지운다. 기다리지 않고(창 닫는 손을 붙잡지 않는다) 실패해도 던지지 않는다 —
+  정리는 사용자가 하려던 일이 아니다.
+- 닿지 못한 것(탭을 그냥 닫는 등)은 TTL 이 받는다. 24시간이었던 것을 **2시간**으로
+  줄였다: 이 파일이 살아 있어야 하는 구간은 검토 창 하나이지, 사람이 떠난 뒤가
+  아니다. 실제 삭제는 정리 작업 주기(1시간) 때문에 2~3시간 뒤다.
+
+> ⚠️ **이미 거래에 붙은 증빙은 절대 지우지 않는다.** 즉시 삭제와 예약 정리가
+> **같은 함수**(`receipt-cleanup.js` 의 `cleanupExpiredJob`)를 지나는 이유가
+> 이것이다. 따로 구현하면 최종 객체 보존·generation 사전조건·orphan 감사를 두
+> 곳에서 맞춰야 하고, 어긋나는 순간 결재가 끝난 문서의 증빙이 조용히 사라진다.
+> `test/receipt-discard.test.mjs` 가 붙은 상태 전부에 대해 이것을 지킨다.
 
 ### CORS 설정 (연도 마감 재압축에 필요)
 

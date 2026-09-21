@@ -573,13 +573,17 @@ module.exports = function receiptFns(ctx) {
     return { ok: true, trxId };
   });
 
-  const { cleanupReceiptJobs } = require('./receipt-cleanup')({
+  const { cleanupReceiptJobs, cleanupExpiredJob } = require('./receipt-cleanup')({
     db, getBucket, onSchedule, logger, FieldValue, randomId,
+  });
+
+  const { discardReceiptUploads } = require('./receipt-discard')({
+    db, callable, HttpsError, logger, requireAuthz, cleanupExpiredJob, maxItems: MAX_ITEMS,
   });
 
   return {
     startReceiptUpload, completeReceiptUpload, finalizeReceipts, getReceiptAccessUrl, removeReceipt,
-    cleanupReceiptJobs,
+    discardReceiptUploads, cleanupReceiptJobs,
   };
 };
 

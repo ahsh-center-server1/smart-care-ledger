@@ -1,7 +1,7 @@
 'use strict';
 
 import { S } from '../state.js';
-import { prepareReceiptForAnalysis, uploadReceipts } from '../services/receipt-upload.js';
+import { prepareReceiptForAnalysis, uploadReceipts, discardReceiptUploads } from '../services/receipt-upload.js';
 import { toast, showLoading } from '../utils/ui.js';
 import { batchMixedOps } from '../services/firestore.js';
 import { offerRuleLearning } from './receipt-learn.js';
@@ -451,6 +451,9 @@ function removeBtn(row) {
   b.addEventListener('click', () => {
     if (row.thumb) URL.revokeObjectURL(row.thumb);
     rows = rows.filter(r => r !== row);
+    // 판독하려고 스테이징에 올려 둔 사진이다. 여기서 빼면 저장하지 않겠다는
+    // 뜻이므로 바로 지운다 — 기다릴 이유가 없다(services/receipt-upload.js).
+    if (row.uploadId) discardReceiptUploads([row.uploadId]);
     paintReview();
   });
   return b;
@@ -574,9 +577,14 @@ async function saveAll() {
 }
 
 function cleanup() {
+  // 아직 거래에 붙지 않은 사진 — 「건너뛰기」로 둔 것, 판독만 하고 닫는 것.
+  // 저장된 것은 saveAll 이 rows 에서 이미 빼냈고, 서버도 붙은 job 은 거절한다.
+  const pending = rows.map(r => r.uploadId).filter(Boolean);
   for (const r of rows) if (r.thumb) URL.revokeObjectURL(r.thumb);
   rows = [];
   busy = false;
+  // 기다리지 않는다 — 창을 닫는 손을 정리 때문에 붙잡아 두지 않는다.
+  if (pending.length) discardReceiptUploads(pending);
 }
 
 export { cleanup as cleanupReceiptIntake, LOW_CONFIDENCE, MAX_FILES };
