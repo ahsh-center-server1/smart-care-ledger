@@ -512,6 +512,10 @@ async function saveAll() {
           category: row.category || '확인필요',
           description: d.merchant || '(영수증)',
           createdByName: S.user?.name || '',
+          // 판독이 읽은 세부품목. 서버가 상호명·주소·전화가 섞인 줄을 깎아서
+          // 저장한다(functions/receipt-items.cjs) — 여기서 거르지 않는 이유는
+          // 경계를 한 곳에 두기 위해서다. 보고서 분석이 이것을 집계해 쓴다.
+          items: d.items || [],
         } };
       }
       const current = S.transactions.find(t => t.id === row.target) || {};

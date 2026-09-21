@@ -34,6 +34,7 @@ const {
   finalPath, stagingPath, jobPath, newJob,
 } = require('./receipt-jobs.cjs');
 const { fixedCan } = require('./fixed-role-policy.cjs');
+const { sanitizeReceiptItems } = require('./receipt-items.cjs');
 
 const AUTHZ = 'authz';
 const ACCOUNTS = 'accounts';
@@ -406,6 +407,13 @@ module.exports = function receiptFns(ctx) {
           createdBy: auth.uid,
           createdByName: String(draft.createdByName || ''),
           source: 'receipt-photo',
+          // 세부품목 — 보고서 분석이 「무엇이 늘었는가」에 답하는 근거다.
+          // **화면이 보낸 것을 그대로 담지 않는다**: 품목명은 OCR 이 읽은 자유
+          // 텍스트라 상호명·주소·전화가 섞여 온다. 상호명을 아는 곳이 여기뿐이라
+          // (판독 결과와 함께 온다) 여기서 깎는다 — receipt-items.cjs.
+          receiptItems: sanitizeReceiptItems(draft.items, {
+            merchant: draft.description,
+          }),
           createdAt: FieldValue.serverTimestamp(),
           ...patch,
         });

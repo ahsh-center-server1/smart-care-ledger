@@ -132,6 +132,13 @@ export function previousMonthFacts(prevTrx) {
  *   결재자가 실제로 확인하려는 것은 따로 있다: **증빙이 빠진 건이 있는가**,
  *   **잔액이 맞는가**, **이번 달만 튀는가**. 그 셋은 전부 집계로 답할 수 있다.
  *
+ * 세부품목은 보낸다 — 상호명 대신
+ *   「무엇이 늘었는가」에 답하려면 분류보다 한 칸 아래가 필요하고, 그 칸이
+ *   품목이다. 거래에 저장된 `receiptItems` 를 **이름으로 합쳐** 상위 몇 개만
+ *   보낸다 — 어느 날 어느 가게에서 샀는지는 합치면서 사라진다.
+ *   품목명은 저장 시점에 이미 깎인 것이다(`functions/receipt-items.cjs`:
+ *   상호명·주소·전화·카드번호가 섞인 줄을 버린다).
+ *
  * 무엇을 보내지 않는가 — 경계는 그대로다
  *   상호명(`description`)·입주자 이름·계좌번호·계좌 이름은 여기 한 글자도
  *   들어가지 않는다. 결제수단은 자유 입력이 아니라 고정 낱말 넷 중 하나이고,
@@ -141,6 +148,8 @@ export function previousMonthFacts(prevTrx) {
  * @param {Object} rd  S.reportData (trxList · allTrx · accountRows)
  * @param {(t:Object)=>boolean} hasReceipt  증빙 판정 (services/receipt-access.js)
  */
+export const TOP_ITEMS = 10;
+
 export function extraReportFacts(rd, hasReceipt) {
   const d = rd || {};
   const counted = (d.trxList || []).filter(countsInTotals);
@@ -196,10 +205,33 @@ export function extraReportFacts(rd, hasReceipt) {
     });
   }
 
+  // ── 세부품목 — 「무엇이 늘었는가」에 답하는 유일한 근거 ──
+  //
+  // 분류(식비·의료비)는 결재자가 표에서 이미 본다. 한 칸 아래를 말하려면
+  // 품목이 필요하고, 영수증 판독이 그것을 이미 읽어 거래에 담아 두었다
+  // (`receiptItems`, 서버가 상호명·주소·전화를 깎은 뒤 저장한 것).
+  //
+  // 여기서는 **이름으로 합친다.** 「우유 2,900원 × 3회」처럼 한 줄로 만들어야
+  // 문장이 되고, 무엇보다 어느 날 얼마를 썼는지가 흩어지지 않는다.
+  const itemTotals = new Map();
+  for (const t of counted) {
+    for (const it of (t.receiptItems || [])) {
+      const name = String((it && it.name) || '').trim();
+      const amount = Math.abs(Number(it && it.amount) || 0);
+      if (!name || !amount) continue;
+      const cur = itemTotals.get(name) || { name, total: 0, count: 0 };
+      cur.total += amount; cur.count += 1;
+      itemTotals.set(name, cur);
+    }
+  }
+  const items = [...itemTotals.values()]
+    .sort((a, b) => b.total - a.total)
+    .slice(0, TOP_ITEMS);
+
   return {
     receiptMissingCount, receiptMissingAmount,
     largestOut, methods, accounts,
-    trend,
+    trend, items,
     // 며칠에 걸쳐 쓰였는가 — 하루에 몰린 달은 사람이 한 번 더 본다.
     activeDays: new Set(counted.map(t => String(t.date || '')).filter(Boolean)).size,
   };
