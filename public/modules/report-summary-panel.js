@@ -10,7 +10,8 @@
 
 import { S } from '../state.js';
 import { toast, setText } from '../utils/ui.js';
-import { ruleBasedSummary, previousMonthFacts } from '../domain/report-summary.js';
+import { ruleBasedSummary, previousMonthFacts, extraReportFacts } from '../domain/report-summary.js';
+import { hasReceipt } from '../services/receipt-access.js';
 
 /**
  * 전월 거래. **그 입주자의 전체 거래**(allTrx)에서 뽑는다 — 예전에는
@@ -80,6 +81,10 @@ export async function handleGenSummary(){
       totalIn:rd.summary.totalIn, totalOut:rd.summary.totalOut, balance:rd.summary.balance,
       count:(rd.trxList||[]).length, catStats:rd.summary.catStats,
       ...previousMonthFacts(prevMonthTrx(rd)),
+      // 증빙 누락·잔액·추이 — 결재자가 실제로 확인하는 것들. 전부 집계이고
+      // 상호명·이름·계좌번호는 여전히 한 글자도 나가지 않는다
+      // (domain/report-summary.js 의 extraReportFacts 머리말).
+      ...extraReportFacts(rd, hasReceipt),
     });
     text=String(res?.data?.text||'');
   }catch(_){ /* 규칙 기반으로 떨어진다 */ }

@@ -19,7 +19,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const {
-  buildReportFacts, factsToPrompt, narrateReport, TOP_CATEGORIES,
+  buildReportFacts, factsToPrompt, narrateReport, TOP_CATEGORIES, TREND_MONTHS,
 } = require('../functions/ai/report-narrative.js');
 
 /** 화면이 넘기는 것과 같은 모양 + 절대 나가면 안 되는 것들을 섞어 둔다. */
@@ -39,6 +39,12 @@ const PAYLOAD = {
   trxList: [{ description: '○○약국', amountOut: 32000, accountId: 'a1' }],
   accountNumber: '123-456-789012',
   memo: '보호자 연락처 010-0000-0000',
+  // 「더 구체적으로」를 위해 늘린 집계들 (domain/report-summary.js extraReportFacts)
+  receiptMissingCount: 3, receiptMissingAmount: 91000,
+  largestOut: 150000, activeDays: 17,
+  methods: { '카드': 300000, '현금': 130000 },
+  accounts: { count: 2, prevBalance: 1200000, balance: 1270000 },
+  trend: [{ ym: '2026-01', totalOut: 360000 }, { ym: '2026-02', totalOut: 380000 }],
 };
 
 test('이름·상호명·계좌번호가 사실 묶음에 들어가지 않는다', () => {
@@ -197,4 +203,103 @@ test('브라우저가 애초에 거래 내용을 보내지 않는다', () => {
   for (const field of ['totalIn', 'totalOut', 'balance', 'count', 'catStats']) {
     assert.ok(new RegExp(`\\b${field}\\b`).test(payload), `${field} 이 빠졌습니다`);
   }
+});
+
+
+// ─────────────────────────────────────────────
+// 늘린 집계 — 「더 구체적으로」가 상호명으로 가지 않게
+// ─────────────────────────────────────────────
+//
+// 분석 문장을 구체적으로 만들려면 거래 내용을 보내야 할 것 같지만 그렇지 않다.
+// 결재자가 실제로 확인하려는 것은 증빙이 빠졌는가 · 잔액이 맞는가 · 이번 달만
+// 튀는가 셋이고, 셋 다 집계로 답한다. 여기서 그 집계가 실제로 실려 나가는지와,
+// 그 통로로 자유 입력 문자열이 따라 나오지 않는지를 함께 본다.
+
+test('증빙 누락·잔액·추이가 사실 묶음에 들어간다', () => {
+  const f = buildReportFacts(PAYLOAD);
+  assert.deepEqual(f.receipts, { missingCount: 3, missingAmount: 91000 });
+  assert.deepEqual(f.accounts, { count: 2, prevBalance: 1200000, balance: 1270000 });
+  assert.equal(f.largestOut, 150000);
+  assert.equal(f.activeDays, 17);
+  assert.equal(f.trend.length, 2);
+});
+
+test('그 숫자들이 프롬프트에도 나온다 — 묶음만 채우면 쓰이지 않는다', () => {
+  const p = factsToPrompt(buildReportFacts(PAYLOAD));
+  assert.match(p, /증빙이 아직 붙지 않은 지출이 3건 91000원/);
+  assert.match(p, /계좌 2개 합계 잔액은 전월 말 1200000원에서 1270000원/);
+  assert.match(p, /가장 큰 지출 한 건은 150000원/);
+  assert.match(p, /2026-01 360000원/);
+});
+
+test('결제수단은 고정 낱말 넷만 나간다 — 자유 입력이 새어 나갈 통로가 아니다', () => {
+  const f = buildReportFacts({
+    ...PAYLOAD,
+    methods: { '카드': 1000, '○○상회 외상': 5000, '': 9000 },
+  });
+  assert.deepEqual(f.methods, [{ name: '카드', total: 1000 }]);
+  assert.ok(!JSON.stringify(f).includes('○○상회'));
+});
+
+test('추이는 정해진 달 수까지만, 꼴이 맞는 것만', () => {
+  const f = buildReportFacts({
+    ...PAYLOAD,
+    trend: [
+      { ym: '나쁜값', totalOut: 1 },
+      { ym: '2025-11', totalOut: 100 },
+      { ym: '2025-12', totalOut: 200 },
+      { ym: '2026-01', totalOut: 300 },
+    ],
+  });
+  assert.equal(f.trend.length, TREND_MONTHS);
+  assert.deepEqual(f.trend.map(t => t.ym), ['2025-12', '2026-01']);
+});
+
+test('화면이 무엇을 보내든 적어 둔 필드만 나간다', () => {
+  // 통째로 펴서 넘기는 구현이었다면 여기서 샌다.
+  const f = buildReportFacts({
+    ...PAYLOAD,
+    accounts: { count: 2, prevBalance: 1, balance: 2, label: '생활비', number: '110-222-333' },
+    receiptMissingCount: 1, merchantTop: '○○약국', note: '김입주 보호자',
+  });
+  const dumped = JSON.stringify(f);
+  for (const leaked of ['생활비', '110-222-333', '○○약국', '김입주']) {
+    assert.ok(!dumped.includes(leaked), `사실 묶음에 「${leaked}」 가 들어 있습니다`);
+  }
+});
+
+test('늘린 집계가 없어도 깨지지 않는다 — 구형 화면이 안 보낼 수 있다', () => {
+  const f = buildReportFacts({ year: 2026, month: 3 });
+  assert.deepEqual(f.receipts, { missingCount: 0, missingAmount: 0 });
+  assert.equal(f.accounts, null);
+  assert.deepEqual(f.methods, []);
+  assert.deepEqual(f.trend, []);
+  const p = factsToPrompt(f);
+  assert.match(p, /증빙은 모두 붙어 있습니다/);
+});
+
+test('브라우저가 보내는 집계도 숫자뿐이다', async () => {
+  const { extraReportFacts } = await import('../public/domain/report-summary.js');
+  const facts = extraReportFacts({
+    year: 2026, month: 3,
+    trxList: [
+      { date: '2026-03-02', amountOut: 32000, description: '○○약국', method: '카드' },
+      { date: '2026-03-02', amountOut: 5000, description: '분실건', receiptMissing: true },
+      { date: '2026-03-09', amountOut: 7000, receiptPath: 'receipts/x', method: '현금' },
+      { date: '2026-03-09', amountOut: 9000, method: '수기입력' },
+    ],
+    allTrx: [{ date: '2026-02-01', amountOut: 1000 }],
+    accountRows: [{ id: 'a1', label: '생활비', accountNumber: '110-1', prevBal: 5, bal: 6 }],
+  }, (t) => !!t.receiptPath);
+
+  const dumped = JSON.stringify(facts);
+  for (const leaked of ['○○약국', '생활비', '110-1', '수기입력', 'a1']) {
+    assert.ok(!dumped.includes(leaked), `브라우저가 「${leaked}」 를 보냅니다`);
+  }
+  // 「분실」로 표시한 것은 누락으로 세지 않는다 — 담당자가 이미 답했다.
+  assert.equal(facts.receiptMissingCount, 2);
+  assert.equal(facts.receiptMissingAmount, 41000);
+  assert.equal(facts.activeDays, 2);
+  assert.deepEqual(facts.accounts, { count: 1, prevBalance: 5, balance: 6 });
+  assert.deepEqual(facts.trend, [{ ym: '2026-02', totalOut: 1000 }]);
 });

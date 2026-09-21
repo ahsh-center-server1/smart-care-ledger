@@ -15,6 +15,7 @@
 'use strict';
 
 import { countsInTotals } from './trx-totals.js';
+import { PAYMENT_METHODS } from './payment-method.js';
 
 export function ruleBasedSummary(reportData) {
   const { year, month, trxList, summary } = reportData;
@@ -118,4 +119,88 @@ export function previousMonthFacts(prevTrx) {
     }
   }
   return { prevTotalIn, prevTotalOut, prevCatStats };
+}
+
+/**
+ * 분석 문장을 **구체적으로** 만드는 집계들.
+ *
+ * 왜 더 보내나
+ *   예전에 보내던 것은 수입·지출·차액·건수·분류별 금액뿐이었다. 그것으로
+ *   나오는 문장은 "지출이 전월 대비 12% 늘었습니다" 수준에서 멈춘다 —
+ *   결재자가 보고서를 보면서 이미 아는 말이다.
+ *
+ *   결재자가 실제로 확인하려는 것은 따로 있다: **증빙이 빠진 건이 있는가**,
+ *   **잔액이 맞는가**, **이번 달만 튀는가**. 그 셋은 전부 집계로 답할 수 있다.
+ *
+ * 무엇을 보내지 않는가 — 경계는 그대로다
+ *   상호명(`description`)·입주자 이름·계좌번호·계좌 이름은 여기 한 글자도
+ *   들어가지 않는다. 결제수단은 자유 입력이 아니라 고정 낱말 넷 중 하나이고,
+ *   분류 이름은 시설이 정한 목록이라 개인을 가리키지 않는다(전에도 보냈다).
+ *   자세한 이유는 functions/ai/report-narrative.js 머리말에 있다.
+ *
+ * @param {Object} rd  S.reportData (trxList · allTrx · accountRows)
+ * @param {(t:Object)=>boolean} hasReceipt  증빙 판정 (services/receipt-access.js)
+ */
+export function extraReportFacts(rd, hasReceipt) {
+  const d = rd || {};
+  const counted = (d.trxList || []).filter(countsInTotals);
+
+  // ── 증빙이 빠진 지출 ──
+  // 「분실」로 표시한 것은 뺀다. 그것은 담당자가 이미 답한 것이라 결재자가
+  // 다시 물을 자리가 아니다 — 여기 넣으면 문장이 매달 같은 말을 한다.
+  let receiptMissingCount = 0, receiptMissingAmount = 0;
+  for (const t of counted) {
+    if (!Number(t.amountOut || 0)) continue;
+    if (hasReceipt(t) || t.receiptMissing) continue;
+    receiptMissingCount += 1;
+    receiptMissingAmount += Number(t.amountOut || 0);
+  }
+
+  // ── 가장 큰 지출 한 건 (금액만) ──
+  const largestOut = counted.reduce((m, t) => Math.max(m, Number(t.amountOut || 0)), 0);
+
+  // ── 결제수단 구성 (고정 낱말) ──
+  const methods = {};
+  for (const t of counted) {
+    const out = Number(t.amountOut || 0);
+    if (!out) continue;
+    // **고정 낱말 넷만** 센다. 구형 데이터에 다른 글자가 들어 있을 수 있고,
+    // 그것을 그대로 담으면 자유 입력 문자열이 호출에 실려 나간다. 서버도
+    // 한 번 더 거르지만(ai/report-narrative.js), 경계는 두 겹이 싸다.
+    const m = String(t.method || '');
+    if (!PAYMENT_METHODS.includes(m)) continue;
+    methods[m] = (methods[m] || 0) + out;
+  }
+
+  // ── 계좌 잔액 합계 (계좌 이름·번호는 보내지 않는다) ──
+  const rows = d.accountRows || [];
+  const accounts = rows.length ? {
+    count: rows.length,
+    prevBalance: rows.reduce((s, a) => s + Number(a.prevBal || 0), 0),
+    balance: rows.reduce((s, a) => s + Number(a.bal || 0), 0),
+  } : null;
+
+  // ── 최근 지출 추이 — 이번 달이 유독 튀는지 보려면 한 달 전으로는 모자라다 ──
+  const trend = [];
+  for (let back = 2; back >= 1; back--) {
+    let y = Number(d.year) || 0, m = (Number(d.month) || 0) - back;
+    while (m <= 0) { m += 12; y -= 1; }
+    const prefix = `${y}-${String(m).padStart(2, '0')}`;
+    const rowsOfMonth = (d.allTrx || [])
+      .filter(t => String(t.date || '').startsWith(prefix))
+      .filter(countsInTotals);
+    if (!rowsOfMonth.length) continue;
+    trend.push({
+      ym: prefix,
+      totalOut: rowsOfMonth.reduce((s, t) => s + Number(t.amountOut || 0), 0),
+    });
+  }
+
+  return {
+    receiptMissingCount, receiptMissingAmount,
+    largestOut, methods, accounts,
+    trend,
+    // 며칠에 걸쳐 쓰였는가 — 하루에 몰린 달은 사람이 한 번 더 본다.
+    activeDays: new Set(counted.map(t => String(t.date || '')).filter(Boolean)).size,
+  };
 }
