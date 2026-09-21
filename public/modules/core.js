@@ -17,6 +17,7 @@ import { normalizeBankParsers } from '../domain/bank-parser.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
 import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
+import { flushPendingMonthlyStats } from '../services/summary-live.js';
 import { fetchStaffDirectory, fetchCategoryDirectory } from '../services/directory.js';
 import { countUnenteredFixed } from '../domain/monthly-summary.js';
 import { sortTrx } from '../domain/trx-order.js';
@@ -450,7 +451,13 @@ export function changeView(view) {
   };
   const [t,s]=titles[view]||['',''];
   setText('view-title',t); setText('view-sub',s);
-  if (view==='dashboard') { Dash.renderDashboard(); Rpt.refreshPendingApprovalBadge(); }
+  if (view==='dashboard') {
+    // 먼저 들고 있는 값으로 그린다 — 빈 화면을 보여주지 않는다.
+    Dash.renderDashboard(); Rpt.refreshPendingApprovalBadge();
+    // 그 사이 거래를 썼는데 로컬로 덮지 못한 것이 있으면 여기서 다시 읽는다.
+    // 쓸 때마다가 아니라 **볼 때 한 번**이다(services/summary-live.js).
+    flushPendingMonthlyStats().then(changed => { if (changed) Dash.renderDashboard(); });
+  }
   if (view==='settings')  {
     // 캐시된 데이터로 즉시 렌더 (CRUD 시 부분 갱신으로 최신 상태 유지).
     // 어떤 패널을 그릴지는 initSettingsTabs가 세운 셸이 정한다 —

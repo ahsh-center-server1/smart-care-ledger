@@ -48,6 +48,7 @@ const APP_SHELL = [
   '/services/receipt-access.js',
   '/services/scoped-fetch.js',
   '/services/summary.js',
+  '/services/summary-live.js',
   '/domain/action-items.js',
   '/domain/audit.js',
   '/domain/category-color.js',

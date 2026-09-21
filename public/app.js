@@ -33,6 +33,7 @@ import { compressImage } from './services/image.js';
 import { uploadToStorage } from './services/storage.js';
 
 import * as Auth     from './modules/auth.js';
+import { watchTrxWrites } from './services/summary-live.js';
 import * as Core     from './modules/core.js';
 import * as Dash     from './modules/dashboard.js';
 import * as Trx      from './modules/transactions.js';
@@ -236,6 +237,9 @@ function bindEvents(){
   hydrateIcons();
   // 화면이 좁아지면 PC 전용 화면(보고서·설정)에서 빠져나온다
   Core.watchViewportForDesktopOnlyViews();
+  // 거래를 쓰면 대시보드 당월 집계도 따라간다 — 방금 넣은 것이 카드에 안 보이면
+  // 사용자는 저장이 안 된 줄 알고 한 번 더 저장한다(services/summary-live.js)
+  watchTrxWrites();
   // 거래내역의 입주자 고르기 — 목록이 아니라 검색이다(modules/client-picker.js)
   initClientPicker();
   // 휴대폰 하단 네비의 ＋ 기록, 헤더의 설정

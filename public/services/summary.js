@@ -41,11 +41,18 @@ export function monthRange(ym) {
  *
  * @param {string[]} clientIds
  * @param {string} ym 'YYYY-MM'
+ * @param {Object} [opts]
+ * @param {Iterable<string>} [opts.force] 캐시를 **믿지 않을** 입주자들.
+ *   방금 이 브라우저가 거래를 쓴 경우다. 트리거는 비동기라 아직
+ *   sourceVersion 을 올리지 않았을 수 있고, 그러면 캐시는 신선해 **보이는데**
+ *   방금 쓴 것이 빠져 있다 — 화면이 "저장이 안 된 것처럼" 보이는 자리다.
+ *   버전만으로는 이 경우를 가릴 수 없다. 쓴 쪽만 안다.
  * @returns {Promise<{summaries:Object, reads:number, recomputed:string[]}>}
  *   summaries: { [clientId]: {inc, exp, count, paidFixedIds} }
  *   reads·recomputed는 진단용 — 캐시가 실제로 듣는지 확인할 때 쓴다.
  */
-export async function fetchMonthlySummaries(clientIds, ym) {
+export async function fetchMonthlySummaries(clientIds, ym, opts = {}) {
+  const force = new Set(opts.force || []);
   const ids = (clientIds || []).filter(Boolean);
   const summaries = {};
   const recomputed = [];
@@ -76,7 +83,7 @@ export async function fetchMonthlySummaries(clientIds, ym) {
   const stale = [];
   for (const id of ids) {
     const cache = caches.get(summaryKey(id, ym));
-    if (isSummaryFresh(cache)) summaries[id] = fromSummaryCacheDoc(cache);
+    if (!force.has(id) && isSummaryFresh(cache)) summaries[id] = fromSummaryCacheDoc(cache);
     else stale.push(id);
   }
 
