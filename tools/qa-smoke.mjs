@@ -25,7 +25,8 @@
  */
 
 import { chromium } from 'playwright';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { computeFixedCaps } from '../public/domain/fixed-role-policy.js';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const BASE = process.env.QA_BASE_URL || 'http://127.0.0.1:5000';
@@ -43,6 +44,17 @@ const ROLES = [
   { uid: 'staff',  name: '이담당', role: '담당자', isAdmin: false },
   { uid: 'typist', name: '최입력', role: '입력자', isAdmin: false },
 ];
+
+/**
+ * 역할이 **실제로 가진 권한**. 화면 기대치를 여기서 뽑는다.
+ *
+ * 예전에는 `['담당자','팀장','센터장']` 처럼 역할 이름을 손으로 나열했다.
+ * 그 목록은 등급제 시절의 것이라, 역할이 누적되지 않게 바뀐 뒤
+ * (§4 「팀장은 담당자+결재가 아니다」) 전부 어긋났다 — 팀장에게 엑셀 업로드가
+ * 보이기를 기대하고 실패했다. 정책이 근거이므로 정책에서 읽는다.
+ */
+const capsOf = (actor) =>
+  computeFixedCaps({ role: actor.role, isAdmin: actor.isAdmin, enabled: true });
 
 /** base64url — 커스텀 토큰 조립용. */
 const b64u = (obj) =>
@@ -142,13 +154,17 @@ async function runRole(browser, actor) {
   // 역할별 내비게이션 노출 — 입력자는 보고서·설정이 없어야 한다
   const navReport = await page.locator('.nav-item[data-view="report"]').isVisible().catch(() => false);
   const navSettings = await page.locator('.nav-item[data-view="settings"]').isVisible().catch(() => false);
-  if (actor.role === '입력자') {
-    check(!navReport && !navSettings, '입력자에게 보고서·설정 내비가 숨겨진다',
-      `report=${navReport} settings=${navSettings}`);
-  } else {
-    check(navReport && navSettings, '보고서·설정 내비가 보인다',
-      `report=${navReport} settings=${navSettings}`);
-  }
+  const caps = capsOf(actor);
+  check(navReport === (caps.navReport === true),
+    caps.navReport ? '보고서 내비가 보인다' : `${actor.role}에게 보고서 내비가 숨겨진다`,
+    `report=${navReport}`);
+  // 설정 내비는 navSettings 로 갈리지 않는다. 「내 역할 안내」(permissions 탭)는
+  // **모든 역할이 읽는다** — 자기 권한이 무엇인지 볼 수 없으면 사용자는
+  // 「내 등급이 낮아서」로 읽고 상급자에게 요청하러 간다(§4).
+  // settings-nav.js 의 canSeeSettingsTab 이 그 탭만 예외로 두고,
+  // test/settings-role-guide.test.mjs 가 입력자도 읽을 수 있음을 고정한다.
+  check(navSettings, '설정 내비가 보인다 — 「내 역할 안내」는 모든 역할이 읽는다',
+    `settings=${navSettings}`);
 
   // 거래내역
   await page.locator('.client-card').first().click().catch(() => {});
@@ -208,20 +224,35 @@ async function runRole(browser, actor) {
     || /^Failed to load resource: net::ERR_(ABORTED|CONNECTION_RESET)$/.test(t.trim());
   const fontNoise = (t) => /fonts\.(googleapis|gstatic)/.test(t);
 
-  // Functions 에뮬레이터(5001)는 이 환경에서 띄울 수 없다 — 조직 이그레스
-  // 정책이 firebase-public.firebaseio.com을 막아 트리거 등록이 실패한다.
-  // 그래서 콜러블 호출은 연결 거부가 되는데, **앱이 그것을 정상적으로
-  // 흡수하는지가 검증 대상**이다(기능이 숨고 나머지는 동작한다).
-  // 따라서 이 요청 실패는 통과 처리하되, 몇 건이 그랬는지 보고한다.
-  const fnEmulatorDown = (t) => /:5001\//.test(t)
+  // Functions 에뮬레이터(5001)가 **꺼져 있을 때만** 콜러블 실패를 봐준다.
+  //
+  // 폐쇄망에서는 띄울 수 없다 — 트리거를 등록할 때 접속하는
+  // firebase-public.firebaseio.com 이 이그레스 정책에 막힌다(STAGING.md).
+  // 그때는 앱이 그것을 흡수하는지가 검증 대상이다(기능이 숨고 나머지는 동작한다).
+  //
+  // 그런데 이 예외를 **무조건** 두면, Functions 가 떠 있는 CI 에서 콜러블이
+  // 진짜로 깨져도 초록이 된다 — 검사가 스스로를 무력화한다. 그래서 기동
+  // 여부를 실제로 재고, 떠 있으면 봐주지 않는다.
+  const fnPattern = (t) => /:5001\//.test(t)
     || /^Failed to load resource: net::ERR_CONNECTION_REFUSED$/.test(t.trim());
+  const fnEmulatorDown = (t) => !FUNCTIONS_UP && fnPattern(t);
 
-  const ignorable = (t) => /favicon/i.test(t) || /heic2any/i.test(t)
-    || fontNoise(t) || teardownNoise(t) || fnEmulatorDown(t);
-
-  const realConsole = consoleErrors.filter((t) => !ignorable(t));
   const realFailed = failedRequests.filter(
     (t) => !fontNoise(t) && !teardownNoise(t) && !fnEmulatorDown(t));
+
+  // 콘솔의 "Failed to load resource: net::ERR_..." 는 **URL 이 없다.** 그래서
+  // 위의 URL 기준 필터가 걸러 낸 요청(폰트 등)이라도 콘솔 쪽은 그대로 남아
+  // 실패로 잡힌다 — 프록시 CA 를 안 믿는 환경에서 ERR_CERT_AUTHORITY_INVALID
+  // 가 실제로 그렇게 새어 나왔다. 걸러 낸 요청만 실패한 상황이면 이 맨몸 줄도
+  // 같은 것을 가리키므로 함께 봐준다.
+  const bareResourceError = (t) => /^Failed to load resource: net::[A-Z_]+$/.test(t.trim());
+  const allFailedIgnorable = failedRequests.length > 0 && realFailed.length === 0;
+
+  const ignorable = (t) => /favicon/i.test(t) || /heic2any/i.test(t)
+    || fontNoise(t) || teardownNoise(t) || fnEmulatorDown(t)
+    || (bareResourceError(t) && allFailedIgnorable);
+
+  const realConsole = consoleErrors.filter((t) => !ignorable(t));
 
   const skipped = failedRequests.filter(fnEmulatorDown).length;
   if (skipped) {
@@ -568,7 +599,10 @@ async function checkSummaryCache(page, actor) {
  *   텍스트만 본다. **실제로 써지는지**는 여기서만 확인된다.
  */
 async function checkFixedItemEntry(page, actor) {
-  if (!['담당자', '팀장', '센터장', '관리자'].includes(actor.role)) return;
+  // trxCreate 가 없는 역할(팀장·센터장)에게는 **거부되는 것이 정답**이다.
+  // §4 「작성자와 결재자의 분리」 — 오타를 고치는 것과 없는 거래를 만드는 것은
+  // 다른 일이다. 예전 목록은 팀장·센터장까지 통과를 기대해 늘 실패했다.
+  const expectAllowed = capsOf(actor).trxCreate === true;
 
   const result = await page.evaluate(async () => {
     try {
@@ -585,22 +619,50 @@ async function checkFixedItemEntry(page, actor) {
         clientId: client.id, accountId: acc.id,
         date: '2026-09-25', type: '지출', category: '세금공과',
         description: 'QA 고정항목', amountIn: 0, amountOut: 33000,
-        receiptUrl: '', isFixed: true, fixedItemId: 'qa-fixed',
+        // receiptUrl 은 넣지 않는다 — transactionCreateFieldsOk() 의
+        // hasOnly 목록에 없어서 넣는 순간 permission-denied 다. 실제
+        // applyFixedItems 도 쓰지 않는다(fixed-items.js). 예전 payload 는
+        // 그것을 넣고 있어서 담당자에게도 늘 거부됐다.
+        isFixed: true, fixedItemId: 'qa-fixed',
         createdBy: String(S.user?.userId || ''),
       } }]);
 
       // 흔적을 남기지 않는다 — 다음 역할의 집계가 달라지면 검증이 흔들린다.
-      const { deleteDoc, doc } = fb();
-      for (const id of ids) await deleteDoc(doc(fdb(), 'transactions', id));
+      //
+      // 다만 **삭제는 별개의 권한**이다(trxDelete). 입력자는 거래를 만들 수는
+      // 있어도 지울 수는 없으므로 여기서 거부된다. 예전에는 이 정리 실패가
+      // 같은 catch 에 걸려 「생성이 규칙을 통과한다」가 실패한 것처럼 보였다 —
+      // 생성은 이미 성공한 뒤였다. 둘을 갈라서 보고한다.
+      let cleanupError = '';
+      try {
+        const { deleteDoc, doc } = fb();
+        for (const id of ids) await deleteDoc(doc(fdb(), 'transactions', id));
+      } catch (e) {
+        cleanupError = String((e && e.code) || (e && e.message) || e);
+      }
 
-      return { ok: true, written: ids.length };
+      return { ok: true, written: ids.length, cleanupError };
     } catch (e) {
       return { ok: false, error: String((e && e.code) || (e && e.message) || e) };
     }
   });
 
-  check(result.ok && result.written === 1,
-    '고정항목 형태의 거래 생성이 규칙을 통과한다', result.error || '');
+  if (expectAllowed) {
+    check(result.ok && result.written === 1,
+      '고정항목 형태의 거래 생성이 규칙을 통과한다', result.error || '');
+    // 정리 실패는 권한대로다 — 지울 수 있어야 하는 역할만 지워졌는지 본다.
+    if (result.ok) {
+      const canDelete = capsOf(actor).trxDelete === true
+        || capsOf(actor).trxDeleteBulk === true;
+      check(canDelete ? !result.cleanupError : !!result.cleanupError,
+        canDelete ? '만든 거래를 스스로 지울 수 있다'
+          : `${actor.role}은 거래를 지울 수 없다 — 규칙이 막는다`,
+        result.cleanupError || '(거부되지 않았다)');
+    }
+  } else {
+    check(!result.ok, `${actor.role}은 거래를 새로 만들 수 없다 — 규칙이 막는다`,
+      result.ok ? '허용되어 버렸다' : '');
+  }
 }
 
 async function checkReceiptIntake(page, actor) {
@@ -646,11 +708,18 @@ async function checkReceiptIntake(page, actor) {
   });
   if (check(xl.ok, '파일 업로드 화면이 열린다', xl.error)) {
     await page.waitForTimeout(500);
-    check(await page.locator('#xl-drop').isVisible().catch(() => false),
-      '엑셀 드롭 영역이 보인다');
+    // 엑셀·통장은 담당자의 일이다(§4) — 팀장·센터장은 올리지 않으므로 없는 것이 정답.
+    const caps = capsOf(actor);
+    const drop = await page.locator('#xl-drop').isVisible().catch(() => false);
+    check(drop === (caps.excelUpload === true),
+      caps.excelUpload ? '엑셀 드롭 영역이 보인다' : `${actor.role}에게 엑셀 드롭 영역이 없다`,
+      `보임=${drop}`);
     // 통장 사진 상자는 서버에 AI가 없으면 숨는다(정상) — 존재만 확인한다.
-    check(await page.locator('#xl-photo-box').count() > 0,
-      '통장 사진 경로가 화면에 준비돼 있다');
+    const photo = await page.locator('#xl-photo-box').count() > 0;
+    check(photo === (caps.bankbookUpload === true),
+      caps.bankbookUpload ? '통장 사진 경로가 화면에 준비돼 있다'
+        : `${actor.role}에게 통장 사진 경로가 없다`,
+      `존재=${photo}`);
     await snap(page, actor, 'excel-upload');
     await page.evaluate(() => window.closeModal());
     await page.waitForTimeout(300);
@@ -666,9 +735,11 @@ async function checkReceiptIntake(page, actor) {
  * 사용자는 알 수 없고 단위 테스트도 잡지 못하는 조합이다.
  */
 async function checkAuditRoundTrip(page, actor) {
-  // 팀장 이상만 조회 권한이 있다(audit.view = 등급 3).
-  const canRead = ['팀장', '센터장', '관리자'].includes(actor.role);
-  if (!canRead) return;
+  // 변경 이력은 **감독** 권한이라 센터장·관리자에게만 있다(§4). 팀장에게는
+  // 없다 — 장부를 쓰는 사람이 서로의 수정 이력을 들여다볼 이유가 없다.
+  // 예전 주석의 「팀장 이상 = 등급 3」은 등급제 시절 표현이고, 그대로 두면
+  // 팀장에게 통과를 기대해 늘 실패한다.
+  if (capsOf(actor).auditView !== true) return;
 
   const result = await page.evaluate(async () => {
     try {
@@ -700,12 +771,29 @@ async function snap(page, actor, label) {
   } catch { /* 스크린샷 실패가 검증을 막지는 않는다 */ }
 }
 
+/** Functions 에뮬레이터가 떠 있는가 — 콜러블 실패를 봐줄지 정하는 근거다. */
+let FUNCTIONS_UP = false;
+async function probeFunctions() {
+  const host = process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001';
+  try {
+    await fetch(`http://${host}/`, { signal: AbortSignal.timeout(3000) });
+    return true;            // 어떤 응답이든 오면 떠 있는 것이다
+  } catch { return false; }
+}
+
 async function main() {
   mkdirSync(OUT, { recursive: true });
+  FUNCTIONS_UP = await probeFunctions();
+  console.log(`Functions 에뮬레이터: ${FUNCTIONS_UP
+    ? '가동 — 콜러블 실패를 봐주지 않는다' : '미가동 — 콜러블 실패를 통과 처리한다'}`);
+  // 컨테이너에 미리 설치된 Chromium이 있으면 그것을 쓰고(playwright install을
+  // 돌리지 않는다), 없으면 Playwright가 자기 것을 찾게 둔다. 경로를 못 박아 두면
+  // GitHub 러너처럼 그 경로가 없는 곳에서 "Executable doesn't exist"로 죽는다.
+  const explicit = process.env.QA_CHROMIUM
+    || (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : null);
   const browser = await chromium.launch({
     headless: !HEADED,
-    // 컨테이너에 미리 설치된 Chromium을 쓴다 — playwright install을 돌리지 않는다.
-    executablePath: process.env.QA_CHROMIUM || '/opt/pw-browsers/chromium',
+    ...(explicit ? { executablePath: explicit } : {}),
   });
   try {
     for (const actor of ROLES) {

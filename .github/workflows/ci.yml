@@ -143,3 +143,45 @@ jobs:
       #   그대로 뜨지만, 폐쇄망에서 돌릴 때는 트리거를 뺀 진입점이 필요하다
       #   (STAGING.md).
       - run: npm run emu:roundtrip
+
+  browser:
+    name: 브라우저 화면 검증 (역할별)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # 네 역할로 **실제 앱을 브라우저에서 눌러 본다.**
+    #
+    # 단위 테스트는 순수 판정을, 규칙 테스트는 서버 집행을, 왕복 검사는 콜러블을
+    # 본다. 그런데 화면이 그려지는지, 권한대로 숨고 보이는지는 그중 어느 것도
+    # 보지 않는다 — PR #7 은 화면 모듈을 크게 고쳤지만 브라우저에서 한 번도
+    # 렌더된 적이 없었다.
+    #
+    # 기대치는 역할 이름이 아니라 **고정 정책에서 뽑는다**(capsOf). 손으로 적은
+    # 역할 목록은 등급제 시절의 것이라, 역할이 누적되지 않게 바뀐 뒤 전부
+    # 어긋나 있었다(팀장에게 엑셀 업로드가 보이기를 기대했다).
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: npm
+      # 에뮬레이터(Firestore·Auth)는 JVM 에서 돈다 — 규칙 잡과 같은 이유로 JDK 21.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      # Hosting 이 서빙하는 앱이 콜러블을 부른다 — Functions 도 실제로 띄운다.
+      - run: npm ci
+        working-directory: functions
+      # Chromium 만 받는다(브라우저 셋을 다 받으면 몇 분이 더 걸린다).
+      - run: npx playwright install --with-deps chromium
+      # 에뮬레이터 기동 → 시드 → **권한 백필** → 화면 검증 → 종료.
+      # 백필을 빼면 로그인은 되는데 모든 쓰기가 거부된다(배포 순서 §10-2 의 2번).
+      - run: npm run emu:qa
+      # 실패했을 때 무엇이 보였는지가 로그보다 빠르다.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-artifacts
+          path: qa-artifacts/
+          retention-days: 7

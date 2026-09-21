@@ -916,6 +916,8 @@ Storage Rules · 브라우저)이 정책을 실제로 따르는지 23개 항목�
 | `npm run test:rules` | 보안 규칙 (에뮬레이터) |
 | `npm run test:contract:ratchet` | 집행 계약 게이트 |
 | `npm run emu:roundtrip` | 에뮬레이터 기동 → 시드 → 백필 → **결재 왕복** → 종료 |
+| `npm run emu:qa` | 에뮬레이터 기동 → 시드 → 백필 → **브라우저 화면 검증** → 종료 |
+| `npm run authz:backfill` | `authz/{uid}` 백필만 (시드 뒤에 반드시 한 번) |
 | `npm run reports:diagnose` | 같은 달에 보고서가 둘 이상인 곳 (읽기 전용) |
 
 > ⚠️ 설치 라이프사이클(`postinstall` 등) 안에서 `npm install`·`npm ci` 를
@@ -956,6 +958,7 @@ https://smart-care-ledger.web.app
 - [ ] `npm run check` 통과 (ESLint + 단위 테스트)
 - [ ] `npm run test:rules` · `npm run test:contract:ratchet` 통과
 - [ ] `npm run emu:roundtrip` 통과 — 네 역할이 보고서를 끝까지 올린다
+- [ ] `npm run emu:qa` 통과 — 네 역할의 화면이 권한대로 그려진다
 - [ ] `npm run reports:diagnose` 로 **중복 보고서 0건** 확인 (있으면 사람이 정리)
 - [ ] git 커밋 완료
 - [ ] `firebase deploy` 실행

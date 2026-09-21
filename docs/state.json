@@ -23,7 +23,7 @@
     "contractRatchet": "passed (24, baseline 24)",
     "rules": "passed in CI (277); 7 storage-rules failures are local-container only (cross-service lookup unavailable)",
     "roundtrip": "passed (26 items) — four-role login, full approval cycle, role separation, step-skip prevention, concurrent-create dedupe; now a CI job (npm run emu:roundtrip)",
-    "browserSmoke": "not-run (tools/qa-smoke.mjs; needs Chromium + seeded emulators)"
+    "browserSmoke": "passed (199 checks, 4 roles) — now a CI job (npm run emu:qa); expectations derived from the fixed-role policy"
   },
   "deployment": "not-run",
   "productionDataAccess": "not-run"
