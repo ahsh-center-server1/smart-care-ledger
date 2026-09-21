@@ -460,7 +460,7 @@ Object.assign(exports, require('./ai-fns')({
 // 왜 캐시가 있고 왜 서버가 계산하지 않는지는 functions/summary-cache.cjs 머리말에.
 // ─────────────────────────────────────────────────────────────
 const {
-  affectedSummaryKeys,
+  affectedSummaryTargets,
   affectsSummary,
 } = require('./summary-cache.cjs');
 
@@ -476,14 +476,26 @@ exports.syncSummaryVersion = onDocumentWritten(
     // 그런 쓰기까지 버전을 올리면 캐시가 계속 무효화되어 캐시가 없는 것과 같다.
     if (!affectsSummary(before, after)) return;
 
-    const keys = affectedSummaryKeys(before, after);
-    if (!keys.length) return;
+    const targets = affectedSummaryTargets(before, after);
+    if (!targets.length) return;
 
     // 날짜나 입주자가 바뀐 수정이면 양쪽 달을 모두 올린다 —
     // 8월 거래를 9월로 옮기면 두 달의 합계가 다 바뀐다.
-    await Promise.all(keys.map(async (key) => {
+    await Promise.all(targets.map(async ({ key, clientId, ym }) => {
       try {
+        // clientId·ym 을 **함께** 심는다.
+        //
+        // 예전에는 sourceVersion 만 올렸다. 그러면 그 (입주자, 월)을 아무도
+        // 아직 보지 않은 상태에서 거래가 먼저 써질 때, 트리거가 **clientId 가
+        // 없는 문서**를 만든다. 그 문서는 규칙상 브라우저가 다룰 수 없다:
+        //   · 읽기는 seesClient(resource.data.clientId) 가 '' 를 보고 막고,
+        //   · 쓰기는 request.resource.data.clientId == resource.data.clientId
+        //     가 없는 필드를 비교하다 평가 오류로 막힌다.
+        // 그래서 그 달의 캐시는 **영영 채워지지 않고** 대시보드가 매번 당월
+        // 거래를 다시 읽는다 — 화면 값은 맞으므로 아무도 눈치채지 못한다.
+        // 읽기 비용 최적화(§12-1)가 조용히 꺼져 있던 자리다.
         await db.collection(SUMMARY_CACHES).doc(key).set({
+          clientId, ym,
           sourceVersion: FieldValue.increment(1),
         }, { merge: true });
       } catch (err) {

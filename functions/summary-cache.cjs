@@ -42,15 +42,27 @@ function monthKey(date) {
  * @param {Object|null} after
  * @returns {string[]} 중복 없는 키 목록
  */
-function affectedSummaryKeys(before, after) {
-  const keys = new Set();
+function affectedSummaryTargets(before, after) {
+  const out = new Map();
   for (const doc of [before, after]) {
     if (!doc || !doc.clientId) continue;
     const ym = monthKey(doc.date);
     if (ym.length !== 7) continue;        // 날짜 없는 문서는 집계 대상이 아니다
-    keys.add(summaryKey(doc.clientId, ym));
+    const clientId = String(doc.clientId);
+    out.set(summaryKey(clientId, ym), { key: summaryKey(clientId, ym), clientId, ym });
   }
-  return [...keys];
+  return [...out.values()];
+}
+
+/**
+ * 키만 필요한 곳을 위한 얇은 껍데기.
+ *
+ * ⚠️ 트리거는 이것을 쓰면 **안 된다.** 키에서 clientId 를 되짚을 수 없기
+ *   때문이다 — clientId 에 `_` 가 들어가면 `${clientId}_${ym}` 를 도로 가를
+ *   방법이 없다. 트리거는 affectedSummaryTargets 를 쓴다.
+ */
+function affectedSummaryKeys(before, after) {
+  return affectedSummaryTargets(before, after).map((t) => t.key);
 }
 
 /**
@@ -74,4 +86,6 @@ function affectsSummary(before, after) {
   );
 }
 
-module.exports = { summaryKey, monthKey, affectedSummaryKeys, affectsSummary };
+module.exports = {
+  summaryKey, monthKey, affectedSummaryKeys, affectedSummaryTargets, affectsSummary,
+};
