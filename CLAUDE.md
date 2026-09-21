@@ -821,6 +821,33 @@ Cloud Functions 콜러블로 옮겨 갔다. 규칙은 문서 하나만 보므로
 > 남의 보고서에 그 문장이 찍힌다 — 규칙 기반일 때는 동기라서 없던 위험이다.
 > 보고서를 새로 그릴 때마다 분석 칸을 비우는 것도 같은 이유다(인쇄 영역까지).
 
+### 보고서 문서 ID — 기간 키 하나에 문서 하나
+
+보고서를 처음 저장할 때, 서버는 기존 보고서를 **트랜잭션 밖에서** 찾고 없으면
+**임의 ID** 로 만들었다. 두 탭이(또는 느린 응답에 두 번 누른 손가락이) 동시에
+첫 저장을 하면 둘 다 「없음」을 보고 각자 문서를 만든다 — 트랜잭션은 같은
+문서를 건드릴 때만 충돌하는데, 임의 ID 는 애초에 같은 문서가 아니다.
+
+에뮬레이터에서 동시 저장 5건 → **문서 3개**. 그 뒤 제출하면 하나만 submitted 가
+되고 나머지는 draft 로 남는다. 보고서 화면은 쿼리 결과의 첫 문서만 쓰므로
+(`rSnap.docs[0]`) 남은 것들은 **화면에서 닿을 수 없는 고아**가 되고, 목록과
+결재 대기에는 같은 달이 여러 줄로 뜬다.
+
+이제 ID 를 `(clientId, year, month)` 에서 만든다(`functions/report-id.cjs`).
+같은 기간의 첫 저장이 **같은 문서 경로**를 읽고 쓰므로 Firestore 가 둘 중
+하나를 재시도시키고, 재시도한 쪽은 앞사람이 만든 문서를 갱신한다.
+같은 조건에서 동시 저장 5건 → **문서 1개**.
+
+> ⚠️ 결정적 ID 만으로는 부족하다 — **트랜잭션 안에서 그 문서를 읽어야** 한다.
+> 읽지 않으면 Firestore 가 충돌을 감지할 것이 없어 둘 다 성공한다.
+> `test/report-id.test.mjs` 가 `tx.get` 이 빠지는 것을 잡는다.
+>
+> ⚠️ 이미 임의 ID 로 저장된 보고서는 **제자리에서 계속 쓴다.** 조회가
+> canonical 을 먼저 보고 없으면 예전 쿼리로 떨어진다. 배포가 ID 를 조용히
+> 바꾸면 감사 로그의 `targetId` 가 가리키는 대상이 사라지고, 무엇보다 중복이
+> 이미 있는 달에서는 어느 것을 남길지 기계가 정할 수 없다.
+> `npm run reports:diagnose` 가 현황만 보여 준다(읽기 전용, 중복이 있으면 1로 끝난다).
+
 ### 배포 순서 (어기면 전원이 막힌다)
 
 ```
@@ -879,6 +906,25 @@ Storage Rules · 브라우저)이 정책을 실제로 따르는지 23개 항목�
 
 ## 12. 배포
 
+### 개발 명령어
+
+| 명령 | 하는 일 |
+|---|---|
+| `npm run setup` | 루트 + `functions/` 를 함께 설치. **새 클론은 이것 하나** |
+| `npm run deps` | `functions/` 만 다시 설치 |
+| `npm run check` | deps 확인 + ESLint + vendor + 단위 테스트 |
+| `npm run test:rules` | 보안 규칙 (에뮬레이터) |
+| `npm run test:contract:ratchet` | 집행 계약 게이트 |
+| `npm run emu:roundtrip` | 에뮬레이터 기동 → 시드 → 백필 → **결재 왕복** → 종료 |
+| `npm run reports:diagnose` | 같은 달에 보고서가 둘 이상인 곳 (읽기 전용) |
+
+> ⚠️ 설치 라이프사이클(`postinstall` 등) 안에서 `npm install`·`npm ci` 를
+> 다시 부르지 말 것. 설치 안에서 설치를 부르는 것이라 Windows npm 11 에서
+> 멈춘 뒤 `Exit handler never called` 로 끝난다 — 실제로 그랬다.
+> `test/portability.test.mjs` 가 이 셋을 지킨다(중첩 설치 · `URL.pathname` 을
+> 경로로 쓰는 것 · 경로 구분자를 맞추지 않은 문자열 비교). 셋 다 Linux CI 에서는
+> 절대 드러나지 않는다.
+
 ### 배포 명령어
 
 **배포 대상은 항상 명시한다.** `.firebaserc`의 기본 별칭은 **스테이징**이라,
@@ -908,6 +954,9 @@ https://smart-care-ledger.web.app
 ### 배포 체크리스트
 - [ ] 로컬 테스트 완료 (`firebase serve`)
 - [ ] `npm run check` 통과 (ESLint + 단위 테스트)
+- [ ] `npm run test:rules` · `npm run test:contract:ratchet` 통과
+- [ ] `npm run emu:roundtrip` 통과 — 네 역할이 보고서를 끝까지 올린다
+- [ ] `npm run reports:diagnose` 로 **중복 보고서 0건** 확인 (있으면 사람이 정리)
 - [ ] git 커밋 완료
 - [ ] `firebase deploy` 실행
 - [ ] 배포된 앱 확인

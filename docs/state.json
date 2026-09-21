@@ -2,27 +2,28 @@
   "phase": "VERIFY",
   "scope": "fixed-role-policy-and-security-p1",
   "status": "IN_PROGRESS",
-  "resumedAt": "2026-09-15",
+  "resumedAt": "2026-09-21",
   "code_progress": {
     "foundation": "implemented and verified",
     "roleGuide": "implemented as read-only fixed-role guidance",
-    "current": "fixed role policy, server enforcement, approval workflows, and security P1 fixes implemented",
-    "remaining": "browser smoke and staging round-trip; migration/backfill and deployment remain separately authorized"
+    "current": "fixed role policy, server enforcement, approval workflows, security P1 fixes; plus report XSS removal, deterministic report IDs, Actions runtime bump, Windows portability, and an emulator round-trip CI job",
+    "remaining": "staging/production deployment remains separately authorized; duplicate-report diagnosis to be run against real data before deploy"
   },
   "decisions": {
     "teamLeaderScope": "clients.teamLeader UID only",
     "sameApproverExecutor": "prohibited; remain pending without another approver"
   },
-  "context_summary": "고정 역할 정책과 보안 P1 구현 및 로컬 회귀 검증 완료. 운영 데이터·배포는 건드리지 않았으며 스테이징 왕복 검증은 별도 승인 대기.",
+  "context_summary": "고정 역할 정책과 보안 P1 구현 위에, 재검토에서 확인된 5건을 반영했다: 보고서 XSS 5곳 제거(+회귀 테스트), 보고서 문서 ID 결정화(동시 첫 저장 중복 제거), GitHub Actions Node20 런타임 대응, Windows 설치·경로 수정, 에뮬레이터 결재 왕복 CI 잡. 운영 데이터·배포는 여전히 별도 승인 대기.",
   "source": "claude/pr9-security-permissions-review-8x57vw ZIP snapshot",
   "deploymentAuthorized": false,
   "productionDataAuthorized": false,
   "checks": {
-    "check": "passed (724 tests)",
-    "contract": "passed (21 tests)",
-    "contractRatchet": "passed (21 tests)",
-    "rules": "passed (255 tests)",
-    "browserSmoke": "not-run (requires seeded local emulators and a compatible Chromium runtime)"
+    "check": "passed (1124 tests)",
+    "contract": "passed (24 tests)",
+    "contractRatchet": "passed (24, baseline 24)",
+    "rules": "passed in CI (277); 7 storage-rules failures are local-container only (cross-service lookup unavailable)",
+    "roundtrip": "passed (26 items) — four-role login, full approval cycle, role separation, step-skip prevention, concurrent-create dedupe; now a CI job (npm run emu:roundtrip)",
+    "browserSmoke": "not-run (tools/qa-smoke.mjs; needs Chromium + seeded emulators)"
   },
   "deployment": "not-run",
   "productionDataAccess": "not-run"

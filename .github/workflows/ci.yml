@@ -37,16 +37,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
       - run: npm ci
       # functions/는 별도 package.json이다. 루트 npm ci는 그것을 설치하지 않는다.
       # test/receipt-extract.test.mjs가 functions/ai/*를 require하므로
-      # 이 줄이 없으면 `Cannot find module '@anthropic-ai/sdk'`로 죽는다
+      # 이 줄이 없으면 `Cannot find module`로 죽는다
       # (로컬에서는 이미 설치돼 있어 드러나지 않았다 — 첫 CI 실행에서 잡혔다).
+      #
+      # 예전에는 루트 postinstall이 이것을 대신했지만, **설치 안에서 설치를
+      # 부르는 것**이라 Windows npm 11에서 멈췄다(test/portability.test.mjs).
+      # 이제 훅을 쓰지 않으므로 각 잡이 명시적으로 설치한다.
       - run: npm ci
         working-directory: functions
       # vendor:check가 포함된다 — public/vendor/의 번들이 package.json의
@@ -58,19 +62,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
       # Firestore 에뮬레이터는 JVM에서 돈다.
       # firebase-tools는 **JDK 21 이상**을 요구한다(17로는
       # "no longer supports Java version before 21"로 죽는다).
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
       - run: npm ci
+      # 규칙 테스트는 functions/의 고정 정책 사본을 읽는다.
+      - run: npm ci
+        working-directory: functions
       # 규칙을 **실제로 평가한다.** RUNBOOK의 「배포 3」(규칙 잠금)은 되돌리기가
       # 가장 어려운 단계이므로, 배포가 규칙의 첫 실행이 되면 안 된다.
       - run: npm run test:rules
@@ -91,10 +98,48 @@ jobs:
     #   늘어나면 기준선을 올리고, 줄어들면 실패한다. 첫날부터 진짜 게이트이면서
     #   초록이다. 남은 게이트 목록은 잡 로그에 나온다.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
       - run: npm ci
+      # 집행 계약 게이트는 Functions 쪽 집행 지점을 직접 확인한다.
+      - run: npm ci
+        working-directory: functions
       - run: npm run test:contract:ratchet
+
+  roundtrip:
+    name: 결재 왕복 (에뮬레이터)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # 단위·규칙·계약 검사가 전부 초록인데도 확인되지 않던 것이 있다:
+    # **네 역할이 실제로 로그인해서 보고서를 끝까지 올릴 수 있는가.**
+    #
+    # 그 길은 login → authz 투영본 → applyReportTransition → 잠금 색인을
+    # 차례로 지난다. 조각마다 테스트가 있어도 이어 붙인 길은 아무도 걷지
+    # 않았고, 실제로 시드 직후에는 authz 문서가 없어 모든 결재가 거부됐다
+    # (배포 순서 §10-2 의 2번을 빠뜨린 것과 같은 고장). 그래서 이 잡은
+    # backfillAuthz 부터 시작한다 — 그 단계 자체가 검사 대상이다.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: npm
+      # Firestore·Auth 에뮬레이터는 JVM에서 돈다(규칙 잡과 같은 이유로 JDK 21).
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      # Functions 에뮬레이터가 실제 콜러블을 로드한다 — 여기서는 필수다.
+      - run: npm ci
+        working-directory: functions
+      # 에뮬레이터를 띄우고 → 시드 → 왕복 → 내린다. 실패하면 잡이 빨개진다.
+      #
+      # ⚠ Functions 에뮬레이터는 Firestore 트리거를 등록할 때
+      #   firebase-public.firebaseio.com 에 접속한다. GitHub 러너는 열려 있어
+      #   그대로 뜨지만, 폐쇄망에서 돌릴 때는 트리거를 뺀 진입점이 필요하다
+      #   (STAGING.md).
+      - run: npm run emu:roundtrip

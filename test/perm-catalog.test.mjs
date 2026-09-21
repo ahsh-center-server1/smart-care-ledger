@@ -351,7 +351,10 @@ test('permissions.js 에 손으로 적은 등급 리터럴이 없다', () => {
 test('등급 기반 판정이 프로덕션에 없다', async () => {
   const { readdirSync, statSync } = await import('node:fs');
   const { join, relative } = await import('node:path');
-  const ROOT = new URL('..', import.meta.url).pathname;
+  const { fileURLToPath } = await import('node:url');
+  // URL.pathname 을 경로로 쓰면 Windows 에서 `/C:/…` 가 나오고, join 이
+  // `C:\C:\…` 를 만든다. fileURLToPath 가 플랫폼에 맞는 경로를 준다.
+  const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
   // 프로덕션 = 브라우저에 가는 코드 + 배포되는 Functions. 테스트·도구는 제외
   // (테스트는 낡은 caps 픽스처를 만들 때 아직 computeCaps 를 쓴다).

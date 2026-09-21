@@ -13,8 +13,10 @@
 //   가리키므로 **코드가 깨진 것처럼 보인다** — 실제로는 설치가 덜 된 것이다.
 //   CI 는 functions 설치 줄이 따로 있어 초록이라, 이 차이가 로컬에서만 드러났다.
 //
-//   postinstall 이 정상 경로를 덮고, 이 검사는 그것이 건너뛰어졌을 때
-//   (--ignore-scripts, 부분 체크아웃) 원인과 해결책을 바로 알려 준다.
+//   예전에는 postinstall 이 그 자리에서 npm ci 를 한 번 더 돌려 덮었다. 그런데
+//   **설치 안에서 설치를 부르는 것**이라 Windows npm 11 에서 멈춘 뒤
+//   "Exit handler never called" 로 끝났다. 이제 중첩하지 않고, 대신 이 검사가
+//   빠진 것을 알아채 무엇을 실행할지 알려 준다 — 정상 경로는 npm run setup 이다.
 
 'use strict';
 
@@ -37,7 +39,8 @@ if (missing.length) {
     `✗ functions/ 의존성이 없습니다: ${missing.join(', ')}\n\n`
     + '  테스트 일부가 functions/ 모듈을 거쳐 가므로 이대로는 "Cannot find\n'
     + '  module" 로 죽습니다. 코드 문제가 아닙니다. 아래를 실행하세요:\n\n'
-    + '      npm --prefix functions ci\n',
+    + '      npm run setup     # 루트 + functions 를 함께 설치 (새 클론)\n'
+    + '      npm run deps      # functions 만 설치\n',
   );
   process.exit(1);
 }

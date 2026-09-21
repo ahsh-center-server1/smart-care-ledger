@@ -33,8 +33,9 @@ Firebase 프로젝트도 결제 수단도 필요 없습니다. Firestore·Auth·
 준비물: Node 20+, Java 11+ (Firestore 에뮬레이터가 씁니다), `npm i -g firebase-tools`
 
 ```bash
-npm install                      # 루트 (도구 스크립트가 firebase-admin을 씁니다)
-cd functions && npm install && cd ..
+npm run setup                    # 루트 + functions 를 함께 설치
+                                 # (예전 postinstall 은 설치 안에서 설치를 불러
+                                 #  Windows npm 11 에서 멈췄습니다 — 이제 이 한 줄입니다)
 
 npm run emu                      # 에뮬레이터 기동 (이 터미널은 그대로 둡니다)
 ```
@@ -44,6 +45,27 @@ npm run emu                      # 에뮬레이터 기동 (이 터미널은 그�
 ```bash
 npm run emu:seed -- --apply      # 계정·입주자·계좌·거래 시드
 ```
+
+### ⚠ 시드 다음에 **권한 백필**을 해야 합니다
+
+시드는 `users`·`clients` 만 만듭니다. 판정 근거인 `authz/{uid}` 문서는
+`backfillAuthz` 콜러블이 만듭니다(배포 순서 §10-2 의 2번과 같은 단계입니다).
+
+빠뜨리면 로그인은 되는데 **모든 결재 동작이 이렇게 거부됩니다.**
+
+```
+권한 정보가 아직 준비되지 않았습니다. 관리자에게 권한 백필을 요청하세요.
+```
+
+`center` 로 로그인한 뒤 설정에서 실행하거나, 아래 한 줄이 전부 대신합니다.
+
+```bash
+npm run emu:roundtrip            # 에뮬레이터 기동 → 시드 → 백필 → 결재 왕복 → 종료
+```
+
+`emu:roundtrip` 은 네 역할이 실제로 로그인해서 보고서를 제출·반려·재제출·
+1차 결재·최종 결재·결재 취소까지 밟아 보고, 역할 분리와 단계 건너뛰기 방지도
+확인합니다. CI 의 「결재 왕복」 잡이 같은 것을 돌립니다.
 
 브라우저에서 **http://localhost:5000/?env=emulator** 를 엽니다.
 (에뮬레이터 UI는 http://localhost:4000)
@@ -62,6 +84,44 @@ npm run emu:seed -- --apply      # 계정·입주자·계좌·거래 시드
 
 에뮬레이터 데이터는 종료하면 사라집니다. 유지하려면
 `firebase emulators:start --project staging --import ./.emu --export-on-exit`.
+
+### ⚠ 폐쇄망에서 Functions 에뮬레이터가 기동하지 않을 때
+
+증상은 이렇습니다 — 콜러블이 **전부 정상 초기화된 뒤** 마지막에 죽습니다.
+
+```
+✔  functions[asia-northeast3-applyReportTransition]: http function initialized ...
+⚠  Error adding firestore function: FirebaseError: Unable to parse JSON:
+   SyntaxError: Unexpected token 'r', "request bl"... is not valid JSON
+```
+
+Functions 에뮬레이터는 **Firestore 트리거를 등록할 때**
+`firebase-public.firebaseio.com` 에 접속합니다. 그 호스트가 이그레스 정책에
+막히면 프록시가 JSON 이 아닌 「request blocked」를 돌려주고, 그 파싱 실패로
+에뮬레이터 전체가 내려갑니다. 파서·권한과는 아무 관계가 없습니다.
+
+트리거를 뺀 진입점으로 띄우면 콜러블은 전부 쓸 수 있습니다.
+
+```bash
+cat > functions/index.callables-only.js <<'EOF'
+const all = require('./index.js');
+for (const [name, fn] of Object.entries(all)) {
+  const ep = fn && fn.__endpoint;
+  if (ep && (ep.eventTrigger || ep.scheduleTrigger)) continue;
+  exports[name] = fn;
+}
+EOF
+# functions/package.json 의 "main" 을 잠시 이 파일로 바꾼 뒤 기동합니다.
+```
+
+> 이때 빠지는 것은 트리거 6개입니다(`syncAccountBalance` ·
+> `syncAccountOnSettingsChange` · `syncStaffDirectory` · `syncCategoryDirectory` ·
+> `syncSummaryVersion` · `cleanupReceiptJobs`). **잔액과 파생 명부가 자동으로
+> 갱신되지 않으므로** 그 두 가지를 확인하는 시험에는 쓸 수 없습니다.
+> 결재 왕복·권한 판정에는 영향이 없습니다.
+>
+> 끝나면 `main` 을 `index.js` 로 되돌리세요. GitHub 러너는 이그레스가 열려
+> 있어 이 우회가 필요 없습니다.
 
 ---
 

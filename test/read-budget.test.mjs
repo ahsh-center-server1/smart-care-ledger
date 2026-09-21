@@ -20,6 +20,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { fixedCan } from '../public/domain/fixed-role-policy.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
@@ -78,7 +79,7 @@ test('예산 모델이 코드와 어긋나면 알린다', () => {
   // 모델은 "팀장·센터장은 그 항목을 0으로 계산한다"고 가정한다. 게이트가
   // 사라지면 모델이 조용히 거짓이 되므로, 스크립트가 소스를 직접 확인한다.
   const out = execFileSync(process.execPath,
-    [new URL('../tools/read-budget.mjs', import.meta.url).pathname], { encoding: 'utf8' });
+    [fileURLToPath(new URL('../tools/read-budget.mjs', import.meta.url))], { encoding: 'utf8' });
   assert.ok(!/모델과 코드가 어긋납니다/.test(out), out);
   assert.match(out, /✔ 여유 있음/, out);
 });

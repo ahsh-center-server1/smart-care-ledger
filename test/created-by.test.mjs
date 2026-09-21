@@ -20,13 +20,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
 const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
+/**
+ * 절대 경로 → 저장소 기준 경로. **구분자를 / 로 맞춘다.**
+ * Windows 에서는 join 이 `\` 를 쓰므로, 맞추지 않으면
+ * `public/services\firestore.js` 가 되어 POSIX 문자열 비교가 전부 어긋난다.
+ */
+const repoPath = (f) => f.replace(PUBLIC, 'public/').split(sep).join('/');
 
 /** public/ 아래 모든 .js (vendor 제외 — 우리 코드가 아니다). */
 function jsFiles(dir = PUBLIC, out = []) {
@@ -67,7 +73,7 @@ function transactionCreateSites(src, file) {
   const fileTouchesTrx = writesTrxLiteral;
 
   lines.forEach((line, i) => {
-    const at = `${file.replace(PUBLIC, 'public/')}:${i + 1}`;
+    const at = `${repoPath(file)}:${i + 1}`;
 
     // addDoc(...COLS.TRANSACTIONS...) — 인자가 collection(fdb(), COLS...)처럼
     // 중첩 괄호를 포함하므로 같은 줄에 둘 다 있는지로 본다.

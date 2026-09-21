@@ -16,10 +16,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
+/**
+ * 절대 경로 → 저장소 기준 경로. **구분자를 / 로 맞춘다.**
+ * Windows 에서는 join 이 `\` 를 쓰므로, 맞추지 않으면
+ * `public/services\firestore.js` 가 되어 POSIX 문자열 비교가 전부 어긋난다.
+ */
+const repoPath = (f) => f.replace(PUBLIC, 'public/').split(sep).join('/');
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 
 function jsFiles(dir = PUBLIC, out = []) {
@@ -45,7 +51,7 @@ test('구현이 한 벌뿐이다', () => {
   // 두 벌이면 한쪽만 고쳐져 "어떤 경로로 저장했느냐"에 따라 보고서가 달라진다.
   const owners = jsFiles()
     .filter(f => /export function invalidateReportTrxCache/.test(readFileSync(f, 'utf8')))
-    .map(f => f.replace(PUBLIC, 'public/'));
+    .map(f => repoPath(f));
   assert.deepEqual(owners, ['public/services/firestore.js'], owners.join(', '));
 });
 
@@ -71,7 +77,7 @@ test('거래를 직접 쓰는 파일은 스스로 버린다', () => {
     const lines = src.split('\n').filter(l => !l.trim().startsWith('//'));
     const writesTrx = lines.some(l => DIRECT.test(l) && /COLS\.TRANSACTIONS/.test(l));
     if (writesTrx && !/invalidateReportTrxCache/.test(src)) {
-      offenders.push(file.replace(PUBLIC, 'public/'));
+      offenders.push(repoPath(file));
     }
   }
   assert.deepEqual(offenders, [],

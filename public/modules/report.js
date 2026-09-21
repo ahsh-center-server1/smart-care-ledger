@@ -26,7 +26,7 @@ export { actorContext, reportActorContext, TRANSITION_AUDIT };
 import { auditLog } from '../services/audit.js';
 import { getImageUrl } from '../services/storage.js';
 import { reportChecklist, checklistLines } from '../domain/report-checklist.js';
-import { openModal, getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal } from './modals.js';
+import { openModal, getUnpaidMandatoryItems, openReceiptModal, openBankStatementModal, closeModal } from './modals.js';
 // 분류 인라인 드롭다운은 거래내역 탭과 **같은 것**을 쓴다. 목록·최근 순서·저장이
 // 두 벌이 되면 한쪽만 고쳐진다.
 import { openCatDropdown, saveTrx } from './transactions.js';
@@ -298,7 +298,7 @@ export function renderReportView(){
       const color=clr.dot||'#64748b';
       tbl+='<tr style="border-bottom:1px solid #f3f4f6;">'
         +'<td style="padding:7px 4px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
-          +'<span style="display:inline-flex;align-items:center;gap:4px;background:'+clr.bg+';color:'+clr.text+';border:1px solid '+clr.border+';border-radius:12px;padding:2px 8px;font-size:12px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+k+'</span>'
+          +'<span style="display:inline-flex;align-items:center;gap:4px;background:'+clr.bg+';color:'+clr.text+';border:1px solid '+clr.border+';border-radius:12px;padding:2px 8px;font-size:12px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escHtml(k)+'</span>'
         +'</td>'
         +'<td style="padding:7px 4px;text-align:right;font-family:monospace;font-size:13px;color:#111827;white-space:nowrap;">'+v.total.toLocaleString()+'원</td>'
         +'<td style="padding:7px 4px;text-align:right;font-size:13px;color:#6b7280;white-space:nowrap;">'+pct+'%</td>'
@@ -604,8 +604,10 @@ function openBankStmtWindow(url,label,month){
   const top=Math.max(0,Math.floor(((window.screen.availHeight||900)-h)/2));
   const win=window.open('',('bs_'+Date.now()),`width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=no,scrollbars=yes,resizable=yes`);
   if(!win){toast('팝업 차단을 해제해주세요.','error');return;}
-  const title=(label||'통장사진')+(month?' · '+month:'');
-  const safeUrl=String(url).replace(/"/g,'&quot;');
+  // 계좌명이 그대로 <title>·<h1> 에 들어가고 있었다. document.write 는
+  // innerHTML 과 똑같이 마크업으로 해석하므로 여기도 이스케이프한다.
+  const title=escHtml((label||'통장사진')+(month?' · '+month:''));
+  const safeUrl=escAttr(url);
   win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+title+'</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#1f2937;color:#f9fafb;font-family:"Noto Sans KR",sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden;}header{display:flex;align-items:center;gap:10px;padding:10px 16px;background:#111827;border-bottom:1px solid #374151;}header h1{font-size:14px;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}header a,header button{background:#374151;color:#f9fafb;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;text-decoration:none;font-weight:600;}header a:hover,header button:hover{background:#4b5563;}.viewer{flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:16px;background:#374151;}.viewer img{max-width:100%;height:auto;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.4);}</style></head><body><header><h1>📷 '+title+'</h1><a href="'+safeUrl+'" target="_blank" rel="noopener">🔗 원본</a><button onclick="window.close()">닫기 ×</button></header><div class="viewer"><img src="'+safeUrl+'" alt="통장사진"></div></body></html>');
   win.document.close();
   win.focus();
@@ -634,8 +636,15 @@ export async function renderRptBankStatements(clientId,year,month){
     const thumb=getImageUrl(s.thumbUrl||s.url,'w300');
     const cell=document.createElement('div');
     cell.style.cssText='position:relative;border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;';
-    cell.innerHTML='<div style="font-size:10px;color:var(--muted);padding:4px 6px;background:var(--bg);">'+s.label+(s.month?' · '+s.month:'')+'</div>'
-      +'<img src="'+thumb+'" style="width:100%;height:120px;object-fit:cover;" onerror="this.src=\'\'">';
+    // 계좌명(s.label)은 사용자가 지은 이름이고 썸네일 URL도 문서에서 온다.
+    // 문자열로 이어 붙이면 이름 하나로 마크업이 열린다 — 값으로 넣는다.
+    const cap=document.createElement('div');
+    cap.style.cssText='font-size:10px;color:var(--muted);padding:4px 6px;background:var(--bg);';
+    cap.textContent=String(s.label||'')+(s.month?' · '+s.month:'');
+    const img=document.createElement('img');
+    img.style.cssText='width:100%;height:120px;object-fit:cover;';
+    img.addEventListener('error',()=>img.removeAttribute('src'));
+    img.src=thumb; cell.replaceChildren(cap,img);
     cell.addEventListener('click',()=>openBankStmtWindow(s.url,s.label,s.month));
     gallery.appendChild(cell);
   });
@@ -662,11 +671,21 @@ export async function openBankStatementFromReport(clientId,year,month){
   if(accs.length===1){openBankStatementModal(accs[0].id,year,month);return;}
   document.getElementById('modal-wrap').classList.add('show');
   const body=document.getElementById('modal-body');
-  body.innerHTML='<h3 style="font-size:16px;font-weight:800;margin-bottom:14px;">📸 통장 사진 업로드</h3>'
-    +'<p style="font-size:13px;color:var(--muted);margin-bottom:12px;">사진을 업로드할 계좌를 선택하세요.</p>'
-    +'<div style="display:flex;flex-direction:column;gap:8px;">'
-    +accs.map(a=>'<button class="btn-sub" style="color:var(--blue);border-color:#bfdbfe;padding:10px;font-size:13px;" onclick="closeModal();openBankStatementModal(\''+a.id+'\','+year+','+month+');">['+a.label+'] 선택</button>').join('')
-    +'</div>';
+  // 계좌 id·이름을 인라인 onclick 에 넣지 않는다. HTML 파서가 &#39; 를 ' 로
+  // 되돌린 뒤에 JS 가 컴파일되므로 그 자리에서는 escAttr 도 무력하다
+  // (utils/ui.js 의 escHtml 주석이 같은 것을 경고한다). 값과 핸들러로 넣는다.
+  const el=(tag,css,text)=>{const e=document.createElement(tag);e.style.cssText=css;e.textContent=text;return e;};
+  const list=el('div','display:flex;flex-direction:column;gap:8px;','');
+  accs.forEach(a=>{
+    const btn=el('button','color:var(--blue);border-color:#bfdbfe;padding:10px;font-size:13px;','['+String(a.label||'')+'] 선택');
+    btn.className='btn-sub';
+    btn.addEventListener('click',()=>{closeModal();openBankStatementModal(a.id,year,month);});
+    list.appendChild(btn);
+  });
+  body.replaceChildren(
+    el('h3','font-size:16px;font-weight:800;margin-bottom:14px;','📸 통장 사진 업로드'),
+    el('p','font-size:13px;color:var(--muted);margin-bottom:12px;','사진을 업로드할 계좌를 선택하세요.'),
+    list);
 }
 
 // ⑦ 의견란 렌더링
@@ -691,13 +710,14 @@ export function renderComments(report,curStatus){
     if(s.editable){
       div.innerHTML+='<textarea id="comment-'+s.key+'" data-saved="'+escAttr(val)+'" style="width:100%;min-height:60px;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font-size:14px;font-family:inherit;resize:vertical;" placeholder="'+s.label+'을 입력하세요...">'+escHtml(val)+'</textarea>'
         +'<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">'
-        +'<button onclick="saveComment(\''+s.key+'\')" style="font-size:12px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:4px 12px;border-radius:6px;cursor:pointer;">저장</button>'
+        +'<button class="btn-save-comment" data-key="'+escAttr(s.key)+'" style="font-size:12px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:4px 12px;border-radius:6px;cursor:pointer;">저장</button>'
         +'<span class="comment-hint" data-for="'+s.key+'" style="font-size:11px;color:var(--muted);">자리를 옮기면 자동 저장됩니다.</span>'
         +'</div>';
     } else {
       div.innerHTML+='<div style="font-size:14px;color:#374151;min-height:30px;padding:8px 10px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">'+escHtml(val||'(없음)')+'</div>';
     }
     el.appendChild(div);
+    div.querySelector('.btn-save-comment')?.addEventListener('click',()=>saveComment(s.key));
     // ── 자동 저장 ──
     //
     // 의견을 적어 놓고 저장을 누르지 않은 채 결재를 누르면 **글이 사라졌다.**
@@ -1282,7 +1302,7 @@ export function renderReportList(){
       const client=S.clients.find(c=>c.id===r.clientId)||{name:r.clientId};
       const div=document.createElement('div');
       div.style.cssText='display:flex;justify-content:space-between;align-items:center;background:#fefce8;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;margin-bottom:6px;cursor:pointer;';
-      div.innerHTML='<div><div style="font-weight:700;color:#92400e;font-size:14px;">⏳ '+client.name+' — '+r.year+'년 '+r.month+'월</div><div style="font-size:12px;color:#b45309;margin-top:2px;">결재 대기 중</div></div><span class="'+(STATUS_CLASSES[r.status]||'rs-draft')+'">'+(STATUS_LABELS[r.status]||r.status)+'</span>';
+      div.innerHTML='<div><div style="font-weight:700;color:#92400e;font-size:14px;">⏳ '+escHtml(client.name)+' — '+r.year+'년 '+r.month+'월</div><div style="font-size:12px;color:#b45309;margin-top:2px;">결재 대기 중</div></div><span class="'+(STATUS_CLASSES[r.status]||'rs-draft')+'">'+escHtml(STATUS_LABELS[r.status]||r.status)+'</span>';
       div.addEventListener('click',()=>{
         const rc=document.getElementById('r-client'),ry=document.getElementById('r-year'),rm=document.getElementById('r-month');
         if(rc)rc.value=r.clientId; if(ry)ry.value=r.year; if(rm)rm.value=r.month; loadReport();

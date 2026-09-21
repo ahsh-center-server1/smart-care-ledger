@@ -26,6 +26,7 @@
 
 const { planTransition, normalizeStatus } = require('./report-workflow.cjs');
 const { fixedCan } = require('./fixed-role-policy.cjs');
+const { reportDocId } = require('./report-id.cjs');
 const {
   LOCKED_MONTHS_DOC, lockIndexChange, submitIndexChange, approveIndexChange,
   SUBMITTED_STATUSES,
@@ -105,7 +106,20 @@ module.exports = function reportFns(ctx) {
   }
 
   /** 이 (입주자, 연, 월)의 보고서. 없으면 null. */
+  /** 이 기간 키가 쓸 문서. 새로 만들 때는 언제나 여기에 만든다. */
+  function canonicalRef(clientId, year, month) {
+    return db.collection(REPORTS).doc(reportDocId(clientId, year, month));
+  }
+
+  /**
+   * 기간 키로 보고서를 찾는다 — canonical 문서를 먼저 보고, 없으면 예전 쿼리.
+   *
+   * 예전 쿼리를 남기는 이유: 이 변경 전에 만들어진 보고서는 임의 ID 다.
+   * 그것들을 배포가 조용히 이관하지 않는다(report-id.cjs 머리말 참고).
+   */
   async function findReport(clientId, year, month) {
+    const canon = await canonicalRef(clientId, year, month).get();
+    if (canon.exists) return { id: canon.id, ...canon.data() };
     const snap = await db.collection(REPORTS)
       .where('clientId', '==', String(clientId))
       .where('year', '==', year)
@@ -166,22 +180,24 @@ module.exports = function reportFns(ctx) {
       let lockChange = null;
       let submitChange = null;
       let approveChange = null;
-      let reportRef;
-      let currentReport = null;
-      if (reportId) {
-        reportRef = db.collection(REPORTS).doc(reportId);
-        const snap = await tx.get(reportRef);
-        if (!snap.exists) throw new HttpsError('not-found', '보고서를 찾을 수 없습니다.');
-        currentReport = snap.data() || {};
-        if (normalizeStatus(currentReport.status) !== normalizeStatus(report.status)) {
-          throw new HttpsError(
-            'aborted',
-            '그 사이 보고서 상태가 바뀌었습니다. 새로고침 후 다시 시도하세요.',
-          );
-        }
-      } else {
-        reportRef = db.collection(REPORTS).doc();
-        reportId = reportRef.id;
+      // 새로 만드는 경우에도 **트랜잭션 안에서 읽는다.** 예전에는 임의 ID 라
+      // 읽을 문서가 없었고, 그래서 동시 첫 저장이 서로 충돌하지 않은 채 각자
+      // 문서를 만들었다. 이제 경로가 같으므로 둘 중 하나가 재시도되고,
+      // 재시도한 쪽은 앞사람이 만든 문서를 보고 그것을 갱신한다.
+      const reportRef = reportId
+        ? db.collection(REPORTS).doc(reportId)
+        : canonicalRef(clientId, year, month);
+      reportId = reportRef.id;
+      const snap = await tx.get(reportRef);
+      let currentReport = snap.exists ? (snap.data() || {}) : null;
+      if (report && !snap.exists) {
+        throw new HttpsError('not-found', '보고서를 찾을 수 없습니다.');
+      }
+      if (report && normalizeStatus(currentReport.status) !== normalizeStatus(report.status)) {
+        throw new HttpsError(
+          'aborted',
+          '그 사이 보고서 상태가 바뀌었습니다. 새로고침 후 다시 시도하세요.',
+        );
       }
 
       const plan = planTransition(action, currentReport && currentReport.status, {
@@ -297,19 +313,21 @@ module.exports = function reportFns(ctx) {
     }
     const value = String(d.value || '').slice(0, MAX_SUMMARY);
     const report = await findReport(clientId, year, month);
+    // 의견 저장도 보고서를 새로 만들 수 있다(담당자 의견이 첫 쓰기인 경우).
+    // 같은 이유로 canonical 경로를 쓰고 트랜잭션 안에서 읽는다.
     const reportRef = report
       ? db.collection(REPORTS).doc(report.id)
-      : db.collection(REPORTS).doc();
+      : canonicalRef(clientId, year, month);
 
     await db.runTransaction(async (tx) => {
       const actorSnap = await tx.get(db.collection(AUTHZ).doc(auth.uid));
-      const reportSnap = report ? await tx.get(reportRef) : null;
+      const reportSnap = await tx.get(reportRef);
       const actor = actorSnap.exists ? actorSnap.data() || {} : {};
       if (actor.enabled !== true || !sees(actor, clientId)) {
         throw new HttpsError('permission-denied', '현재 담당 범위에서 제외된 입주자입니다.');
       }
 
-      const current = reportSnap && reportSnap.exists ? reportSnap.data() || {} : null;
+      const current = reportSnap.exists ? reportSnap.data() || {} : null;
       const status = normalizeStatus(current && current.status);
       const allowed = (key === 'staffComment'
           && fixedCan(actor, 'report.submit')
