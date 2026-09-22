@@ -105,11 +105,15 @@ test('조회는 canonical 을 먼저 보고 예전 문서로 떨어진다', () =
     'findReport 에 예전 문서를 찾는 쿼리가 없습니다 — 기존 보고서가 사라집니다');
 });
 
-test('브라우저도 canonical 문서를 먼저 보고 예전 쿼리로 떨어진다', () => {
+test('브라우저는 canonical 문서를 **골라** 쓴다 — 찾으러 가지는 않는다', () => {
+  // 서버는 canonical 문서를 직접 읽어도 된다(Admin SDK 는 규칙을 지나지 않는다).
+  // 브라우저는 안 된다 — 없는 문서를 읽으면 규칙이 거부하고 보고서가 빈 화면이
+  // 된다(public/services/report-store.js 머리말). 그래서 기간 쿼리 하나로 받고
+  // 그중에서 canonical 을 고른다.
   const store = readFileSync(
     fileURLToPath(new URL('../public/services/report-store.js', import.meta.url)), 'utf8');
-  const canonicalAt = store.indexOf('const canonical =');
-  const legacyAt = store.indexOf('const legacy =');
-  assert.ok(canonicalAt >= 0 && legacyAt > canonicalAt,
-    '브라우저가 canonical 문서보다 legacy 쿼리를 먼저 선택합니다');
+  assert.match(store, /reportDocId\(clientId, year, month\)/,
+    '브라우저가 canonical ID 를 계산하지 않습니다 — 중복이 있는 달에서 서버와 다른 문서를 가리킵니다');
+  assert.match(store, /d\.id === canonicalId/,
+    'canonical 문서를 골라 쓰지 않습니다');
 });

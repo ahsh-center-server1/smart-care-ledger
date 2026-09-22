@@ -14,6 +14,7 @@
 //    클레임은 일부러 남겨 둔다 — 위조해도 소용없다는 것을 확인하기 위해서다.
 
 import { after, before, describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   initializeTestEnvironment,
@@ -22,7 +23,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc,
-  collection, getDocs, query, where, serverTimestamp,
+  collection, getDocs, query, where, serverTimestamp, documentId,
 } from 'firebase/firestore';
 import { createRequire } from 'node:module';
 
@@ -525,6 +526,73 @@ describe('reports', () => {
   it('보고서를 브라우저가 만들 수도 지울 수도 없다', async () => {
     await assertFails(setDoc(doc(as(ACTORS.팀장), 'reports/r-new'), { clientId: MY_CLIENT }));
     await assertFails(deleteDoc(doc(as(ACTORS.팀장), 'reports/r1')));
+  });
+
+  // ── 없는 문서를 get 하면 거부된다 — 화면이 getDoc 을 쓰면 안 되는 이유 ──
+  //
+  // 규칙은 `reportViewAll` 이 없는 역할에게
+  //     cap('reportOwn') && seesClient(resource.data.get('clientId',''))
+  // 를 평가하는데, **없는 문서에서는 `resource` 가 null** 이라 그 식 자체가
+  // 오류가 되어 거부된다. 센터장은 첫 항에서 참이라 `resource` 를 건드리지 않고
+  // 통과한다 — 그래서 담당자·팀장에게만 터진다.
+  //
+  // 실제로 그렇게 났다: 화면이 표준 ID 로 `getDoc` 을 먼저 하도록 바뀌자,
+  // 예전 임의 ID 로 저장된 보고서에서 그 문서가 없어 거부됐고, loadReport 가
+  // 예외를 삼켜 **보고서가 빈 화면**이 됐다(계좌 현황·분류별 지출이 통째로
+  // 비었다). 단위 테스트는 전부 초록이었고 브라우저 검증만 잡았다.
+  //
+  // 규칙을 푸는 대신 **조회 모양을 바꿨다**(services/report-store.js 의 문서 키
+  // 쿼리). 풀었다면 담당 밖 입주자의 보고서 **존재 여부**를 떠볼 수 있다 —
+  // 표준 ID 가 (입주자, 연, 월)에서 결정적으로 나오기 때문이다.
+  // 그래서 이 거부는 **고장이 아니라 지켜야 할 성질**이고, 여기에 못 박는다.
+  it('없는 보고서 get 은 담당자·팀장에게 거부된다 — 존재 여부를 떠볼 수 없다', async () => {
+    for (const actor of [ACTORS.담당자, ACTORS.팀장]) {
+      await assertFails(getDoc(doc(as(actor), 'reports/r_없는표준ID')));
+    }
+  });
+
+  it('전체 조회 권한이 있으면 없는 문서도 그냥 「없음」이다 — 센터장', async () => {
+    // `reportViewAll` 이 첫 항에서 참이라 `resource` 를 아예 건드리지 않는다.
+    // 같은 고장이 센터장에게만 안 났던 이유가 이것이다.
+    const snap = await assertSucceeds(getDoc(doc(as(ACTORS.센터장), 'reports/r_없는표준ID')));
+    assert.equal(snap.exists(), false);
+  });
+
+  it('관리자는 보고서를 아예 못 읽는다 — 없는 문서와는 다른 이유다', async () => {
+    // 관리자는 업무 권한과 **직교**한다(§4) — reportOwn 도 reportViewAll 도 없다.
+    // 위의 「없는 문서」 이야기와 섞어 읽지 않도록 따로 못 박는다.
+    await assertFails(getDoc(doc(as(ACTORS.관리자), 'reports/r_없는표준ID')));
+    await assertFails(getDoc(doc(as(ACTORS.관리자), 'reports/r1')));
+  });
+
+  // 문서 키 쿼리도 같은 이유로 막힌다 — getDoc 만 피하면 되는 것이 아니다.
+  // 화면이 그쪽으로 도망가지 않도록 여기 함께 못 박는다.
+  it('없는 문서는 문서 키 쿼리로도 못 읽는다 — 담당자·팀장', async () => {
+    for (const actor of [ACTORS.담당자, ACTORS.팀장]) {
+      const db = as(actor);
+      await assertFails(getDocs(query(
+        collection(db, 'reports'),
+        where(documentId(), '==', doc(db, 'reports/r_없는표준ID')),
+      )));
+    }
+  });
+
+  // 그래서 화면이 실제로 쓰는 길 — 이 하나가 통과해야 보고서가 열린다.
+  it('기간 쿼리는 통과한다 — 화면이 보고서를 찾는 유일한 길', async () => {
+    for (const actor of [ACTORS.담당자, ACTORS.팀장]) {
+      const db = as(actor);
+      const snap = await assertSucceeds(getDocs(query(
+        collection(db, 'reports'),
+        where('clientId', '==', MY_CLIENT), where('year', '==', 2026), where('month', '==', 9),
+      )));
+      assert.ok(snap.size >= 1);
+    }
+  });
+
+  it('없는 문서를 읽을 수 있다고 해서 있는 남의 보고서가 열리지는 않는다', async () => {
+    // 이것이 느슨해지면 위 완화가 구멍이 된다.
+    await seed('reports/r-other', { clientId: OTHER_CLIENT, year: 2026, month: 9, status: 'draft' });
+    await assertFails(getDoc(doc(as(ACTORS.담당자), 'reports/r-other')));
   });
 });
 
