@@ -7,6 +7,8 @@ import { FIREBASE_ENVS } from '../public/firebase-env.js';
 const WORKFLOW = '.github/workflows/deploy-staging.yml';
 const path = (rel) => new URL('../' + rel, import.meta.url);
 const read = (rel) => readFileSync(path(rel), 'utf8');
+/** 주석 줄을 뺀 본문. 「이렇게 쓰면 안 된다」를 적어 둔 주석에 걸리지 않게. */
+const codeOnly = (src) => src.split('\n').filter(l => !/^\s*#/.test(l)).join('\n');
 
 const PROD_ID = FIREBASE_ENVS.prod.config.projectId;
 const STAGING_ID = FIREBASE_ENVS.staging.config.projectId;
@@ -60,6 +62,35 @@ test('배포가 반쪽이면 실패로 끝난다', () => {
   assert.match(src, /grep -qi 'login'/, 'login 함수 존재를 확인하지 않습니다');
   assert.match(src, /Access-Control-Request-Method/,
     '공개 호출 가능 여부(프리플라이트)를 확인하지 않습니다');
+});
+
+test('목록을 못 받은 것과 login 이 없는 것을 가른다', () => {
+  // 예전에는 `firebase functions:list … | tee /tmp/fns.txt` 였다. 파이프라인의
+  // 종료 상태는 **tee 의 것**이라(pipefail 이 없다) 목록 조회가 실패해도 0 으로
+  // 넘어가고, 다음 grep 이 빈 파일을 훑어 **「login 이 없다」로 잘못 보고했다.**
+  //
+  // 실제로 그렇게 났다: 같은 잡에서 몇 초 전에
+  // `functions[login] Successful update operation.` 과 `✔ Deploy complete!` 가
+  // 찍혔는데도 배포가 반쪽인 것처럼 보였고, 배포를 의심하며 시간을 썼다.
+  // 두 원인은 대응이 다르다 — 하나는 다시 배포, 하나는 다시 조회다.
+  // **주석은 뺀다.** 왜 tee 를 쓰면 안 되는지 설명하느라 그 명령을 그대로
+  // 적어 두었고, 그것까지 막으면 이유를 남길 수 없다.
+  const src = codeOnly(read(WORKFLOW));
+  assert.ok(!/functions:list[\s\S]{0,120}\|\s*tee/.test(src),
+    'functions:list 를 tee 로 받습니다 — 조회 실패가 login 누락으로 둔갑합니다');
+  assert.match(src, /if ! list_functions; then/,
+    '목록 조회의 실패를 따로 보지 않습니다');
+  assert.match(src, /배포 실패와는 다릅니다/,
+    '조회 실패와 배포 실패를 가르는 문구가 없습니다');
+});
+
+test('목록 조회는 한 번 다시 시도한다 — 흔한 일시 오류다', () => {
+  const src = read(WORKFLOW);
+  const block = src.slice(src.indexOf('배포된 함수 확인'));
+  const step = block.slice(0, block.indexOf('- name:', 10));
+  assert.equal((step.match(/list_functions\b/g) || []).length >= 3, true,
+    '재시도 없이 한 번만 조회합니다');
+  assert.match(step, /sleep \d+/, '재시도 사이에 기다리지 않습니다');
 });
 
 test('자격증명을 저장소나 로그에 남기지 않는다', () => {
