@@ -365,6 +365,24 @@ test('센터장 의견은 최종 결재 직전 단계에서만 저장한다', as
   assert.equal(db.docs.get('reports/r1').centerComment, '최종 확인');
 });
 
+test('의견 저장 직전에 삭제된 보고서를 초안으로 되살리지 않는다', async () => {
+  const { db, fns } = build();
+  report(db);
+  const original = db.runTransaction.bind(db);
+  db.runTransaction = async (fn) => {
+    db.docs.delete('reports/r1');
+    return original(fn);
+  };
+
+  await assert.rejects(
+    () => fns.saveReportComment({
+      ...as('담당자'), data: at({ key: 'staffComment', value: '삭제 뒤 의견' }),
+    }),
+    (e) => e.code === 'aborted',
+  );
+  assert.equal(db.docs.has('reports/r1'), false);
+});
+
 test('작성 단계의 보고서는 담당자가 지울 수 있다', async () => {
   const { db, fns } = build();
   report(db);                       // status: 'draft'
@@ -392,6 +410,22 @@ test('제출된 뒤에는 지울 수 없다', async () => {
     );
     assert.equal(db.docs.has('reports/r1'), true, status);
   }
+});
+
+test('삭제 확인 직후 제출된 보고서는 삭제하지 않는다', async () => {
+  const { db, fns } = build();
+  report(db);
+  const original = db.runTransaction.bind(db);
+  db.runTransaction = async (fn) => {
+    db.docs.set('reports/r1', { ...db.docs.get('reports/r1'), status: 'submitted' });
+    return original(fn);
+  };
+
+  await assert.rejects(
+    () => fns.deleteReport({ ...as('담당자'), data: at() }),
+    (e) => e.code === 'failed-precondition',
+  );
+  assert.equal(db.docs.get('reports/r1').status, 'submitted');
 });
 
 test('검토 역할은 보고서를 지우지 않는다 — 작성자의 문서다', async () => {

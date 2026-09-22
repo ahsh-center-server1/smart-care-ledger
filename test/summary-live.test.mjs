@@ -123,9 +123,20 @@ test('당월을 절반만 들고 있으면 계산하지 않는다 — 낡은 값
 });
 
 test('어느 입주자인지 모르는 쓰기는 담당 전원을 다시 읽을 대상으로 둔다', () => {
-  reset({ activeClient: '', transactions: [] });
+  reset({ transactions: [{ clientId: 'c1', date: day(2), amountOut: 300, category: '식비' }] });
   onTrxWritten({ clientId: '' });
   assert.deepEqual([...pending].sort(), ['c1', 'c2']);
+});
+
+test('배치 쓰기는 로컬 계산이 되어도 커밋 뒤 강제 재조회 대상으로 남긴다', () => {
+  reset({ transactions: [] });
+  onTrxWritten({ clientId: '', clientIds: ['c1'], forceRefresh: true });
+  assert.equal(S.monthlyStats.c1.exp, 0);
+  assert.deepEqual([...pending], ['c1']);
+
+  // 호출부가 나중에 거래 배열을 갱신해도 pending 이 남아 있어야 한다.
+  S.transactions.push({ clientId: 'c1', date: day(2), amountOut: 5000, category: '식비' });
+  assert.deepEqual([...pending], ['c1']);
 });
 
 // ─────────────────────────────────────────────

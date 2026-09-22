@@ -50,7 +50,7 @@ const DIGIT_RUN = /\d{4,}/;
  * 지명 낱말(동·로·길) 자체는 보지 않는다 — 「동원참치」·「길동이네」가 함께
  * 지워진다. 못 거르는 쪽이 멀쩡한 품목을 지우는 쪽보다 낫다.
  */
-const ADDRESSY = /(특별시|광역시)|\d+\s*(층|호|번지)(\s|$)/;
+const ADDRESSY = /(특별시|광역시)|(?:^|\s)[가-힣0-9]+(?:시|군|구)\s+[가-힣0-9]+(?:대로|로|길)\s*\d+|(?:^|\s)[가-힣]+(?:대로|로|길)\s*\d+|\d+\s*(층|호|번지)(\s|$)/;
 
 /** 금액에서 숫자만 남긴다. `₩12,000` · `12,000원` 모두 같은 값이 된다. */
 function toAmount(raw) {
@@ -65,6 +65,19 @@ function tidy(raw) {
   return String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
 }
 
+/** 비교할 때 공백·문장부호 차이를 없앤다. */
+function compact(raw) {
+  return tidy(raw).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+/** 복합 상호명의 각 낱말. 한 글자는 정상 품목을 과도하게 지우므로 제외한다. */
+function merchantTokens(raw) {
+  return tidy(raw).toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .map(compact)
+    .filter(token => token.length >= 2);
+}
+
 /**
  * 판독 결과의 품목 목록을 저장할 모양으로 깎는다.
  *
@@ -75,6 +88,8 @@ function tidy(raw) {
  */
 function sanitizeReceiptItems(items, opts = {}) {
   const merchant = tidy(opts.merchant).toLowerCase();
+  const merchantCompact = compact(merchant);
+  const merchantParts = merchantTokens(merchant);
   const out = [];
 
   for (const raw of (Array.isArray(items) ? items : [])) {
@@ -88,7 +103,12 @@ function sanitizeReceiptItems(items, opts = {}) {
     if (DIGIT_RUN.test(name)) continue;          // 카드·전화·사업자번호
     // 상호명이 품목 칸에 복사돼 오는 일이 흔하다. 두 글자 이상일 때만 본다 —
     // 한 글자 상호는 아무 품목에나 들어 있어 전부 지워 버린다.
-    if (merchant.length >= 2 && name.toLowerCase().includes(merchant)) continue;
+    const nameCompact = compact(name);
+    const matchesMerchant = merchantCompact.length >= 2 && nameCompact.length >= 2
+      && (nameCompact.includes(merchantCompact)
+        || merchantCompact.includes(nameCompact)
+        || merchantParts.some(token => nameCompact.includes(token) || token.includes(nameCompact)));
+    if (matchesMerchant) continue;
 
     out.push({ name, amount });
   }
@@ -99,6 +119,8 @@ module.exports = {
   MAX_ITEMS,
   MAX_NAME,
   ADDRESSY,
+  compact,
+  merchantTokens,
   sanitizeReceiptItems,
   toAmount,
 };

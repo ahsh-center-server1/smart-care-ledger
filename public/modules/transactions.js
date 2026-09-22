@@ -323,8 +323,8 @@ export async function saveCatChange(trxId, newCat, chipEl) {
   const lkBlocked=lk&&trxEditBlockReason(lk.clientId,lk.date); if(lkBlocked){toast(lkBlocked,'error',5000);return;}
   const {doc,updateDoc}=fb();
   await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{category:newCat});
-  invalidateReportTrxCache();
   [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t)t.category=newCat;});
+  invalidateReportTrxCache(lk && lk.clientId);
   if (chipEl) {
     const c=cs(newCat);
     chipEl.style.background=c.bg; chipEl.style.color=c.text; chipEl.style.borderColor=c.border;

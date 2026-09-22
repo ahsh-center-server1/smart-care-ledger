@@ -37,15 +37,13 @@ const SYSTEM_PROMPT = [
   '무엇을 쓰는가 — 결재자가 확인하려는 순서대로:',
   '1. 이번 달 수입·지출·차액을 한 문장으로 요약합니다.',
   '2. 전월·전전월과 견주어 눈에 띄는 변화가 있으면 어느 분류에서 났는지 적습니다.',
-  '   세부품목이 주어졌으면 그 분류 안에서 무엇이 컸는지 한 가지만 덧붙입니다.',
   '3. 증빙이 빠진 지출이 있으면 건수와 금액을 적고 확인을 권합니다.',
   '4. 분류가 정해지지 않은 지출이 있으면 정리를 권합니다.',
   '5. 계좌 잔액이 전월 말에서 어떻게 움직였는지 적습니다.',
   '',
   '지켜야 할 것:',
   '- 주어진 숫자 외에는 아무것도 지어내지 않습니다. 모르는 것은 쓰지 않습니다.',
-  '  (어디서 샀는지·언제 샀는지는 주어지지 않습니다 — 추측하지 마세요.',
-  '   세부품목은 한 달치를 이름으로 합친 값이라 날짜도 가게도 붙일 수 없습니다.)',
+  '  (어디서 샀는지·언제 샀는지는 주어지지 않습니다 — 추측하지 마세요.)',
   '- 해당 없는 항목은 그냥 건너뜁니다. "없습니다"를 나열하지 않습니다.',
   '- 금액은 원 단위로 쓰고 천 단위 쉼표를 넣습니다.',
   '- 사람을 평가하거나 훈계하지 않습니다("과소비", "절약이 필요합니다" 금지).',
@@ -69,18 +67,6 @@ const PAYMENT_METHODS = ['카드', '계좌이체', '자동이체', '현금'];
 
 /** 추이는 몇 달까지. 세 달이면 "이번 달만 튀는가"에 답할 수 있다. */
 const TREND_MONTHS = 2;
-
-/**
- * 세부품목은 상위 몇 개까지. 전부 보내면 문장이 장바구니 목록이 된다.
- *
- * ⚠️ **여기가 두 번째 관문이다.** 품목명은 결국 OCR 이 읽은 자유 텍스트라,
- * 저장 시점의 깎기(`functions/receipt-items.cjs`)를 통과한 것이라도 여기서
- * 다시 본다 — 그 깎기가 없던 시절에 저장된 거래가 남아 있고, 앞으로 규칙이
- * 느슨해질 수도 있다. 경계는 한 겹이면 언젠가 뚫린다.
- */
-const TOP_ITEMS = 8;
-const ITEM_NAME_MAX = 20;
-const ITEM_DIGIT_RUN = /\d{4,}/;
 
 const won = (n) => Math.round(Number(n) || 0);
 const nat = (n) => Math.max(0, Math.trunc(Number(n) || 0));
@@ -147,20 +133,6 @@ function buildReportFacts(payload) {
       .filter(t => t && /^\d{4}-\d{2}$/.test(String(t.ym)))
       .slice(-TREND_MONTHS)
       .map(t => ({ ym: String(t.ym), totalOut: won(t.totalOut) })),
-    // 세부품목 — 「무엇이 늘었는가」에 답하는 유일한 근거. 이름으로 합쳐서
-    // 오므로 어느 날 어느 가게에서 샀는지는 이미 사라져 있다.
-    items: (Array.isArray(d.items) ? d.items : [])
-      .map(it => ({
-        name: String((it && it.name) || '').replace(/\s+/g, ' ').trim(),
-        total: won(it && it.total),
-        count: nat(it && it.count),
-      }))
-      .filter(it => it.name
-        && it.total > 0
-        && it.name.length <= ITEM_NAME_MAX
-        && !ITEM_DIGIT_RUN.test(it.name))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, TOP_ITEMS),
   };
 }
 
@@ -196,10 +168,6 @@ function factsToPrompt(f) {
     );
   } else {
     lines.push('증빙은 모두 붙어 있습니다.');
-  }
-  if (f.items.length) {
-    lines.push('영수증에서 읽은 세부품목(이름으로 합친 것, 금액 큰 순):');
-    for (const it of f.items) lines.push(`- ${it.name}: ${it.total}원 (${it.count}회)`);
   }
   if (f.largestOut > 0) lines.push(`가장 큰 지출 한 건은 ${f.largestOut}원입니다.`);
   if (f.activeDays > 0) lines.push(`거래가 있었던 날은 ${f.activeDays}일입니다.`);
@@ -253,7 +221,6 @@ module.exports = {
   TOP_CATEGORIES,
   PAYMENT_METHODS,
   TREND_MONTHS,
-  TOP_ITEMS,
   buildReportFacts,
   factsToPrompt,
   narrateReport,

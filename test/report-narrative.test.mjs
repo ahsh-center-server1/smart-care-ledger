@@ -45,6 +45,7 @@ const PAYLOAD = {
   methods: { '카드': 300000, '현금': 130000 },
   accounts: { count: 2, prevBalance: 1200000, balance: 1270000 },
   trend: [{ ym: '2026-01', totalOut: 360000 }, { ym: '2026-02', totalOut: 380000 }],
+  items: [{ name: '○○약국', total: 32000, count: 1 }],
 };
 
 test('이름·상호명·계좌번호가 사실 묶음에 들어가지 않는다', () => {
@@ -190,7 +191,7 @@ test('브라우저가 애초에 거래 내용을 보내지 않는다', () => {
   const payload = panel.slice(at, panel.indexOf('});', at));
   // 넘기는 것은 객체 하나다. 금지 항목이 **키로** 들어 있으면 값이 나간다
   // (rd.trxList 를 .length 로만 세는 것은 나가지 않는다 — 숫자만 남는다).
-  for (const field of ['trxList', 'trx', 'rows', 'clientName', 'accountNumber', 'memo']) {
+  for (const field of ['trxList', 'trx', 'rows', 'clientName', 'accountNumber', 'memo', 'items']) {
     assert.ok(!new RegExp(`(^|[,{\\s])${field}\\s*:`).test(payload),
       `호출에 「${field}」 가 실려 나갑니다`);
   }

@@ -2,28 +2,27 @@
   "phase": "VERIFY",
   "scope": "fixed-role-policy-and-security-p1",
   "status": "IN_PROGRESS",
-  "resumedAt": "2026-09-21",
+  "resumedAt": "2026-09-15",
   "code_progress": {
     "foundation": "implemented and verified",
     "roleGuide": "implemented as read-only fixed-role guidance",
-    "current": "fixed role policy, server enforcement, approval workflows, security P1 fixes; plus report XSS removal, deterministic report IDs, Actions runtime bump, Windows portability, and an emulator round-trip CI job",
-    "remaining": "staging/production deployment remains separately authorized; duplicate-report diagnosis to be run against real data before deploy"
+    "current": "code-only final review fixes implemented and locally verified",
+    "remaining": "remote branch application, browser smoke, staging round-trip, and deployment remain"
   },
   "decisions": {
     "teamLeaderScope": "clients.teamLeader UID only",
     "sameApproverExecutor": "prohibited; remain pending without another approver"
   },
-  "context_summary": "고정 역할 정책과 보안 P1 구현 위에, 재검토에서 확인된 5건을 반영했다: 보고서 XSS 5곳 제거(+회귀 테스트), 보고서 문서 ID 결정화(동시 첫 저장 중복 제거), GitHub Actions Node20 런타임 대응, Windows 설치·경로 수정, 에뮬레이터 결재 왕복 CI 잡. 운영 데이터·배포는 여전히 별도 승인 대기.",
-  "source": "claude/pr9-security-permissions-review-8x57vw ZIP snapshot",
+  "context_summary": "거래 갱신 순서, OCR 품목 AI 경계, 보고서 삭제 경합, canonical 조회 불일치를 수정하고 로컬 회귀 검증을 완료했다. 원격 브랜치와 운영 배포는 건드리지 않았다.",
+  "source": "claude/smart-care-ledger-final-review-kjicax commit 8fc1334c local overlay",
   "deploymentAuthorized": false,
   "productionDataAuthorized": false,
   "checks": {
-    "check": "passed (1124 tests)",
+    "check": "passed (1197 tests)",
     "contract": "passed (24 tests)",
-    "contractRatchet": "passed (24, baseline 24)",
-    "rules": "passed in CI (277); 7 storage-rules failures are local-container only (cross-service lookup unavailable)",
-    "roundtrip": "passed (26 items) — four-role login, full approval cycle, role separation, step-skip prevention, concurrent-create dedupe; now a CI job (npm run emu:roundtrip)",
-    "browserSmoke": "passed (199 checks, 4 roles) — now a CI job (npm run emu:qa); expectations derived from the fixed-role policy"
+    "contractRatchet": "not-run",
+    "rules": "not-run in this fix pass; previous branch run passed (277 tests)",
+    "browserSmoke": "not-run (requires seeded local emulators and a compatible Chromium runtime)"
   },
   "deployment": "not-run",
   "productionDataAccess": "not-run"

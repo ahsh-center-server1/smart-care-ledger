@@ -37,20 +37,37 @@ export const TRX_WRITE_EVENT = 'scl:trx-written';
  *
  * @param {string} [clientId] 알면 그 입주자 것만. 모르면 무조건 버린다(안전한 쪽).
  */
-export function invalidateReportTrxCache(clientId) {
+export function invalidateReportTrxCache(clientId, detail = {}) {
   if (!clientId || S.rptTrxCache?.clientId === clientId) S.rptTrxCache = null;
   if (typeof document !== 'undefined' && typeof CustomEvent === 'function') {
-    document.dispatchEvent(new CustomEvent(TRX_WRITE_EVENT, { detail: { clientId: clientId || '' } }));
+    document.dispatchEvent(new CustomEvent(TRX_WRITE_EVENT, {
+      detail: { ...detail, clientId: clientId || '' },
+    }));
   }
 }
 
-/** 배치 항목 중 거래 쓰기가 있으면 캐시를 버린다. */
-function noteBatch(...lists) {
+/** 배치 항목 중 거래 쓰기와 영향을 받은 입주자를 찾는다. */
+function inspectBatch(...lists) {
+  let hasTransactions = false;
+  const clientIds = new Set();
   for (const list of lists) {
     for (const it of (list || [])) {
-      if (it && it.col === COLS.TRANSACTIONS) { invalidateReportTrxCache(); return; }
+      if (!it || it.col !== COLS.TRANSACTIONS) continue;
+      hasTransactions = true;
+      const clientId = String(it.clientId || (it.data && it.data.clientId) || '');
+      if (clientId) clientIds.add(clientId);
     }
   }
+  return { hasTransactions, clientIds: [...clientIds] };
+}
+
+/** 성공한 커밋 뒤에만 거래 변경을 알린다. */
+function noteBatch(info) {
+  if (!info || !info.hasTransactions) return;
+  invalidateReportTrxCache('', {
+    clientIds: info.clientIds,
+    forceRefresh: true,
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -76,56 +93,65 @@ export function fdb() { return window._fb.db; }
 
 /** 다중 문서 업데이트 (배치, 500개 단위 자동 분할) */
 export async function batchUpdateDocs(updates) {
-  noteBatch(updates);
   if(!updates.length)return;
+  const trxWrites = inspectBatch(updates);
   const { writeBatch, doc } = fb();
+  let committed = false;
   // 500개씩 분할 처리
-  for(let i=0;i<updates.length;i+=500){
-    const chunk=updates.slice(i,i+500);
-    const batch = writeBatch(fdb());
-    chunk.forEach(({col, docId, data}) => {
-      batch.update(doc(fdb(), col, docId), data);
-    });
-    await batch.commit();
-  }
+  try {
+    for(let i=0;i<updates.length;i+=500){
+      const chunk=updates.slice(i,i+500);
+      const batch = writeBatch(fdb());
+      chunk.forEach(({col, docId, data}) => {
+        batch.update(doc(fdb(), col, docId), data);
+      });
+      await batch.commit(); committed = true;
+    }
+  } finally { if (committed) noteBatch(trxWrites); }
 }
 
 /** 다중 문서 삭제 (배치, 500개 단위 자동 분할) */
 export async function batchDeleteDocs(deletes) {
-  noteBatch(deletes);
   if(!deletes.length)return;
+  const trxWrites = inspectBatch(deletes);
   const { writeBatch, doc } = fb();
+  let committed = false;
   // 500개씩 분할 처리
-  for(let i=0;i<deletes.length;i+=500){
-    const chunk=deletes.slice(i,i+500);
-    const batch = writeBatch(fdb());
-    chunk.forEach(({col, docId}) => {
-      batch.delete(doc(fdb(), col, docId));
-    });
-    await batch.commit();
-  }
+  try {
+    for(let i=0;i<deletes.length;i+=500){
+      const chunk=deletes.slice(i,i+500);
+      const batch = writeBatch(fdb());
+      chunk.forEach(({col, docId}) => {
+        batch.delete(doc(fdb(), col, docId));
+      });
+      await batch.commit(); committed = true;
+    }
+  } finally { if (committed) noteBatch(trxWrites); }
 }
 
 /** 다중 문서 추가 (배치, 500개 단위 자동 분할) */
 export async function batchAddDocs(adds) {
-  noteBatch(adds);
   if(!adds.length)return [];
+  const trxWrites = inspectBatch(adds);
   const { writeBatch, collection, doc, serverTimestamp } = fb();
   const addedIds = [];
+  let committed = false;
   // 500개씩 분할 처리
-  for(let i=0;i<adds.length;i+=500){
-    const chunk=adds.slice(i,i+500);
-    const batch = writeBatch(fdb());
-    chunk.forEach(({col, data}) => {
-      const ref = doc(collection(fdb(), col));
-      addedIds.push(ref.id);
-      batch.set(ref, {
-        ...data,
-        createdAt: serverTimestamp ? serverTimestamp() : Date.now(),
+  try {
+    for(let i=0;i<adds.length;i+=500){
+      const chunk=adds.slice(i,i+500);
+      const batch = writeBatch(fdb());
+      chunk.forEach(({col, data}) => {
+        const ref = doc(collection(fdb(), col));
+        addedIds.push(ref.id);
+        batch.set(ref, {
+          ...data,
+          createdAt: serverTimestamp ? serverTimestamp() : Date.now(),
+        });
       });
-    });
-    await batch.commit();
-  }
+      await batch.commit(); committed = true;
+    }
+  } finally { if (committed) noteBatch(trxWrites); }
   return addedIds;
 }
 
@@ -137,17 +163,20 @@ export async function batchAddDocs(adds) {
  * 재시도가 사본을 복제하지 않도록 하는 데 쓴다.
  */
 export async function batchSetDocs(items) {
-  noteBatch(items);
   if(!items.length)return;
+  const trxWrites = inspectBatch(items);
   const { writeBatch, doc } = fb();
-  for(let i=0;i<items.length;i+=500){
-    const chunk=items.slice(i,i+500);
-    const batch = writeBatch(fdb());
-    chunk.forEach(({col, docId, data}) => {
-      batch.set(doc(fdb(), col, docId), data);
-    });
-    await batch.commit();
-  }
+  let committed = false;
+  try {
+    for(let i=0;i<items.length;i+=500){
+      const chunk=items.slice(i,i+500);
+      const batch = writeBatch(fdb());
+      chunk.forEach(({col, docId, data}) => {
+        batch.set(doc(fdb(), col, docId), data);
+      });
+      await batch.commit(); committed = true;
+    }
+  } finally { if (committed) noteBatch(trxWrites); }
 }
 
 /** 복합 배치 작업 (추가/수정/삭제 동시, 500개 단위 자동 분할) */
@@ -160,7 +189,7 @@ export async function batchMixedOps(operations) {
   const totalOps = updates.length + deletes.length + adds.length;
 
   if(!totalOps)return addedIds;
-  noteBatch(updates, deletes, adds);
+  const trxWrites = inspectBatch(updates, deletes, adds);
 
   // 총 작업이 500개 이하면 한 번에 처리
   if(totalOps<=500){
@@ -180,6 +209,7 @@ export async function batchMixedOps(operations) {
       });
     });
     await batch.commit();
+    noteBatch(trxWrites);
     return addedIds;
   }
 
@@ -188,5 +218,6 @@ export async function batchMixedOps(operations) {
   await batchDeleteDocs(deletes);
   const results=await batchAddDocs(adds);
   addedIds.push(...results);
+  // 500개 초과 경로는 각 하위 헬퍼가 성공한 커밋 뒤에 알린다.
   return addedIds;
 }

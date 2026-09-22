@@ -63,7 +63,14 @@ test('배치 헬퍼가 거래 쓰기를 스스로 알아챈다', () => {
     'batchSetDocs', 'batchMixedOps']) {
     const at = src.indexOf(`export async function ${fn}(`);
     assert.ok(at > 0, `${fn} 이 없습니다`);
-    assert.match(src.slice(at, at + 400), /noteBatch\(/, `${fn} 이 캐시를 버리지 않습니다`);
+    const next = src.indexOf('\nexport async function ', at + 1);
+    const body = src.slice(at, next > 0 ? next : src.length);
+    assert.match(body, /inspectBatch\(/, `${fn} 이 거래 쓰기를 찾지 않습니다`);
+    assert.match(body, /noteBatch\(/, `${fn} 이 캐시를 버리지 않습니다`);
+    const commitAt = body.indexOf('await batch.commit()');
+    const noteAt = body.indexOf('noteBatch(');
+    assert.ok(commitAt >= 0 && noteAt > commitAt,
+      `${fn} 이 커밋 전에 변경 알림을 보냅니다`);
   }
 });
 

@@ -90,14 +90,27 @@ function onTrxWritten(detail) {
   // `{}` 로 만들어 두면 카드가 「당월 거래 없음」이라고 적는다.
   if (!S.monthlyStats) return;
 
+  const forced = !!(detail && detail.forceRefresh);
+  const batchIds = Array.isArray(detail && detail.clientIds)
+    ? [...new Set(detail.clientIds.map(v => String(v || '')).filter(Boolean))]
+    : [];
+  if (batchIds.length) {
+    for (const id of batchIds) {
+      recomputeFromLoaded(id);
+      pending.add(id);
+    }
+    return;
+  }
+
   const clientId = String((detail && detail.clientId) || '');
   if (clientId) {
-    if (!recomputeFromLoaded(clientId)) pending.add(clientId);
+    const local = recomputeFromLoaded(clientId);
+    if (!local || forced) pending.add(clientId);
     return;
   }
   // 어느 입주자인지 모르는 쓰기(배치)다. 열려 있는 것부터 로컬로 맞추고,
   // 그것으로 안 되면 담당 전원을 다시 읽을 대상으로 둔다 — 안전한 쪽이다.
-  if (recomputeFromLoaded(S.activeClient)) return;
+  recomputeFromLoaded(S.activeClient);
   (S.clients || []).forEach(c => c && c.id && pending.add(c.id));
 }
 

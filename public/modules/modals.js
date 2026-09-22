@@ -470,7 +470,7 @@ async function saveTransfer({existing,existId,acc,toAcc,accId,toAccId,date,time,
     :out.createdMate?'입금 계좌에 상대편 거래를 새로 만들었습니다.'
     :existId?'자산이동 수정됨':'자산이동 저장됨';
   void existing;
-  invalidateReportTrxCache();   // 서버가 양쪽 거래를 썼다 — 배치 헬퍼를 안 탄다
+  invalidateReportTrxCache('', {clientIds:[...new Set([acc.clientId,toAcc.clientId].filter(Boolean))],forceRefresh:true});
   await updateAccBalance(acc.id); await updateAccBalance(toAcc.id);
   if(S.activeClient===acc.clientId||S.activeClient===toAcc.clientId)
     await loadTransactions(S.activeClient);

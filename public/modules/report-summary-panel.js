@@ -81,8 +81,8 @@ export async function handleGenSummary(){
       totalIn:rd.summary.totalIn, totalOut:rd.summary.totalOut, balance:rd.summary.balance,
       count:(rd.trxList||[]).length, catStats:rd.summary.catStats,
       ...previousMonthFacts(prevMonthTrx(rd)),
-      // 증빙 누락·잔액·추이, 그리고 영수증 세부품목(이름으로 합친 것).
-      // 상호명·이름·주소·카드번호는 여전히 한 글자도 나가지 않는다
+      // 증빙 누락·잔액·추이. OCR 세부품목 같은 자유 입력 문자열은 제외한다.
+      // 상호명·이름·주소·카드번호는 한 글자도 나가지 않는다
       // (domain/report-summary.js 의 extraReportFacts 머리말).
       ...extraReportFacts(rd, hasReceipt),
     });

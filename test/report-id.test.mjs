@@ -11,9 +11,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { webcrypto } from 'node:crypto';
 
 const require = createRequire(import.meta.url);
 const { reportDocId, isCanonicalReportId, REPORT_ID_PREFIX } = require('../functions/report-id.cjs');
+const { reportDocId: browserReportDocId } = await import('../public/domain/report-id.js');
 
 test('같은 기간 키는 언제나 같은 ID', () => {
   const a = reportDocId('cli_1', 2026, 3);
@@ -22,6 +24,15 @@ test('같은 기간 키는 언제나 같은 ID', () => {
   // 숫자를 문자열로 줘도 같아야 한다 — 콜러블이 Number() 로 바꾸기 전에
   // 부르는 길이 생기면 ID 가 갈린다.
   assert.equal(reportDocId('cli_1', '2026', '3'), a);
+});
+
+test('브라우저와 서버가 같은 canonical ID를 계산한다', async () => {
+  for (const input of [
+    ['cli_1', 2026, 3],
+    ['입주자/1 <b>', 2026, 12],
+  ]) {
+    assert.equal(await browserReportDocId(...input, webcrypto), reportDocId(...input));
+  }
 });
 
 test('기간이 다르면 ID 가 다르다', () => {
@@ -92,4 +103,13 @@ test('조회는 canonical 을 먼저 보고 예전 문서로 떨어진다', () =
     'findReport 가 canonical 문서를 먼저 보지 않습니다');
   assert.match(FNS, /\.where\('clientId', '==', String\(clientId\)\)/,
     'findReport 에 예전 문서를 찾는 쿼리가 없습니다 — 기존 보고서가 사라집니다');
+});
+
+test('브라우저도 canonical 문서를 먼저 보고 예전 쿼리로 떨어진다', () => {
+  const store = readFileSync(
+    fileURLToPath(new URL('../public/services/report-store.js', import.meta.url)), 'utf8');
+  const canonicalAt = store.indexOf('const canonical =');
+  const legacyAt = store.indexOf('const legacy =');
+  assert.ok(canonicalAt >= 0 && legacyAt > canonicalAt,
+    '브라우저가 canonical 문서보다 legacy 쿼리를 먼저 선택합니다');
 });

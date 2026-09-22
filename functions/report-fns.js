@@ -328,6 +328,12 @@ module.exports = function reportFns(ctx) {
       }
 
       const current = reportSnap.exists ? reportSnap.data() || {} : null;
+      if (report && !current) {
+        throw new HttpsError(
+          'aborted',
+          '그 사이 보고서가 삭제되었습니다. 새로고침 후 다시 시도하세요.',
+        );
+      }
       const status = normalizeStatus(current && current.status);
       const allowed = (key === 'staffComment'
           && fixedCan(actor, 'report.submit')
@@ -393,19 +399,42 @@ module.exports = function reportFns(ctx) {
 
     const report = await findReport(clientId, year, month);
     if (!report) throw new HttpsError('not-found', '저장된 보고서가 없습니다.');
+    const reportRef = db.collection(REPORTS).doc(report.id);
+    let deletedStatus = '';
 
-    // 제출 뒤에는 지울 수 없다. 결재자가 보고 있는(또는 이미 본) 보고서가
-    // 사라지면 결재 이력만 남고 대상이 없어진다 — 되돌리려면 회수·결재 취소로
-    // draft 로 내린 뒤 지운다. 색인도 그때 함께 풀린다.
-    if (SUBMITTED_STATUSES.includes(normalizeStatus(report.status))) {
-      throw new HttpsError(
-        'failed-precondition',
-        '제출된 보고서는 삭제할 수 없습니다. 회수하거나 결재를 취소한 뒤 삭제하세요.',
-      );
-    }
+    await db.runTransaction(async (tx) => {
+      const actorSnap = await tx.get(db.collection(AUTHZ).doc(auth.uid));
+      const reportSnap = await tx.get(reportRef);
+      const actor = actorSnap.exists ? actorSnap.data() || {} : {};
+      if (actor.enabled !== true || !capOf(actor)('report.delete') || !sees(actor, clientId)) {
+        throw new HttpsError('permission-denied', '보고서 삭제 권한이 없습니다.');
+      }
+      if (!reportSnap.exists) {
+        throw new HttpsError('aborted', '그 사이 보고서가 삭제되었습니다. 새로고침하세요.');
+      }
 
-    await db.collection(REPORTS).doc(report.id).delete();
-    logger.info('[deleteReport]', { by: auth.uid, clientId, year, month, status: report.status });
+      const current = reportSnap.data() || {};
+      if (String(current.clientId || '') !== clientId
+          || Number(current.year) !== year || Number(current.month) !== month) {
+        throw new HttpsError('aborted', '보고서 기간 정보가 바뀌었습니다. 새로고침하세요.');
+      }
+      deletedStatus = normalizeStatus(current.status);
+      if (SUBMITTED_STATUSES.includes(deletedStatus)) {
+        throw new HttpsError(
+          'failed-precondition',
+          '제출된 보고서는 삭제할 수 없습니다. 회수하거나 결재를 취소한 뒤 삭제하세요.',
+        );
+      }
+
+      tx.delete(reportRef);
+      tx.set(db.collection(AUDIT_LOGS).doc(), {
+        action: 'report.delete', actorUid: auth.uid,
+        clientId, targetId: report.id, detail: { previous: deletedStatus, year, month },
+        timestamp: FieldValue.serverTimestamp(),
+        expireAt: new Date(Date.now() + AUDIT_TTL_MS),
+      });
+    });
+    logger.info('[deleteReport]', { by: auth.uid, clientId, year, month, previousStatus: deletedStatus });
     return { ok: true, reportId: report.id };
   });
 

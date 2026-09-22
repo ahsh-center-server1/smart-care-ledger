@@ -41,6 +41,7 @@ import { rememberOpenReport, restorableReport } from '../domain/report-session.j
 import { approvalStamps, reportStaffName } from '../domain/report-stamps.js';
 import { sortTrx, planReorder } from '../domain/trx-order.js';
 import { countsInTotals } from '../domain/trx-totals.js';
+import { findReportByPeriod } from '../services/report-store.js';
 import { excludedBadge } from './transactions-widgets.js';
 // 분석 칸(문장 생성·비우기)은 report-summary-panel.js 로 나갔다. 화살표는 한 방향이다.
 import { generateRuleBasedSummary, handleGenSummary, resetSummaryPanel } from './report-summary-panel.js';
@@ -158,7 +159,6 @@ export async function loadReport(){
   if(!clientId){toast('입주자를 선택하세요.','error');return;}
   showLoading(true);
   try{
-    const{getDocs,collection,query,where}=fb();
     const mStr=year+'-'+String(month).padStart(2,'0');
     const accs=S.accounts.filter(a=>a.clientId===clientId);
     // 계좌마다 이번 달·지난달 말잔을 색인이 들고 있으면 **두 달만** 읽는다.
@@ -169,8 +169,7 @@ export async function loadReport(){
       monthEndBalanceOf(a,mStr)!=null&&monthEndBalanceOf(a,prevYM0)!=null);
     const allTrx=await getClientTrx(clientId,indexed?reportWindow(year,month):null);
     const trxList=sortTrx(allTrx.filter(t=>t.date&&t.date.startsWith(mStr)));
-    const rSnap=await getDocs(query(collection(fdb(),COLS.REPORTS),where('clientId','==',clientId),where('year','==',year),where('month','==',month)));
-    const report=rSnap.empty?null:{id:rSnap.docs[0].id,...rSnap.docs[0].data()};
+    const report=await findReportByPeriod(clientId,year,month);
     let totalIn=0,totalOut=0; const catStats={};
     trxList.forEach(t=>{
       if(!countsInTotals(t))return;   // 「합계 제외」와 구형 자산이동·취소
