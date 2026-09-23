@@ -126,7 +126,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - name: 의존성 설치 (루트)
@@ -138,7 +138,7 @@ jobs:
 
       # 매 스텝마다 npx로 내려받지 않도록 한 번만 설치한다
       - name: firebase-tools 설치
-        run: npm i -g firebase-tools@13
+        run: npm i -g firebase-tools@15.29.0
 
       # 깨진 코드를 배포하지 않는다. 여기서 막히면 배포는 시작되지 않는다.
       - name: 검사 (ESLint + 테스트)

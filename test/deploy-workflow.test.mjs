@@ -229,6 +229,46 @@ test('규칙 잡의 JDK가 firebase-tools 요구 버전 이상이다', () => {
     `java-version이 ${m[1]}입니다 — firebase-tools는 21 이상을 요구합니다`);
 });
 
+test('GitHub Actions가 Node 24 기반 메이저를 사용한다', () => {
+  const ci = read(CI);
+  const deploy = read(WORKFLOW);
+
+  for (const [name, src] of [['검사', ci], ['스테이징 배포', deploy]]) {
+    assert.ok(!/actions\/(?:checkout|setup-node)@v4\b/.test(src),
+      name + ' 워크플로에 Node 20 기반 v4 액션이 남아 있습니다');
+    assert.match(src, /actions\/checkout@v7\b/,
+      name + ' 워크플로가 checkout v7을 사용하지 않습니다');
+    assert.match(src, /actions\/setup-node@v7\b/,
+      name + ' 워크플로가 setup-node v7을 사용하지 않습니다');
+  }
+
+  assert.match(ci, /actions\/setup-java@v6\b/,
+    '검사 워크플로가 Node 24 기반 setup-java v6을 사용하지 않습니다');
+});
+
+test('CI와 Functions 런타임이 Node 22로 일치한다', () => {
+  const workflows = [read(CI), read(WORKFLOW)];
+  for (const src of workflows) {
+    const versions = [...src.matchAll(/node-version:\s*['"]?(\d+)/g)]
+      .map((match) => match[1]);
+    assert.ok(versions.length > 0, '워크플로에 node-version이 없습니다');
+    assert.deepEqual([...new Set(versions)], ['22'],
+      '워크플로 Node 버전이 22로 통일되지 않았습니다: ' + versions.join(', '));
+  }
+
+  const functionsPackage = JSON.parse(read('functions/package.json'));
+  const functionsLock = JSON.parse(read('functions/package-lock.json'));
+  const firebase = JSON.parse(read('firebase.json'));
+  assert.equal(functionsPackage.engines?.node, '22',
+    'functions/package.json의 런타임이 Node 22가 아닙니다');
+  assert.equal(functionsLock.packages?.['']?.engines?.node, '22',
+    'functions/package-lock.json의 런타임이 Node 22와 맞지 않습니다');
+  assert.ok(firebase.functions.every((entry) => entry.runtime === 'nodejs22'),
+    'firebase.json의 Functions 런타임이 nodejs22가 아닙니다');
+  assert.match(read(WORKFLOW), /firebase-tools@15\.29\.0\b/,
+    '스테이징 배포 CLI가 검증된 Firebase Tools 버전으로 고정되지 않았습니다');
+});
+
 test('검사가 실제로 테스트를 돌린다', () => {
   const src = read(CI);
   assert.match(src, /npm run check/, 'npm run check를 부르지 않습니다');

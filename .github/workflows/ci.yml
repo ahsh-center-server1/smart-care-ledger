@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       - run: npm ci
       # functions/는 별도 package.json이다. 루트 npm ci는 그것을 설치하지 않는다.
@@ -65,7 +65,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       # Firestore 에뮬레이터는 JVM에서 돈다.
       # firebase-tools는 **JDK 21 이상**을 요구한다(17로는
@@ -101,7 +101,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       - run: npm ci
       # 집행 계약 게이트는 Functions 쪽 집행 지점을 직접 확인한다.
@@ -125,7 +125,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       # Firestore·Auth 에뮬레이터는 JVM에서 돈다(규칙 잡과 같은 이유로 JDK 21).
       - uses: actions/setup-java@v6
@@ -162,7 +162,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       # 에뮬레이터(Firestore·Auth)는 JVM 에서 돈다 — 규칙 잡과 같은 이유로 JDK 21.
       - uses: actions/setup-java@v6
