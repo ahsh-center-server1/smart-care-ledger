@@ -1427,20 +1427,20 @@ async function saveBulkStaff(parsed){
     });
     const {okCount=0,failCount=0,results=[]}=res.data||{};
     const succeeded=new Set(results.filter(r=>r.ok).map(r=>r.userId));
-    let requestedCount=0;
+    let approvedCount=0,requestedCount=0;
     for(const row of valid){
       if(!succeeded.has(row.userId))continue;
-      await window._fbFn.call('approveStaff')({
+      const approval=await window._fbFn.call('approveStaff')({
         userId:row.userId,role:row.role||'입력자',isAdmin:false,
       });
-      requestedCount++;
+      if(approval.data?.state==='executed')approvedCount++; else requestedCount++;
     }
     if(failCount){
       const lines=results.filter(r=>!r.ok).map(r=>`${r.userId}: ${r.error}`).join('\n');
       toast(`${okCount}명 등록, ${failCount}명 실패`,'error',6000);
       console.warn('직원 일괄 등록 실패 내역:\n'+lines);
     } else {
-      toast(`직원 ${okCount}명 등록 · ${requestedCount}명 역할 승인 요청`,'success',4000);
+      const approvalSummary=[approvedCount?`${approvedCount}명 승인 완료`:'',requestedCount?`${requestedCount}명 승인 요청`:'' ].filter(Boolean).join(' · '); toast(`직원 ${okCount}명 등록${approvalSummary?' · '+approvalSummary:''}`,'success',4000);
     }
     closeModal(); await refetchUsers(); renderManagement();
   }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
@@ -1589,3 +1589,4 @@ async function saveBulkAccounts(parsed){
     closeModal(); await refetchAccounts(); renderManagement();
   }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
 }
+

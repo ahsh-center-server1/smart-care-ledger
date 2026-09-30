@@ -53,6 +53,8 @@ export function renderManagement(){
   const canManageStaff=can('settings.staff');
   const canApproveStaffRole=can('staff.role.approve');
   const canManageAssignments=can('assignments.manage');
+  const canDecideStaffRole=canApproveStaffRole||canManageStaff;
+  const canRequestStaffRole=canDecideStaffRole||canManageAssignments;
   const canManageClients=can('settings.client');
   const canManageAccounts=can('settings.account');
   const canViewAllClients=can('client.view.all');
@@ -91,7 +93,11 @@ export function renderManagement(){
         const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fffbeb;border-color:#fde68a;flex-wrap:wrap;';
         const roles=['입력자','담당자','팀장','센터장'];
         const roleOpts=roles.map(r=>`<option value="${r}"${(u.role||'입력자')===r?' selected':''}>${r}</option>`).join('');
-        const requestControls=canManageStaff?`<div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="요청할 역할을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn approve-staff-btn" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">변경 요청</button></div>`:'<span style="font-size:12px;color:var(--muted);">시스템 관리자 요청 대기</span>';
+        const hasActiveRequest=u.privilegeChange&&['pending','approved'].includes(u.privilegeChange.state);
+        const actionLabel=canDecideStaffRole?'직원 승인':'승인 요청';
+        const requestControls=hasActiveRequest
+          ?'<span style="font-size:12px;color:var(--muted);">센터장·관리자 처리 대기</span>'
+          :(canRequestStaffRole?`<div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="승인할 역할을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn approve-staff-btn" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">${actionLabel}</button></div>`:'<span style="font-size:12px;color:var(--muted);">센터장·관리자 승인 대기</span>');
         d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${escAttr(u.userId||'')} ${u.team?'· '+escAttr(u.team):''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div>${requestControls}`;
         d.querySelector('.approve-staff-btn')?.addEventListener('click',()=>approveStaff(u.id));
         sl.appendChild(d);
@@ -107,9 +113,14 @@ export function renderManagement(){
       privilegeChanges.forEach(u=>{
         const change=u.privilegeChange;
         const d=document.createElement('div'); d.className='card';
-        const stateLabel=change.state==='approved'?'센터장 승인 완료 · 실행 대기':'센터장 승인 대기';
-        const canAct=change.state==='approved'?canManageStaff:canApproveStaffRole;
-        const controls=canAct?`<div><button class="btn privilege-change-btn">${change.state==='approved'?'변경 실행':'변경 승인'}</button><button class="btn privilege-cancel-btn">취소</button></div>`:'<span style="font-size:12px;color:var(--muted);">다른 권한 담당자 처리 대기</span>';
+        const stateLabel=change.state==='approved'?'기존 승인 건 · 최종 적용 대기':'센터장·관리자 승인 대기';
+        const myUserId=String(S.user?.userId||'');
+        const canCancel=[change.requestedBy,change.approvedBy].some(id=>String(id||'')===myUserId);
+        const buttons=[
+          canDecideStaffRole?'<button class="btn privilege-change-btn">변경 승인</button>':'',
+          canCancel?'<button class="btn privilege-cancel-btn">취소</button>':'',
+        ].filter(Boolean).join('');
+        const controls=buttons?`<div>${buttons}</div>`:'<span style="font-size:12px;color:var(--muted);">센터장·관리자 처리 대기</span>';
         d.innerHTML=`<div><strong>${escHtml(u.name||u.userId)}</strong><div style="font-size:12px;color:var(--muted);">${escHtml(u.role||'미승인')} → ${escHtml(change.role)}${change.isAdmin?' + 시스템 관리자':''} · ${stateLabel}</div></div>${controls}`;
         d.querySelector('.privilege-change-btn')?.addEventListener('click',()=>approveStaff(u.id,change));
         d.querySelector('.privilege-cancel-btn')?.addEventListener('click',()=>cancelStaffPrivilegeChange(u.id));
@@ -860,8 +871,7 @@ export async function approveStaff(userId, requested=null) {
     await auditLog('staff.approve',{resourceId:userId,summary:{
       target:S.users.find(u=>u.id===userId)?.name||userId, role}});
     const msg={
-      pending:'변경을 요청했습니다. 다른 센터장의 승인이 필요합니다.',
-      approved:'승인했습니다. 다른 시스템 관리자의 실행을 기다립니다.',
+      pending:'변경을 요청했습니다. 센터장 또는 관리자의 승인을 기다립니다.',
       executed:`변경 완료 — ${role}${isAdmin?' + 시스템 관리자':''}`,
     }[state]||'처리 상태를 확인해 주세요.';
     toast(msg, state==='executed'?'success':'info', 5000);
@@ -884,3 +894,4 @@ export function updateSignupBadge(){
   const n=(can('nav.staff')&&Array.isArray(S.users))?S.users.filter(u=>u.approved===false).length:0;
   if(n>0){badge.textContent=n;badge.style.display='inline';}else badge.style.display='none';
 }
+

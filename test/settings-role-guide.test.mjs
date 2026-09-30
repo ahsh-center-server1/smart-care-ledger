@@ -65,7 +65,8 @@ test('기술 전용 관리자는 오류가 아니라 기술 업무만 안내한�
   assert.match(html, /업무 역할 없음/);
   assert.match(html, /시스템 관리 업무만 가능/);
   assert.match(html, /AI 설정·백업·보안 감사/);
-  assert.match(html, /다른 승인자가 없으면 보류/);
+  assert.match(html, /직원 계정 운영과 역할 변경 직접 승인/);
+  assert.match(html, /팀장이 요청한 직원 승인/);
   assert.doesNotMatch(html, /알 수 없는 업무 역할|입주자 1명 배정|최종 결재/);
 });
 
@@ -113,3 +114,4 @@ test('안내 화면은 여전히 편집 제어를 만들지 않는다', () => {
   const html = render({ role: '센터장', isAdmin: true }, { reportApproveCenter: true });
   assert.doesNotMatch(html, /<(?:button|select|input|form)\b/);
 });
+

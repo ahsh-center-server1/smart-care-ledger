@@ -109,8 +109,9 @@ module.exports = function staffFns(ctx) {
     const me = await requireCaller(auth);
     const canApprove = me.can('staff.role.approve');
     const canExecute = me.can('settings.staff');
-    if (!canApprove && !canExecute) {
-      throw new HttpsError('permission-denied', '직원 역할 승인 또는 실행 권한이 없습니다.');
+    const canRequest = me.can('assignments.manage');
+    if (!canApprove && !canExecute && !canRequest) {
+      throw new HttpsError('permission-denied', '직원 역할 승인 또는 요청 권한이 없습니다.');
     }
 
     const d = request.data || {};
@@ -136,43 +137,54 @@ module.exports = function staffFns(ctx) {
       const actor = actorSnap.exists ? actorSnap.data() || {} : {};
       const approverNow = fixedCan(actor, 'staff.role.approve');
       const executorNow = fixedCan(actor, 'settings.staff');
+      const requesterNow = fixedCan(actor, 'assignments.manage');
+      const canDecideNow = approverNow || executorNow;
       const pending = pendingSnap.exists ? pendingSnap.data() || {} : null;
       const sameChange = pending && pending.role === role && pending.isAdmin === isAdmin;
+      const activeRequest = pending && ['pending', 'approved'].includes(pending.state);
 
-      if (pending && pending.state === 'pending' && sameChange && approverNow) {
-        if (pending.requestedBy === me.uid || targetId === me.uid) {
-          throw new HttpsError('failed-precondition', '본인이 요청했거나 본인에게 적용되는 역할 변경은 승인할 수 없습니다.');
-        }
-        tx.update(requestRef, {
-          state: 'approved', approvedBy: me.uid, approvedAt: FieldValue.serverTimestamp(),
-        });
-        tx.update(ref, {
-          privilegeChange: {
-            requestId, role, isAdmin, state: 'approved', requestedBy: pending.requestedBy,
-            approvedBy: me.uid,
-          },
-        });
-        return { state: 'approved', waitingFor: 'executor' };
+      if (activeRequest && !sameChange) {
+        throw new HttpsError('failed-precondition', '다른 역할 변경 요청이 진행 중입니다. 기존 요청을 먼저 취소하세요.');
       }
 
-      if (pending && pending.state === 'approved' && sameChange && executorNow) {
-        if (!pending.approvedBy || pending.approvedBy === me.uid) {
-          throw new HttpsError('failed-precondition', '승인자와 실행자는 서로 달라야 합니다. 다른 실행자를 기다립니다.');
+      // 센터장 또는 시스템 관리자는 한 번의 결정으로 역할을 적용한다.
+      // 팀장 요청이 있으면 그 요청을 승인하면서 적용하고, 요청 없이 눌렀다면
+      // 직접 승인 이력을 남긴다. 자기 계정 변경만 계속 분리한다.
+      if (canDecideNow) {
+        if (targetId === me.uid) {
+          throw new HttpsError('failed-precondition', '본인에게 적용되는 역할 변경은 직접 승인할 수 없습니다.');
+        }
+        const currentUser = snap.data() || {};
+        if (currentUser.isAdmin === true && isAdmin !== true) {
+          await assertNotLastAdmin(tx, targetId, currentUser, '관리자 권한을 해제할');
         }
         const patch = {
           approved: true, role, isAdmin, active: true,
           privilegeChange: FieldValue.delete(),
         };
+        const now = FieldValue.serverTimestamp();
+        const history = {
+          state: 'executed', approvedBy: me.uid, approvedAt: now,
+          executedBy: me.uid, executedAt: now,
+        };
         tx.update(ref, patch);
-        writeAuthz(tx, targetId, { ...(snap.data() || {}), ...patch }, override);
-        tx.update(requestRef, {
-          state: 'executed', executedBy: me.uid, executedAt: FieldValue.serverTimestamp(),
-        });
+        writeAuthz(tx, targetId, { ...currentUser, ...patch }, override);
+        if (activeRequest) {
+          tx.update(requestRef, history);
+        } else {
+          tx.set(requestRef, {
+            requestId, targetId, role, isAdmin, mode: 'direct',
+            requestedBy: me.uid, requestedAt: now, ...history,
+          });
+        }
         return { state: 'executed', waitingFor: null };
       }
 
-      if (!executorNow) {
-        throw new HttpsError('failed-precondition', '시스템 관리자가 먼저 역할 변경을 요청해야 합니다.');
+      if (!requesterNow) {
+        throw new HttpsError('permission-denied', '팀장 이상의 역할 변경 요청 권한이 필요합니다.');
+      }
+      if (activeRequest && sameChange) {
+        return { state: 'pending', waitingFor: 'approver' };
       }
       tx.set(requestRef, {
         requestId, targetId, role, isAdmin, state: 'pending', requestedBy: me.uid,
@@ -190,7 +202,7 @@ module.exports = function staffFns(ctx) {
   const cancelStaffPrivilegeChange = callable('cancelStaffPrivilegeChange', async (request) => {
     const auth = request.auth;
     const me = await requireCaller(auth);
-    if (!me.can('staff.role.approve') && !me.can('settings.staff')) {
+    if (!me.can('staff.role.approve') && !me.can('settings.staff') && !me.can('assignments.manage')) {
       throw new HttpsError('permission-denied', '역할 변경 취소 권한이 없습니다.');
     }
     const targetId = String((request.data || {}).userId || '').trim();
@@ -207,7 +219,8 @@ module.exports = function staffFns(ctx) {
       const actorSnap = await tx.get(db.collection(AUTHZ).doc(me.uid));
       const actor = actorSnap.exists ? actorSnap.data() || {} : {};
       const pending = requestSnap.exists ? requestSnap.data() || {} : {};
-      const stillAllowed = fixedCan(actor, 'staff.role.approve') || fixedCan(actor, 'settings.staff');
+      const stillAllowed = fixedCan(actor, 'staff.role.approve')
+        || fixedCan(actor, 'settings.staff') || fixedCan(actor, 'assignments.manage');
       const participated = pending.requestedBy === me.uid || pending.approvedBy === me.uid;
       if (!stillAllowed || !participated || !['pending', 'approved'].includes(pending.state)) {
         throw new HttpsError('permission-denied', '본인이 요청하거나 승인한 대기 작업만 취소할 수 있습니다.');
@@ -412,3 +425,4 @@ module.exports = function staffFns(ctx) {
 
   return { approveStaff, cancelStaffPrivilegeChange, upsertStaff, setStaffActive, deleteStaff };
 };
+

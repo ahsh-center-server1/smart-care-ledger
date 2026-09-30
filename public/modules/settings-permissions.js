@@ -128,9 +128,9 @@ export function renderPermissionPanel() {
   const adminCard = identity.isAdmin === true && (guide || technicalOnly)
     ? card('시스템 관리 업무', `
         <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.7;">
-          <li>직원 계정 운영과 승인된 역할 변경 실행</li>
+          <li>직원 계정 운영과 역할 변경 직접 승인</li>
           <li>AI 설정·백업·보안 감사 확인</li>
-          <li>역할·관리자 변경은 승인자가 따로 필요하며, 다른 승인자가 없으면 보류됩니다</li>
+          <li>팀장이 요청한 직원 승인은 센터장 또는 시스템 관리자가 한 번 승인하면 적용됩니다</li>
         </ul>
         <p style="margin:10px 0 0 0;font-size:13px;color:#b45309;">
           관리자 자격만으로는 <strong>금전 자료 수정이나 결재 권한이 생기지 않습니다.</strong>
@@ -164,3 +164,4 @@ export function renderPermissionPanel() {
         이 화면에서는 권한을 바꿀 수 없습니다. 역할·담당 변경은 직원·담당 배정 절차로 요청합니다.</p>
     </section>`;
 }
+
