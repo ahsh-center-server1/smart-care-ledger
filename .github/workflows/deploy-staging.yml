@@ -43,6 +43,7 @@ on:
     branches:
       - 'claude/**'
       - 'codex/**'
+      - 'fix/staff-single-approval-20261001'
     paths:
       - 'functions/**'
       - 'firestore.rules'

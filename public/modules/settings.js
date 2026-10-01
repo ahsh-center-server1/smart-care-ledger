@@ -96,15 +96,17 @@ export function renderManagement(){
         const hasActiveRequest=u.privilegeChange&&['pending','approved'].includes(u.privilegeChange.state);
         const actionLabel=canDecideStaffRole?'직원 승인':'승인 요청';
         const requestControls=hasActiveRequest
-          ?'<span style="font-size:12px;color:var(--muted);">센터장·관리자 처리 대기</span>'
+          ?(canDecideStaffRole
+            ?'<button class="btn approve-staff-btn" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">요청 승인</button>'
+            :'<span style="font-size:12px;color:var(--muted);">센터장·관리자 처리 대기</span>')
           :(canRequestStaffRole?`<div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="승인할 역할을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn approve-staff-btn" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">${actionLabel}</button></div>`:'<span style="font-size:12px;color:var(--muted);">센터장·관리자 승인 대기</span>');
         d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${escAttr(u.userId||'')} ${u.team?'· '+escAttr(u.team):''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div>${requestControls}`;
-        d.querySelector('.approve-staff-btn')?.addEventListener('click',()=>approveStaff(u.id));
+        d.querySelector('.approve-staff-btn')?.addEventListener('click',()=>approveStaff(u.id,hasActiveRequest?u.privilegeChange:null));
         sl.appendChild(d);
       });
       const divider=document.createElement('div'); divider.style.cssText='height:1px;background:var(--border);margin:8px 0;'; sl.appendChild(divider);
     }
-    const privilegeChanges=S.users.filter(u=>u.privilegeChange&&['pending','approved'].includes(u.privilegeChange.state));
+    const privilegeChanges=S.users.filter(u=>u.approved!==false&&u.privilegeChange&&['pending','approved'].includes(u.privilegeChange.state));
     if(privilegeChanges.length){
       const header=document.createElement('div');
       header.className='card';

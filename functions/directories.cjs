@@ -38,7 +38,8 @@
  */
 // 2 — 분류 명부에 color 를 실었다. 1로 저장된 명부에는 그 필드가 없어
 //     화면이 색을 못 찾는다. 올려서 다시 만들게 한다.
-const DIRECTORY_SCHEMA_VERSION = 2;
+// 3 — 직원 승인 요청을 명부에 실어 다른 승인자도 대기 건을 볼 수 있게 한다.
+const DIRECTORY_SCHEMA_VERSION = 3;
 
 /**
  * 명부에 실을 직원 필드. **이 목록에 없는 값은 나가지 않는다.**
@@ -46,7 +47,7 @@ const DIRECTORY_SCHEMA_VERSION = 2;
  * 비밀번호·해시·시크릿을 여기에 절대 추가하지 말 것.
  * test/directories.test.mjs가 그런 이름이 끼어들면 실패시킨다.
  */
-const STAFF_FIELDS = ['userId', 'name', 'role', 'team', 'active', 'approved', 'isAdmin'];
+const STAFF_FIELDS = ['userId', 'name', 'role', 'team', 'active', 'approved', 'isAdmin', 'privilegeChange'];
 
 /** 명부에 실을 분류 필드. 자동분류 규칙도 같은 컬렉션에 있다. */
 // color 가 여기 없으면 사용자가 고른 색이 투영 단계에서 잘려 나간다 —

@@ -19,6 +19,14 @@ test('스테이징 배포 워크플로가 있다', () => {
   assert.ok(existsSync(path(WORKFLOW)), `${WORKFLOW}가 없습니다`);
 });
 
+test('직원 승인 수정 브랜치에서 서버 변경을 스테이징에 배포한다', () => {
+  const src = codeOnly(read(WORKFLOW));
+  assert.match(src, /- 'fix\/staff-single-approval-20261001'/,
+    '프리뷰 브랜치가 배포 대상이 아니면 화면과 서버 버전이 달라집니다');
+  assert.match(src, /- 'functions\/\*\*'/,
+    '직원 승인 함수 변경이 배포를 시작하지 않습니다');
+});
+
 test('이 워크플로는 프로덕션을 절대 배포하지 않는다', () => {
   const src = read(WORKFLOW);
 

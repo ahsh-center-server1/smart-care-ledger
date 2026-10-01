@@ -101,6 +101,19 @@ test('서버가 만든 명부를 브라우저가 그대로 읽는다', () => {
     { id: 'b', userId: 'b', name: '이담당', role: '담당자', team: '1팀' });
 });
 
+test('팀장 요청이 다른 승인자의 직원 명부에도 남는다', () => {
+  const privilegeChange = {
+    requestId: 'request-1', role: '팀장', isAdmin: false,
+    state: 'pending', requestedBy: 'leader',
+  };
+  const built = server.buildStaffDirectory([{
+    id: 'new1', data: { userId: 'new1', role: '입력자', approved: false, privilegeChange },
+  }]);
+  assert.deepEqual(directoryToArray(built)[0].privilegeChange, privilegeChange);
+  assert.equal(isDirectoryUsable({ entries: built.entries, schemaVersion: 2 }), false,
+    '이전 명부는 승인 요청이 빠져 있으므로 직접 조회해야 합니다');
+});
+
 test('낡음 판정도 양쪽에서 같다', () => {
   const cases = [
     null, undefined, {},
