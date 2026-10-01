@@ -37,7 +37,6 @@ import { classifyMerchant } from '../domain/receipt-match.js';
 import { compressImage, heicToJpeg, compressForReading, fileToBase64 } from '../services/image.js';
 import { hasReceipt, receiptAccess, receiptAccessUrl, receiptViewKind } from '../services/receipt-access.js';
 import { fnErrorMessage } from '../services/fn-errors.js';
-
 // ─────────────────────────────────────────────
 // 모달
 // ─────────────────────────────────────────────
