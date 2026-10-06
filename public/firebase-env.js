@@ -18,31 +18,31 @@
 
 /** 프로덕션 설정이 허용되는 호스트명. 이 목록에 없으면 절대 실데이터에 붙지 않는다. */
 export const PROD_HOSTNAMES = [
-  'smart-care-ledger.web.app',
-  'smart-care-ledger.firebaseapp.com',
+  'smart-care-ledger-a3355.web.app',
+  'smart-care-ledger-a3355.firebaseapp.com',
 ];
 
 export const FIREBASE_ENVS = {
   prod: {
     label: '프로덕션',
     config: {
-      apiKey:            'AIzaSyBYm__B_uz6hg_epUlpvI8jWdjhkRQgMuo',
-      authDomain:        'smart-care-ledger.firebaseapp.com',
-      projectId:         'smart-care-ledger',
-      storageBucket:     'smart-care-ledger.firebasestorage.app',
-      messagingSenderId: '731965168909',
-      appId:             '1:731965168909:web:1fa16a4b4d050a32e7e444',
+      apiKey:            'AIzaSyC_CONNa29ckAMD25WH730U4NTTCrZj5kY',
+      authDomain:        'smart-care-ledger-a3355.firebaseapp.com',
+      projectId:         'smart-care-ledger-a3355',
+      storageBucket:     'smart-care-ledger-a3355.firebasestorage.app',
+      messagingSenderId: '539523033501',
+      appId:             '1:539523033501:web:086336c17f86633c552774',
     },
   },
   staging: {
     label: '스테이징',
     config: {
-      apiKey:            'AIzaSyDSYUZRvlu_CPMobQ8GSKcbkKbOGzxKrpU',
-      authDomain:        'smart-care-ledger-staging.firebaseapp.com',
-      projectId:         'smart-care-ledger-staging',
-      storageBucket:     'smart-care-ledger-staging.firebasestorage.app',
-      messagingSenderId: '862087210723',
-      appId:             '1:862087210723:web:e75a5a6874cff33aafc7d6',
+      apiKey:            'AIzaSyC_CONNa29ckAMD25WH730U4NTTCrZj5kY',
+      authDomain:        'smart-care-ledger-a3355.firebaseapp.com',
+      projectId:         'smart-care-ledger-a3355',
+      storageBucket:     'smart-care-ledger-a3355.firebasestorage.app',
+      messagingSenderId: '539523033501',
+      appId:             '1:539523033501:web:086336c17f86633c552774',
     },
   },
   /**
@@ -52,12 +52,12 @@ export const FIREBASE_ENVS = {
   emulator: {
     label: '에뮬레이터',
     config: {
-      apiKey:            'AIzaSyDSYUZRvlu_CPMobQ8GSKcbkKbOGzxKrpU',
-      authDomain:        'smart-care-ledger-staging.firebaseapp.com',
-      projectId:         'smart-care-ledger-staging',
-      storageBucket:     'smart-care-ledger-staging.firebasestorage.app',
-      messagingSenderId: '862087210723',
-      appId:             '1:862087210723:web:e75a5a6874cff33aafc7d6',
+      apiKey:            'AIzaSyC_CONNa29ckAMD25WH730U4NTTCrZj5kY',
+      authDomain:        'smart-care-ledger-a3355.firebaseapp.com',
+      projectId:         'smart-care-ledger-a3355',
+      storageBucket:     'smart-care-ledger-a3355.firebasestorage.app',
+      messagingSenderId: '539523033501',
+      appId:             '1:539523033501:web:086336c17f86633c552774',
     },
     // 포트는 firebase.json의 emulators 블록과 같아야 한다.
     // (test/firebase-env.test.mjs가 두 파일이 갈리면 실패시킨다)
