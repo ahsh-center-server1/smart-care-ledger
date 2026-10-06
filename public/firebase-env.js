@@ -37,12 +37,12 @@ export const FIREBASE_ENVS = {
   staging: {
     label: '스테이징',
     config: {
-      apiKey:            'AIzaSyC_CONNa29ckAMD25WH730U4NTTCrZj5kY',
-      authDomain:        'smart-care-ledger-a3355.firebaseapp.com',
-      projectId:         'smart-care-ledger-a3355',
-      storageBucket:     'smart-care-ledger-a3355.firebasestorage.app',
-      messagingSenderId: '539523033501',
-      appId:             '1:539523033501:web:086336c17f86633c552774',
+      apiKey:            '',
+      authDomain:        '',
+      projectId:         '',
+      storageBucket:     '',
+      messagingSenderId: '',
+      appId:             '',
     },
   },
   /**
@@ -52,12 +52,12 @@ export const FIREBASE_ENVS = {
   emulator: {
     label: '에뮬레이터',
     config: {
-      apiKey:            'AIzaSyC_CONNa29ckAMD25WH730U4NTTCrZj5kY',
-      authDomain:        'smart-care-ledger-a3355.firebaseapp.com',
-      projectId:         'smart-care-ledger-a3355',
-      storageBucket:     'smart-care-ledger-a3355.firebasestorage.app',
-      messagingSenderId: '539523033501',
-      appId:             '1:539523033501:web:086336c17f86633c552774',
+      apiKey:            '',
+      authDomain:        '',
+      projectId:         '',
+      storageBucket:     '',
+      messagingSenderId: '',
+      appId:             '',
     },
     // 포트는 firebase.json의 emulators 블록과 같아야 한다.
     // (test/firebase-env.test.mjs가 두 파일이 갈리면 실패시킨다)
