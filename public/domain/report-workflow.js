@@ -1,0 +1,250 @@
+/**
+ * report-workflow.js — Smart Care Ledger
+ * 보고서 결재 상태 머신 (순수 로직)
+ *
+ * 왜 분리하는가
+ *   이전에는 "어떤 버튼을 그릴까"를 정하는 조건문이 곧 상태 머신이었다.
+ *   실제 실행 함수(doApproval)는 현재 상태를 **보지 않고** 역할만 보고 전이했다.
+ *
+ *     const rules = { 담당자:{next:'submitted'}, 센터장:{next:'confirmed'}, ... };
+ *     const update = { status: rules[role].next, ... };   // ← report.status 미검사
+ *
+ *   그래서 탭 두 개, 뒤로가기, 동시 편집, 콘솔에서 doApproval('approve') 직접 호출로
+ *   draft → confirmed 한 번에 점프가 됐다. 제출자·팀장 결재란이 빈 채로
+ *   "최종 결재완료"가 되고 그 달의 거래가 잠긴다.
+ *
+ *   여기서는 전이표 하나를 두고 **버튼 표시 여부와 무관하게** 실행 시점에
+ *   현재 상태를 확인한다. 표에 없는 (상태, 액션) 조합은 거부한다.
+ *
+ * 도장(결재 기록) 정리
+ *   전이할 때마다 "지금 상태보다 뒤 단계"의 도장을 반드시 지운다.
+ *   예전에는 결재를 취소해도 teamApprovedByName이 남아 **취소된 서명이 인쇄물에
+ *   계속 찍혔다.** 공문서 산출물이라 그냥 넘길 수 없다.
+ *
+ * 이 파일은 DOM·Firestore를 모르므로 Node에서 그대로 테스트된다.
+ *
+ * 왜 domain/ 으로 내려왔나 — 그리고 왜 can 을 인자로 받나
+ *   같은 전이표를 **서버도 집행해야 한다.** 예전에는 브라우저만 이 표를 보고,
+ *   서버(규칙)는 reports 쓰기를 등급으로만 막았다. 그래서 콘솔에서
+ *   updateDoc(reports/…, {status:'confirmed'}) 한 줄이면 결재를 건너뛸 수 있었다.
+ *
+ *   functions/ 는 별도 배포 단위라 public/ 을 import 할 수 없다. 그래서
+ *   tools/gen-report-workflow.mjs 가 이 파일을 기계적으로 CJS 로 옮긴다
+ *   (export 만 떼어 낸다). 손으로 옮겨 적으면 전이표가 두 벌이 된다 —
+ *   지금 고치고 있는 바로 그 문제다.
+ *
+ *   그러려면 import 가 없어야 한다. 권한 판정은 ctx.can 으로 주입받는다:
+ *   화면은 permissions.js 의 can 을, 서버는 caps 로 만든 can 을 넘긴다.
+ */
+
+'use strict';
+
+/** 결재 진행도. rejected는 이 사다리 밖(=진행도 0으로 취급). */
+export const STAGE_LEVEL = { draft: 0, submitted: 1, team_approved: 2, confirmed: 3 };
+
+/** 단계별 도장 필드 */
+export const STAGE_STAMPS = {
+  submitted:     ['submittedAt', 'submittedBy', 'submittedByName'],
+  team_approved: ['teamApprovedAt', 'teamApprovedBy', 'teamApprovedByName'],
+  confirmed:     ['centerApprovedAt', 'centerApprovedBy', 'centerApprovedByName'],
+  rejected:      ['rejectedAt', 'rejectedBy', 'rejectedByName'],
+};
+
+/**
+ * 허용 전이표. 여기 없는 조합은 거부한다.
+ *
+ *   draft ──submit──▶ submitted ──approveTeam──▶ team_approved ──approveCenter──▶ confirmed
+ *     ▲                   │  ▲                       │                               │
+ *     └──recall(작성자)───┘  └──────revert(팀장)─────┘                               │
+ *     ▲                   └──reject──▶ rejected ◀────┘                               │
+ *     └──submit───────────────────────────┘          ◀───────────revert(센터장)──────┘
+ */
+export const TRANSITIONS = {
+  draft:         { save: 'draft', submit: 'submitted' },
+  // approveTeamProxy 는 **의도적으로 없다.** 팀장 자리가 비었다는 이유만으로
+  // 센터장이 팀장 단계를 건너뛸 수 있으면 2단 결재가 1단이 된다. 공석은
+  // 정식 대행 지정으로 푸는 것이고, 그 절차는 아직 없다.
+  //   근거 테스트: test/report-transition.test.mjs
+  //               「배정 팀장이 퇴사해도 암묵적 대행을 허용하지 않는다」
+  // submitted 에서 draft 로 내려오는 길은 **회수 하나**다.
+  //   예전에는 recall 과 revert 가 둘 다 draft 로 갔다. 그래서 팀장 화면에
+  //   「회수」·「수정(초안)」·「반려」 세 버튼이 나란히 떴고, 앞의 둘은 하는 일이
+  //   같았다. 결재자가 세 개 중 무엇을 눌러야 하는지 알 수 없는 화면이었다.
+  //
+  //   역할마다 쓰는 것이 다르다:
+  //     담당자 — 내가 올린 것을 되가져온다(recall)
+  //     팀장   — 결재하기 전에 오류를 보면 담당자에게 돌려보낸다(reject)
+  submitted:     { approveTeam: 'team_approved', reject: 'rejected', recall: 'draft' },
+  // team_approved 에서 recall 도 **의도적으로 없다.** 회수는 "제출한 것을
+  // 되가져오는 것"이고, 팀장이 이미 결재한 뒤에는 되가져올 제출이 아니라
+  // 취소할 결재가 있다. 팀장은 revert 로 자기 결재를 무르고(→submitted),
+  // 그다음 담당자가 회수한다 — 두 걸음이지만 각 걸음의 주인이 분명하다.
+  team_approved: { approveCenter: 'confirmed', reject: 'rejected', revert: 'submitted' },
+  confirmed:     { revert: 'team_approved' },
+  // release 도 **의도적으로 없다.** 반려된 보고서는 작성·제출 절차로만 다시
+  // 올라간다 — 결재 단계를 건너뛰는 탈출구를 두지 않는다. 담당자가 부재면
+  // 담당 배정을 바꿔 다른 담당자가 제출한다.
+  //   근거 테스트: test/report-workflow.test.mjs
+  //               「rejected는 작성·제출 절차로만 다시 진행한다」
+  rejected:      { save: 'draft', submit: 'submitted' },
+};
+
+/** 저장되지 않았거나 상태가 비어 있는 보고서는 draft로 본다. */
+export function normalizeStatus(status) {
+  const s = String(status || '').trim();
+  return s in TRANSITIONS ? s : 'draft';
+}
+
+/** 이 액션이 찍는 도장 단계들 */
+const ACTION_STAMPS = {
+  submit:           ['submitted'],
+  approveTeam:      ['team_approved'],
+  approveTeamProxy: ['team_approved'],
+  approveCenter:    ['confirmed'],
+  reject:           ['rejected'],
+};
+
+/**
+ * 액션별 권한 판정. ctx는 신원 정보(권한과 분리).
+ * @returns {string|null} 거부 사유. null이면 통과.
+ */
+function permissionError(action, from, ctx) {
+  const { isAuthor = false, isAssignedLeader = false, leaderVacant = false } = ctx;
+  // 권한 판정은 주입받는다 — 화면과 서버가 서로 다른 근거를 쓰기 때문이다.
+  // 넘기지 않으면 아무것도 허용하지 않는다(fail-closed).
+  const can = typeof ctx.can === 'function' ? ctx.can : () => false;
+
+  switch (action) {
+    case 'save':
+      return can('report.draft') ? null : '임시저장 권한이 없습니다.';
+
+    case 'submit':
+      return can('report.submit') ? null : '제출 권한이 없습니다.';
+
+    case 'approveTeam':
+      if (!can('report.approve.team')) return '팀장 결재 권한이 없습니다.';
+      if (!isAssignedLeader) return '이 입주자의 담당 팀장이 아닙니다.';
+      if (isAuthor) return '본인이 작성한 보고서는 직접 결재할 수 없습니다.';
+      return null;
+
+    // 팀장 공석 대행 — 배정 팀장이 없거나 퇴사/결재불가일 때만.
+    // 이 조건이 없으면 센터장이 언제든 팀장 단계를 건너뛸 수 있다(모바일 앱이 그랬다).
+    case 'approveTeamProxy':
+      if (!can('report.approve.center')) return '대행 결재 권한이 없습니다.';
+      if (!leaderVacant) return '배정된 팀장이 있어 대행할 수 없습니다.';
+      return null;
+
+    case 'approveCenter':
+      if (!can('report.approve.center')) return '최종 결재 권한이 없습니다.';
+      return isAuthor ? '본인이 작성한 보고서는 직접 결재할 수 없습니다.' : null;
+
+    // 반려는 "지금 결재해야 할 사람"만 할 수 있다.
+    // 아무 팀장이나 반려할 수 있게 두면, 배정 팀장이 아닌 사람에게는
+    // 반려 버튼은 보이는데 사유를 적을 팀장 의견란이 열리지 않아 막힌다.
+    case 'reject':
+      if (!can('report.reject')) return '반려 권한이 없습니다.';
+      if (from === 'team_approved') {
+        return can('report.approve.center') ? null : '최종 결재 단계의 반려 권한이 없습니다.';
+      }
+      if (isAssignedLeader || can('report.approve.center')) return null;
+      return '이 입주자의 담당 팀장이 아닙니다.';
+
+    // 회수는 **본인이 제출한 것을 되가져오는 것**이다. 한 갈래뿐이다.
+    //
+    // 예전에는 팀장 이상도 회수할 수 있었는데, 팀장에게 그것은 반려와 결과가
+    // 같으면서 사유가 남지 않는 길이었다 — 담당자는 자기 보고서가 왜 내려왔는지
+    // 알 방법이 없다. 결재자가 잘못 올라온 것을 내리는 동작은 reject 다.
+    //
+    // 담당자가 부재라 아무도 회수할 수 없다면 담당 배정을 바꾼다(반려 해제와
+    // 같은 판단 — 결재 단계를 건너뛰는 탈출구를 두지 않는다).
+    case 'recall':
+      if (!isAuthor) return '본인이 제출한 보고서만 회수할 수 있습니다.';
+      return can('report.recall') ? null : '회수 권한이 없습니다.';
+
+    // 결재 취소는 "직전 단계를 무르는 것"이므로 그 단계의 결재 권한이 필요하다.
+    // 팀장이 「회수」라고 부르는 것이 이것이다 — 센터장에게 올려 놓고 결재 전에
+    // 실수를 발견했을 때 자기 도장을 거둔다(team_approved → submitted).
+    case 'revert':
+      if (from === 'confirmed') {
+        return can('report.revert') ? null : '최종 결재를 취소할 권한이 없습니다.';
+      }
+      return can('report.approve.team') ? null : '결재를 취소할 권한이 없습니다.';
+
+    case 'release':
+      return can('report.release') ? null : '반려 해제 권한이 없습니다.';
+
+    default:
+      return '알 수 없는 결재 동작입니다.';
+  }
+}
+
+/**
+ * 전이를 계산한다. **실행 직전에 반드시 호출한다.**
+ *
+ * @param {string} action  save|submit|approveTeam|approveTeamProxy|
+ *                         approveCenter|reject|recall|revert|release
+ * @param {string} current 현재 report.status (빈 값 허용)
+ * @param {Object} ctx     { userId, userName, now, isAuthor, isAssignedLeader, leaderVacant }
+ * @returns {{ok:true, from:string, next:string, set:Object, clear:string[]}}
+ *        | {ok:false, reason:string}
+ */
+export function planTransition(action, current, ctx = {}) {
+  const from = normalizeStatus(current);
+  const allowed = TRANSITIONS[from] || {};
+
+  if (!(action in allowed)) {
+    return { ok: false, reason: `현재 상태(${from})에서는 할 수 없는 동작입니다.`, from };
+  }
+  const denied = permissionError(action, from, ctx);
+  if (denied) return { ok: false, reason: denied, from };
+
+  const next = allowed[action];
+  const now = ctx.now || new Date().toISOString();
+  const userId = String(ctx.userId || '');
+  const userName = String(ctx.userName || '');
+
+  // 이 액션이 찍는 도장
+  const set = {};
+  for (const stage of (ACTION_STAMPS[action] || [])) {
+    const [atKey, byKey, nameKey] = STAGE_STAMPS[stage];
+    set[atKey] = now;
+    set[byKey] = userId;
+    set[nameKey] = (action === 'approveTeamProxy' && stage === 'team_approved')
+      ? `${userName || userId} (팀장 대행)`   // 대행 사실을 결재란에 남긴다
+      : userName;
+  }
+
+  // 도착 상태보다 뒤 단계의 도장은 전부 지운다.
+  // rejected는 진행도 0 취급이라 반려 시 제출·결재 기록이 함께 정리된다
+  // (반려된 보고서에 팀장 결재 서명이 남아 있으면 안 된다).
+  const keepLevel = STAGE_LEVEL[next] ?? 0;
+  const clear = [];
+  for (const [stage, fields] of Object.entries(STAGE_STAMPS)) {
+    const level = STAGE_LEVEL[stage];
+    if (level !== undefined && level <= keepLevel) continue;
+    for (const f of fields) if (!(f in set)) clear.push(f);
+  }
+
+  return { ok: true, from, next, set, clear };
+}
+
+/** 결재란에 이름을 표시해도 되는가 — 도장이 정리되었는지 검증용(테스트에서 사용) */
+export function stampsFor(status) {
+  const level = STAGE_LEVEL[normalizeStatus(status)] ?? 0;
+  const out = [];
+  for (const [stage, fields] of Object.entries(STAGE_STAMPS)) {
+    const l = STAGE_LEVEL[stage];
+    if (l !== undefined && l > 0 && l <= level) out.push(...fields);
+  }
+  return out;
+}
+
+/**
+ * 현재 사용자가 이 보고서에서 쓸 수 있는 액션 목록.
+ * 버튼 렌더링이 전이표와 갈라지지 않도록 화면도 이 함수를 쓴다.
+ */
+export function availableActions(current, ctx = {}) {
+  const from = normalizeStatus(current);
+  return Object.keys(TRANSITIONS[from] || {})
+    .filter(a => permissionError(a, from, ctx) === null);
+}

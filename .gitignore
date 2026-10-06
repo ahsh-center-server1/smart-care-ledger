@@ -76,3 +76,14 @@ backups/
 
 # Git worktrees
 .worktrees/
+
+# 마이그레이션 도구가 남기는 백업 (계좌 잔액 스냅샷 — 민감정보)
+accounts-backup-*.json
+# 서비스 계정 키는 절대 커밋하지 않는다
+serviceAccountKey*.json
+
+# 에뮬레이터 데이터 내보내기 (--export-on-exit)
+.emu/
+
+# 화면 검증 산출물 (스크린샷·요약)
+qa-artifacts/

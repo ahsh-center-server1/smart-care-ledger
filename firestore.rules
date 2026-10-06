@@ -1,16 +1,609 @@
 rules_version = '2';
 
+// ─────────────────────────────────────────────────────────────
+// Smart Care Ledger — Firestore 보안 규칙
+//
+// 인증: Cloud Functions(login)가 비밀번호를 검증하고 커스텀 토큰을 발급한다.
+//       토큰 클레임 { role, isAdmin }, uid == users 문서 ID == 로그인 아이디.
+//
+// ⚠️ 배포 순서 (BUGFIX_PLAN.md 「설계 6」)
+//    이 파일은 **배포 3**에서 적용한다. 마이그레이션(배포 1)과 앱 전환(배포 2)이
+//    끝나기 전에 적용하면 전원 로그인 불가가 된다.
+//
+// 참고: Firestore 규칙에서 allow는 가산적이다. 어떤 규칙도 허용하지 않으면
+//       기본 거부되므로 별도의 catch-all deny 블록은 두지 않는다.
+// ─────────────────────────────────────────────────────────────
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ─────────────────────────────────────────────
-    // 이 앱은 Firebase Auth를 사용하지 않습니다.
-    // (Firestore users 컬렉션에서 ID/PW 직접 비교 방식)
-    // request.auth가 항상 null이므로 시간 기반 규칙 사용.
-    // 세밀한 권한 제어는 app.js의 can() 함수로 처리됩니다.
-    // ─────────────────────────────────────────────
-    match /{document=**} {
-      allow read, write: if request.time < timestamp.date(2030, 12, 31);
+    function signedIn() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    /**
+     * 권한 스냅샷. **모든 판정의 유일한 근거.**
+     *
+     * 왜 토큰 클레임이 아닌가
+     *   클레임은 발급 시점에 굳는다. 역할을 강등하거나 퇴사 처리해도 이미
+     *   발급된 토큰은 refresh 로 계속 갱신되므로, 만료를 기다리는 것은
+     *   차단 정책이 아니다. 문서는 매 평가마다 최신값을 읽는다.
+     *
+     * 왜 한 문서에 다 담는가
+     *   get() 은 요청당 문서 읽기로 과금된다. 담당 목록·재직 여부·권한
+     *   불리언을 한 문서에 모아 조회를 1회로 유지한다. 같은 평가 안에서
+     *   여러 번 불러도 규칙 엔진이 캐시하므로 조회는 늘지 않는다.
+     *
+     * 문서가 없으면 평가가 실패해 거부된다(fail-closed). caps 백필 전에
+     * 이 규칙을 배포하면 전원이 막힌다 — 순서는 배포 → 백필 → 규칙이다.
+     */
+    function me() {
+      return get(/databases/$(database)/documents/authz/$(request.auth.uid)).data;
+    }
+
+    /** 재직 중인가. approved·active 를 서버가 하나로 계산해 둔 값이다. */
+    function active() {
+      return signedIn() && me().get('enabled', false) == true;
+    }
+
+    function validRole(role) {
+      return role in ['입력자', '담당자', '팀장', '센터장'];
+    }
+
+    function validPrincipal() {
+      return active() && (validRole(me().get('role', ''))
+        || (me().get('role', '') == '' && me().get('isAdmin', false) == true));
+    }
+
+    /** 고정 역할 정책. 저장된 과거 caps와 config/permissions는 권한 근거가 아니다. */
+    function cap(name) {
+      let role = me().get('role', '');
+      return validPrincipal() && (
+        (role == '입력자' && name in ['trxCreate', 'trxEdit', 'receiptUpload', 'receiptAttachOwn'])
+        || (role == '담당자' && name in [
+          'navReport', 'navSettings', 'trxViewAll', 'trxCreate', 'trxEdit',
+          'trxCategoryEdit', 'trxReorder', 'trxTransfer', 'trxCsv', 'excelUpload',
+          'bankbookUpload', 'receiptUpload', 'receiptAttachOwn', 'receiptAttachAny',
+          'receiptReplace', 'receiptPrint', 'reportOwn', 'reportDraft', 'reportSubmit',
+          'reportRecall', 'settingsCategory', 'settingsFixed', 'settingsBudget',
+          'trxDelete', 'trxDeleteBulk', 'reportDelete',
+          // 담당 입주자의 계좌. 범위는 아래 accounts 규칙의 seesClient 가 잡는다.
+          'settingsAccount'
+        ])
+        // trxEdit 은 **결재 전까지만** 쓸 수 있다. 권한이 아니라 단계가 막는다
+        // (editableStage) — 팀장이 자기 결재를 마치면 그 달은 닫힌다.
+        || (role == '팀장' && name in [
+          'navReport', 'navSettings', 'navStaff', 'trxViewAll', 'trxCsv', 'trxEdit',
+          'receiptPrint', 'reportOwn', 'reportApproveTeam', 'reportReject',
+          'assignmentsManage',
+          'settingsClient', 'settingsAccount', 'settingsCategoryCommon'
+        ])
+        || (role == '센터장' && name in [
+          'navReport', 'navSettings', 'navStaff', 'clientViewAll', 'trxViewAll',
+          'trxCsv', 'trxEdit', 'receiptPrint', 'reportOwn', 'reportViewAll',
+          'reportApproveCenter', 'reportReject', 'reportRevert', 'settingsArchive',
+          'auditView', 'assignmentsManage', 'staffRoleApprove',
+          'settingsClient', 'settingsAccount', 'settingsCategoryCommon'
+        ])
+        || (me().get('isAdmin', false) == true && name in [
+          'navSettings', 'navStaff', 'settingsStaff',
+          'auditView', 'systemAudit', 'systemAi', 'systemBackup'
+        ])
+      );
+    }
+
+    /** 담당으로 배정된 입주자인가. */
+    function mine(clientId) {
+      return me().get('role', '') == '팀장'
+        ? clientId in me().get('leaderClientIds', [])
+        : clientId in me().get('accessibleClientIds', []);
+    }
+
+    /**
+     * 이 입주자의 자료에 접근할 수 있는가.
+     *
+     * 담당이거나(배정), 담당과 무관하게 전체를 보는 권한이 있거나(팀장 이상).
+     * clientViewAll 은 문서와 무관한 상수라, 쿼리 평가에서 먼저 참이 되면
+     * clientId 제약 없이도 통과한다 — 그것이 의도다.
+     */
+    function seesClient(clientId) {
+      return cap('clientViewAll') || (active() && mine(clientId));
+    }
+
+    /**
+     * 마감(최종 결재 완료)된 월인가.
+     *
+     * config/lockedMonths 에 { months: { "clientId_YYYY-MM": true } } 로 들어 있다
+     * (functions/locked-months.cjs). 문서가 없으면 잠긴 달이 없는 것으로 본다 —
+     * 백필 전에 전 거래가 잠기면 앱을 쓸 수 없다.
+     */
+    function lockedMonths() {
+      return exists(/databases/$(database)/documents/config/lockedMonths)
+        ? get(/databases/$(database)/documents/config/lockedMonths).data.get('months', {})
+        : {};
+    }
+
+    /** 거래 하나가 잠긴 달에 속하는가. date 는 'YYYY-MM-DD'. */
+    function isLocked(data) {
+      return lockedMonths().get(
+        data.get('clientId', '') + '_' + data.get('date', '')[0:7], false) == true;
+    }
+
+    /**
+     * 제출된 달인가 — **삭제만** 막는다.
+     *
+     * 마감(isLocked)과 다른 질문이다. 마감은 최종 결재가 끝나 수정·삭제를 모두
+     * 막고, 제출은 결재 절차에 올라가 **삭제만** 막는다(수정은 회수하면 된다).
+     * 결재자가 보고 있는 달에서 거래가 사라지면 결재한 숫자와 장부가 달라진다.
+     *
+     * 같은 문서를 읽으므로 조회는 늘지 않는다(lockedMonths 와 한 문서).
+     */
+    function submittedMonths() {
+      return exists(/databases/$(database)/documents/config/lockedMonths)
+        ? get(/databases/$(database)/documents/config/lockedMonths).data.get('submittedMonths', {})
+        : {};
+    }
+
+    function isSubmittedMonth(data) {
+      return submittedMonths().get(
+        data.get('clientId', '') + '_' + data.get('date', '')[0:7], false) == true;
+    }
+
+    /**
+     * 팀장 결재가 끝난 달인가 — **팀장의 수정만** 막는다.
+     *
+     * 세 번째 색인이다(functions/locked-months.cjs). 앞의 둘과 질문이 다르다:
+     *   months           최종 결재가 끝났는가 → 아무도 못 고친다
+     *   submittedMonths  결재 절차에 올라갔는가 → 담당자가 못 고친다
+     *   approvedMonths   팀장 결재가 끝났는가 → 팀장도 못 고친다
+     *
+     * 같은 문서라 조회는 여전히 1회다.
+     */
+    function approvedMonths() {
+      return exists(/databases/$(database)/documents/config/lockedMonths)
+        ? get(/databases/$(database)/documents/config/lockedMonths).data.get('approvedMonths', {})
+        : {};
+    }
+
+    function isApprovedMonth(data) {
+      return approvedMonths().get(
+        data.get('clientId', '') + '_' + data.get('date', '')[0:7], false) == true;
+    }
+
+    /** 잠긴 달은 역할이나 관리자 자격으로 직접 우회하지 않는다. */
+    function editableMonth(data) {
+      return !isLocked(data);
+    }
+
+    /**
+     * **내가 결재한 뒤에는 회수하기 전까지 못 고친다.**
+     *
+     * 경계가 역할마다 다르다 — 담당자는 제출하는 순간, 팀장은 팀장 결재하는
+     * 순간, 센터장은 최종 결재하는 순간(그것은 editableMonth 가 이미 막는다).
+     *
+     * 왜 상태가 아니라 색인인가: 규칙은 거래를 쓸 때 그 달의 보고서를 찾아
+     * 읽을 수 없다. 색인 세 벌이 한 문서에 있어 조회가 늘지 않는다.
+     *
+     * 판정은 public/domain/ledger-edit-window.js 와 같은 표다. 어긋나면
+     * 버튼은 보이는데 서버가 거부한다.
+     */
+    function editableStage(data) {
+      let role = me().get('role', '');
+      return role == '센터장' ? true
+           : role == '팀장'   ? !isApprovedMonth(data)
+           : !isSubmittedMonth(data);
+    }
+
+    function myUid() { return request.auth.uid; }
+
+    /** 이 문서를 내가 만들었는가. 입력자는 본인 작성분만 다룬다. */
+    function isAuthor(data) {
+      return data.get('createdBy', '') == myUid();
+    }
+
+    /** 거래가 가리키는 계좌가 같은 입주자 소속인가. */
+    function transactionAccountMatches(data) {
+      let accountId = data.get('accountId', '');
+      // 레거시·이월 거래에는 accountId가 없는 문서가 있다. 빈 값 자체는 다른
+      // 입주자의 계좌를 참조하지 않으므로 허용하되, 값이 있으면 소속을 강제한다.
+      return accountId == ''
+        || (accountId is string
+            && exists(/databases/$(database)/documents/accounts/$(accountId))
+            && get(/databases/$(database)/documents/accounts/$(accountId)).data.get('clientId', '')
+               == data.get('clientId', ''));
+    }
+
+    /** 브라우저가 새 거래에 넣을 수 있는 필드. 증빙·연결 필드는 서버 전용이다. */
+    function transactionCreateFieldsOk() {
+      return request.resource.data.keys().hasOnly([
+        'clientId', 'accountId', 'date', 'time', 'type', 'category',
+        'subcategory', 'description', 'descRaw', 'amountIn', 'amountOut',
+        'method', 'excludeFromTotals', 'sortOrder', 'createdBy', 'createdAt',
+        'isFixed', 'fixedItemId'
+      ])
+      && (!('createdAt' in request.resource.data)
+          || request.resource.data.createdAt == request.time);
+    }
+
+    /** capability마다 허용된 필드만 바뀌었는가. */
+    function transactionUpdateFieldsOk() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return (cap('trxEdit') && changed.hasOnly([
+                'date', 'time', 'type', 'category', 'subcategory',
+                'description', 'amountIn', 'amountOut', 'accountId', 'receiptMissing',
+                'method', 'excludeFromTotals'
+              ]))
+          || (cap('trxCategoryEdit') && changed.hasOnly(['category', 'subcategory']))
+          || (cap('trxReorder') && changed.hasOnly(['sortOrder']));
+    }
+
+    // ── 비밀번호 해시 — 클라이언트 접근 전면 차단 (Functions는 Admin SDK로 우회) ──
+    match /userSecrets/{uid} {
+      allow read, write: if false;
+    }
+
+    // ── 비밀번호 재설정 대기 요청 ──
+    //
+    // 누가 누구의 재설정을 요청했는지 담는다. 브라우저가 읽을 수 있으면
+    // 요청자를 보고 "내가 아닌 사람"을 골라 단독으로 2인을 흉내 낼 수 있고,
+    // 쓸 수 있으면 승인 절차 자체가 무의미해진다. 콜러블만 다룬다.
+    match /passwordResets/{uid} {
+      allow read, write: if false;
+    }
+
+    // ── 직원 ──
+    // 비밀번호가 userSecrets로 분리되었으므로 남는 값은 이름·역할·팀뿐인 내부 인명부다.
+    // 쓰기는 Cloud Functions 전용 — 역할 변경·승인·비밀번호를 클라이언트가 못 건드린다.
+    //
+    // 본인 문서는 재직 여부와 무관하게 읽는다. 세션 복원이 이 문서를 먼저 읽고
+    // active:false 를 보고 안내 문구를 띄우기 때문이다 — 여기서 막으면 화면이
+    // 이유 없이 멈춘 것처럼 보인다(authz 본인 읽기와 같은 이유).
+    match /users/{uid} {
+      allow read:  if signedIn() && (request.auth.uid == uid || active());
+      allow write: if false;
+    }
+
+    // ── 입주자 ──
+    // 담당 배정 밖의 입주자는 이름조차 보이지 않는다. 전 입주자 조회는
+    // clientViewAll(팀장 이상)이 따로 연다.
+    // 쓰기는 saveClient 콜러블만 — 담당 배정을 바꾸면 투영본도 같이 바뀌어야 하고,
+    // 그 둘은 한 트랜잭션이어야 한다.
+    match /clients/{id} {
+      allow read:  if seesClient(id);
+      allow write: if false;
+    }
+
+    // ── 계좌 ──
+    // 계좌는 입주자에 속한다. 조회 범위도 그 입주자를 따른다.
+    // 변경은 settingsAccount(전 입주자 범위) — 계좌 신설은 담당 배정과 무관한
+    // 관리 행위다.
+    // 예전에는 `allow write: if cap('settingsAccount')` 한 줄이라, 그 권한만
+    // 있으면 **담당 밖 입주자의 계좌도** 만들고 고칠 수 있었다. 계좌에는
+    // 기초잔액이 들어 있고 그것이 잔액 계산의 출발점이므로, 남의 입주자
+    // 계좌를 건드리면 그 사람의 장부 전체가 틀어진다.
+    //
+    // 기초잔액·기준일은 타입까지 본다. 문자열이 들어가면 balance.js 의
+    // 합산이 조용히 NaN 이 되고, 화면에는 잔액이 비어 보일 뿐 이유가 없다.
+    function accountFieldsOk(data) {
+      return (!('initialBalance' in data) || data.initialBalance is number)
+          && (!('initialBalanceDate' in data) || data.initialBalanceDate is string)
+          && (!('clientId' in data) || data.clientId is string);
+    }
+
+    match /accounts/{id} {
+      allow read: if seesClient(resource.data.get('clientId', ''));
+
+      // 소속 입주자가 실재해야 한다 — 없는 입주자의 계좌는 어느 화면에도
+      // 나타나지 않으면서 잔액 트리거만 계속 돈다.
+      // monthEndBalances 는 **서버만 쓴다.** 보고서 「계좌 현황」이 인쇄하는
+      // 전월·당월 말잔이 이 색인에서 나오므로, 브라우저가 심을 수 있으면
+      // 결재 문서에 지어낸 잔액이 찍힌다. 트리거는 Admin SDK 라 규칙을 지나지
+      // 않으므로 여기서 막아도 갱신은 계속 된다.
+      allow create: if cap('settingsAccount')
+                    && seesClient(request.resource.data.get('clientId', ''))
+                    && exists(/databases/$(database)/documents/clients/$(request.resource.data.get('clientId', '')))
+                    && !('monthEndBalances' in request.resource.data)
+                    && accountFieldsOk(request.resource.data);
+
+      // clientId 는 불변이다. 바꿀 수 있으면 계좌를 통째로 남의 입주자에게
+      // 옮겨 거래와 잔액이 함께 따라간다.
+      allow update: if cap('settingsAccount')
+                    && seesClient(resource.data.get('clientId', ''))
+                    && request.resource.data.get('clientId', '')
+                       == resource.data.get('clientId', '')
+                    && request.resource.data.get('monthEndBalances', {})
+                       == resource.data.get('monthEndBalances', {})
+                    && accountFieldsOk(request.resource.data);
+
+      allow delete: if cap('settingsAccount')
+                    && seesClient(resource.data.get('clientId', ''));
+    }
+
+    // ── 거래 ──
+    //
+    // 세 겹으로 좁힌다:
+    //   1. 담당 범위    seesClient — 배정 밖 입주자의 금전 기록은 보이지 않는다
+    //   2. 작성자 범위  trxViewAll 이 없으면 본인이 입력한 것만
+    //   3. 마감 잠금    최종 결재가 끝난 달은 lockBypass 없이 못 고친다
+    //   4. 결재 단계    내가 결재한 뒤에는 회수하기 전까지 못 고친다(editableStage)
+    //
+    // ⚠️ 목록 조회는 클라이언트가 where('clientId','==',…)를 걸어야 한다.
+    //    규칙 엔진이 결과 전체의 조건 충족을 증명할 수 없으면 쿼리가 통째로
+    //    거부된다(가져온 뒤 걸러내는 방식으로는 안 된다).
+    //    trxViewAll 이 없으면 where('createdBy','==',uid)도 함께 걸어야 한다.
+    match /transactions/{id} {
+      allow read: if seesClient(resource.data.get('clientId', ''))
+                  && (cap('trxViewAll') || isAuthor(resource.data));
+
+      // createdBy 를 자기 uid 로 강제한다. 남의 이름으로 거래를 만들 수 없다.
+      allow create: if cap('trxCreate')
+                    && seesClient(request.resource.data.get('clientId', ''))
+                    && isAuthor(request.resource.data)
+                    && transactionCreateFieldsOk()
+                    && transactionAccountMatches(request.resource.data)
+                    && editableMonth(request.resource.data)
+                    && editableStage(request.resource.data);
+
+      // clientId·createdBy 는 불변이다. 바꿀 수 있으면 남의 거래를 자기 것으로
+      // 옮기거나, 담당 밖 입주자에게 거래를 밀어 넣을 수 있다.
+      allow update: if transactionUpdateFieldsOk()
+                    && seesClient(resource.data.get('clientId', ''))
+                    && (cap('trxViewAll') || isAuthor(resource.data))
+                    && request.resource.data.get('createdBy', '')
+                       == resource.data.get('createdBy', '')
+                    && request.resource.data.get('clientId', '')
+                       == resource.data.get('clientId', '')
+                    && transactionAccountMatches(request.resource.data)
+                    && editableMonth(resource.data)
+                    && editableMonth(request.resource.data)
+                    && editableStage(resource.data)
+                    && editableStage(request.resource.data);
+
+      // 삭제는 제출 전에만. 권한(trxDelete)과 상태(제출 색인)를 함께 본다 —
+      // 권한만 보면 결재 중인 달의 거래가 사라지고, 상태만 보면 아무나 지운다.
+      allow delete: if (cap('trxDelete') || cap('trxDeleteBulk'))
+                    && seesClient(resource.data.get('clientId', ''))
+                    && (cap('trxViewAll') || isAuthor(resource.data))
+                    && editableMonth(resource.data)
+                    && !isSubmittedMonth(resource.data);
+    }
+
+    // ── 카테고리 ──
+    //
+    // 공통 분류(clientId 없음)와 입주자 전용 분류가 한 컬렉션에 있다.
+    // 공통은 전 입주자에게 영향을 주므로 한 단계 높은 권한을 쓴다.
+    // 조회를 담당 범위로 좁히지 않는 이유: 공통 분류는 clientId 가 없어서
+    // 범위 판정의 근거가 없고, 앱이 목록 전체를 한 번에 읽는다.
+    match /categories/{id} {
+      allow read: if active();
+
+      allow create: if request.resource.data.get('clientId', '') == ''
+                      ? cap('settingsCategoryCommon')
+                      : (cap('settingsCategory')
+                         && seesClient(request.resource.data.get('clientId', '')));
+
+      allow update, delete: if resource.data.get('clientId', '') == ''
+                      ? cap('settingsCategoryCommon')
+                      : (cap('settingsCategory')
+                         && seesClient(resource.data.get('clientId', '')));
+    }
+
+    // ── 고정항목 ── 입주자별 정기 수입·지출 템플릿. 금액이 들어 있다.
+    match /fixedItems/{id} {
+      allow read:   if seesClient(resource.data.get('clientId', ''));
+      allow create: if cap('settingsFixed')
+                    && seesClient(request.resource.data.get('clientId', ''));
+      allow update, delete: if cap('settingsFixed')
+                            && seesClient(resource.data.get('clientId', ''));
+    }
+
+    // ── 보고서 ──
+    //
+    // 쓰기는 **서버만** 한다(functions/report-fns.js applyReportTransition).
+    // 결재는 순서가 있는 상태 전이이고, 그 표는 report-workflow 하나뿐이다.
+    // 브라우저가 이 문서를 쓸 수 있으면 콘솔 한 줄로
+    //   updateDoc(…, { status:'confirmed', centerApprovedByName:'센터장' })
+    // 팀장·센터장 결재를 건너뛸 수 있다 — 그 달의 거래가 잠기고, 인쇄물에는
+    // 결재란이 채워진 채로 나온다.
+    match /reports/{id} {
+      allow read: if cap('reportViewAll')
+                  || (cap('reportOwn') && seesClient(resource.data.get('clientId', '')));
+      allow write: if false;
+    }
+
+    // ── 예산 ── 입주자별 연간 예산
+    match /budgets/{id} {
+      allow read:   if seesClient(resource.data.get('clientId', ''));
+      allow create: if cap('settingsBudget')
+                    && seesClient(request.resource.data.get('clientId', ''));
+      allow update, delete: if cap('settingsBudget')
+                            && seesClient(resource.data.get('clientId', ''));
+    }
+
+    // ── 엑셀 업로드 이력 ──
+    match /excelUploads/{id} {
+      allow read:   if seesClient(resource.data.get('clientId', ''));
+      allow create: if cap('excelUpload')
+                    && seesClient(request.resource.data.get('clientId', ''));
+      allow update, delete: if cap('excelUpload')
+                            && seesClient(resource.data.get('clientId', ''));
+    }
+
+    // ── 변경 이력 (감사 로그) ──
+    //
+    // 이 앱은 브라우저가 Firestore에 직접 쓰기 때문에 "로그를 반드시 남기게"
+    // 강제할 수는 없다(모든 쓰기를 Functions로 옮겨야 가능하다). 대신
+    // **남은 기록은 손댈 수 없게** 만든다:
+    //
+    //   · update·delete 금지 → 한 번 쓰인 기록은 수정·삭제 불가 (추가 전용)
+    //   · actorUid == 토큰 uid → 남의 이름으로 기록을 만들 수 없다
+    //   · timestamp == request.time → 시각을 소급하거나 미래로 밀 수 없다
+    //     (serverTimestamp()가 정확히 이 값이 된다)
+    //   · expireAt 필수 → TTL 정책이 2년 후 자동 삭제한다. 이 필드가 없는
+    //     기록은 영구히 남아 저장 비용이 계속 늘어난다.
+    //
+    // 조회는 등급 3(팀장) 이상 — 다른 직원의 활동 기록이므로 담당자에게는 열지 않는다.
+    match /auditLogs/{id} {
+      allow read: if cap('auditView');
+      allow create: if active()
+                    && request.resource.data.actorUid == myUid()
+                    && request.resource.data.timestamp == request.time
+                    && request.resource.data.expireAt is timestamp;
+      allow update, delete: if false;
+    }
+
+    // ── 권한 투영 (authz/{uid}) ──
+    //
+    // 담당 접근 판정의 **유일한 근거**다. accessibleClientIds · enabled · caps가
+    // 여기 있고, 규칙이 조회 1회로 전부 읽는다(Storage는 평가당 문서 2개까지만
+    // 읽을 수 있어 이 압축이 필요하다). 자세한 근거는 functions/authz.cjs에.
+    //
+    // 읽기가 **본인 문서만**인 것이 중요하다. 남의 authz를 읽을 수 있으면
+    // 누가 어느 입주자를 담당하는지가 전 직원에게 열린다.
+    //
+    // 다만 본인 문서 읽기에는 enabled 검사를 걸지 않는다 — 비활성화된 사용자가
+    // `enabled: false`를 **스스로 확인해** 로그아웃할 수 있어야 한다. 그것을
+    // 막으면 화면이 이유 없이 멈춘 것처럼 보인다. 실제 차단은 다른 모든 경로가
+    // 이 문서의 enabled를 보고 하므로, 이 예외로 열리는 것은 없다.
+    //
+    // 쓰기는 전면 차단이다. 이 문서를 쓸 수 있으면 자기 담당 목록에 아무
+    // 입주자나 넣어 그 사람의 금전 기록을 볼 수 있다 — 권한 우회의 지름길이다.
+    // Cloud Functions는 Admin SDK라 규칙을 우회하므로 서버는 그대로 쓴다.
+    match /authz/{uid} {
+      allow read:  if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // ── 결재 관계 (clientAccess/{clientId}/members/{uid}) ──
+    //
+    // isStaff · isLeader를 담는다. "이 보고서의 결재 책임자인가"의 유일한 근거고,
+    // 그 판정은 Cloud Functions가 한다(상태 전이를 함께 봐야 하므로).
+    //
+    // 조회는 담당 범위 안에서만. 결재 대기 목록을 만들 때 "이 입주자의 팀장이
+    // 누구인가"를 알아야 하는데, 그것은 그 입주자에 접근할 수 있는 사람만
+    // 알아도 된다.
+    //
+    // 쓰기는 전면 차단 — authz와 같은 이유다.
+    match /clientAccess/{clientId}/members/{uid} {
+      allow read:  if active() && mine(clientId);
+      allow write: if false;
+    }
+
+    // ── 영수증 최종화 작업 (receiptJobs/{uid}/items/{uploadId}) ──
+    //
+    // Storage 객체 복사와 Firestore 거래 갱신은 한 트랜잭션으로 묶을 수 없다.
+    // 그 사이의 상태·lease·generation을 담는 문서다(functions/receipt-jobs.cjs).
+    //
+    // 경로에 uid가 들어 있어 소유권을 **경로로** 검증한다. 문서 안의 필드로
+    // 판정하면 남의 job을 가리키는 문서를 만들 수 있다.
+    //
+    // 쓰기는 서버만. 클라이언트가 state를 바꿀 수 있으면 lease 선점이 무의미해지고,
+    // finalGeneration을 바꿀 수 있으면 조건부 삭제가 남의 파일을 지운다.
+    match /receiptJobs/{uid}/items/{uploadId} {
+      allow read:  if active() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // ── 파생 명부 (directories/staff · directories/categories) ──
+    //
+    // 로그인 한 번에 users·categories 컬렉션을 통째로 읽지 않기 위한 문서다
+    // (functions/directories.cjs 참고). 조회는 로그인 전원 — 앱이 뜨려면
+    // 직원 이름과 분류 목록이 필요하고, 그것은 모든 역할에 해당한다.
+    //
+    // 쓰기는 **전면 차단**한다. 요약 캐시와 달리 클라이언트가 이것을 계산할
+    // 이유가 전혀 없다(서버가 원본을 그대로 옮겨 담을 뿐이다). Cloud Functions는
+    // Admin SDK라 규칙을 우회하므로 트리거는 그대로 동작한다.
+    //
+    // 이 차단이 중요한 이유: 명부에는 직원의 역할이 들어 있다. 클라이언트가
+    // 쓸 수 있으면 자기 역할을 '센터장'으로 적어 화면 권한을 넓힐 수 있다
+    // (실제 권한은 토큰 클레임이 정하므로 데이터는 못 건드리지만, 화면에
+    //  결재 버튼이 뜨는 것만으로도 혼란과 오탐 신고가 생긴다).
+    match /directories/{id} {
+      allow read:  if active();
+      allow write: if false;
+    }
+
+    // ── 월별 요약 캐시 ──
+    //
+    // 대시보드가 당월 거래 전체를 읽지 않게 하는 파생 문서다
+    // (public/domain/monthly-summary.js 참고). 금액 합계가 들어 있지만
+    // 원본 거래에서 계산된 값이므로 조회는 로그인 전원에게 연다 —
+    // 입력자도 자기 담당 입주자의 카드를 봐야 한다.
+    //
+    // 쓰기가 미묘하다. 계산은 **브라우저가** 한다(서버가 하면 입력자에게
+    // 보여도 되는 범위를 서버가 다시 판단해야 한다). 그래서 신뢰의 근거를
+    // 규칙으로 좁힌다:
+    //
+    //   · 전 거래를 볼 수 있는 등급(2 이상)만 쓴다. 입력자는 본인 거래만
+    //     읽으므로 그 계산 결과는 부분 합계다 — 코드도 그 경우 캐시에 쓰지
+    //     않지만, 규칙에서도 막아 둔다.
+    //   · sourceVersion은 **서버 트리거만** 올린다. 클라이언트는 갱신 시
+    //     그 값을 바꿀 수 없다. 이 필드가 낡음 판정의 유일한 근거이므로,
+    //     클라이언트가 내릴 수 있으면 낡은 캐시를 영구히 신선한 것으로
+    //     위장할 수 있다.
+    //   · 처음 만들 때만 sourceVersion 0을 심을 수 있다(그 뒤 거래가 한 번만
+    //     바뀌어도 트리거가 1 이상으로 올려 무효화된다).
+    //   · 삭제는 관리자만 — 캐시를 지우는 것은 정확성을 해치지 않지만
+    //     (다시 계산된다) 읽기량이 튀므로 아무나 하지 않게 한다.
+    match /summaryCaches/{id} {
+      allow read: if seesClient(resource.data.get('clientId', ''));
+
+      allow create: if cap('trxViewAll')
+                    && request.resource.data.clientId is string
+                    && seesClient(request.resource.data.clientId)
+                    && request.resource.data.schemaVersion is int
+                    && request.resource.data.computedVersion is int
+                    && request.resource.data.get('sourceVersion', -1) == 0
+                    && request.resource.data.computedVersion == 0;
+
+      allow update: if cap('trxViewAll')
+                    && request.resource.data.clientId is string
+                    && request.resource.data.clientId == resource.data.clientId
+                    && seesClient(request.resource.data.clientId)
+                    && request.resource.data.schemaVersion is int
+                    && request.resource.data.computedVersion is int
+                    && request.resource.data.get('sourceVersion', 0)
+                       == resource.data.get('sourceVersion', 0)
+                    // 아직 오지 않은 버전을 계산했다고 주장할 수 없다.
+                    // (같으면 신선, 작으면 낡음 — 둘 다 정상이다)
+                    && request.resource.data.computedVersion
+                       <= resource.data.get('sourceVersion', 0);
+
+      allow delete: if false;
+    }
+
+    // ── 오래 걸리는 파괴적 작업의 진행 상태 ──
+    // 전체 초기화는 관리자만 실행하므로 상태도 관리자만 다룬다.
+    // 다른 사람이 실행 중인지 확인하고 중단된 작업을 이어서 진행하기 위한 문서다.
+    match /systemOperations/{id} {
+      allow read, write: if false;
+    }
+
+    // ── 설정 ──
+    // 권한 매트릭스 같은 설정은 관리자만.
+    // 다만 연도 마감 이력(config/archive_YYYY)은 마감을 실행하는 센터장이 남겨야 한다.
+    // 이 예외가 없으면 센터장이 마감을 시작하는 순간 이력 쓰기에서 거부된다.
+    //
+    // config/permissions 만은 서버(savePermissions)가 쓴다. 브라우저가 직접
+    // 쓰면 등급표만 바뀌고 규칙이 읽는 authz.caps 는 그대로여서, 저장은 됐는데
+    // 아무것도 달라지지 않는다 — 이 프로젝트가 실제로 겪은 버그가 그것이다.
+    match /config/{id} {
+      allow read:  if active();
+      allow write: if id != 'permissions'
+                   && (id.matches('archive_[0-9]{4}')
+                       ? false
+                       : cap('settingsPermissions'));
+    }
+
+    // ── 연도 마감 아카이브 (archive_2025 등) ──
+    // Firestore 규칙은 세그먼트 일부 와일드카드(archive_{year})를 지원하지 않으므로
+    // 컬렉션명을 변수로 받아 정규식으로 판별한다.
+    match /{col}/{id} {
+      allow read:  if col.matches('archive_[0-9]{4}')
+                   && cap('trxViewAll')
+                   && seesClient(resource.data.get('clientId', ''));
+      // 사본 저장→원본 삭제와 generation 갱신을 한 서버 작업으로 묶는다.
+      allow write: if false;
     }
   }
 }

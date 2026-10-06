@@ -10,45 +10,107 @@
 'use strict';
 
 import { S } from '../state.js';
-import { COLS } from '../constants.js';
+import { COLS, LOCKED_MONTHS_DOC, TEAMS_DOC, BANK_PARSERS_DOC, lockKey } from '../constants.js';
+import { missingIndexMessage } from '../services/fn-errors.js';
+import { normalizeTeams } from '../domain/teams.js';
+import { normalizeBankParsers } from '../domain/bank-parser.js';
 import { toast, showLoading, setText } from '../utils/ui.js';
 import { fb, fdb } from '../services/firestore.js';
+import { fetchMonthlySummaries, currentMonth } from '../services/summary.js';
+import { flushPendingMonthlyStats } from '../services/summary-live.js';
+import { fetchStaffDirectory, fetchCategoryDirectory } from '../services/directory.js';
+import { countUnenteredFixed } from '../domain/monthly-summary.js';
+import { sortTrx } from '../domain/trx-order.js';
+import { defaultTrxRange, rangeBounds } from '../domain/trx-range.js';
+import { registerCategoryColors } from '../domain/category-color.js';
+import { fetchInScope } from '../services/scoped-fetch.js';
 import * as Dash     from './dashboard.js';
 import * as Trx      from './transactions.js';
 import * as Rpt      from './report.js';
 import * as Settings from './settings.js';
-import { can } from './permissions.js';
+import { can, hasLoadedIdentity } from './permissions.js';
+import { ledgerEditBlockedBy, ledgerEditBlockMessage } from '../domain/ledger-edit-window.js';
+import { syncClientPicker } from './client-picker.js';
+
+/** 지금 로그인한 사람의 조회 범위. 규칙이 보는 것과 같은 근거(authz)를 쓴다. */
+export function myScope(field) {
+  const identity = hasLoadedIdentity() ? S.authz : null;
+  const ids = identity?.role === '팀장' ? identity.leaderClientIds
+    : identity?.role ? identity.accessibleClientIds : [];
+  return { all: can('client.view.all'), ids: ids || [], field: field || null };
+}
 
 /**
  * 기본 데이터 로드.
  * @param {Object} [opts]
  * @param {string[]} [opts.only] - 갱신할 컬렉션만 명시 ('users'|'clients'|'accounts'|'categories'|'reports'|'monthlyStats')
  *                                  미지정 시 전체 로드 (로그인·새로고침용)
+ * @param {boolean} [opts.fresh] - **방금 쓴 것을 다시 읽는다.** 직원·분류의 파생
+ *   명부를 건너뛰고 컬렉션을 직접 읽는다 — 명부를 다시 만드는 것은 비동기
+ *   트리거라, 쓰기 직후에는 바뀌기 전 값이 그대로 온다(services/directory.js).
  */
 export async function fetchBaseData(opts) {
-  const { getDocs, collection, query, where } = fb();
-  const db=fdb(), isAdmin=can('nav.staff');
+  const { getDoc, doc } = fb();
+  // 담당 입주자만 볼지 전체를 볼지 — 네비게이션 메뉴 권한이 아니라 전용 키로 판정한다.
+  // 예전에는 can('nav.staff')를 썼기 때문에 팀장의 메뉴 표시를 끄면
+  // 팀장이 전 입주자를 못 보게 되는 숨은 부작용이 있었다.
+  if (!hasLoadedIdentity()) throw new Error('권한 정보를 확인할 수 없습니다. 다시 로그인하세요.');
+  const db=fdb();
   const only = opts && Array.isArray(opts.only) ? new Set(opts.only) : null;
   const need = key => !only || only.has(key);
 
   // 각 컬렉션을 필요한 경우에만 fetch (병렬)
   const tasks = [];
-  if (need('users'))      tasks.push(['users',      getDocs(collection(db,COLS.USERS))]);
-  if (need('clients'))    tasks.push(['clients',    getDocs(collection(db,COLS.CLIENTS))]);
-  if (need('accounts'))   tasks.push(['accounts',   getDocs(collection(db,COLS.ACCOUNTS))]);
-  if (need('categories')) tasks.push(['categories', getDocs(collection(db,COLS.CATEGORIES))]);
-  // reports: confirmedMonths 만들기용 — status='confirmed'만 필요
-  if (need('reports'))    tasks.push(['reports',    getDocs(query(collection(db,COLS.REPORTS),where('status','==','confirmed')))]);
+  // 직원·분류는 **파생 명부 문서 1건**으로 읽는다(services/directory.js).
+  // 예전에는 컬렉션을 통째로 읽어 직원 25명 + 분류 60개 = 85 읽기였고,
+  // 그것이 로그인마다 전 역할에 걸렸다. 명부가 없거나 낡으면 컬렉션 직접
+  // 조회로 떨어지므로 트리거 미배포·실패가 화면을 깨뜨리지 않는다.
+  // `fresh` 면 명부를 건너뛴다 — 쓰기 직후의 조회다(위 주석).
+  const dirOpts = { fresh: !!(opts && opts.fresh) };
+  if (need('users'))      tasks.push(['users',      fetchStaffDirectory(dirOpts)]);
+  if (need('categories')) tasks.push(['categories', fetchCategoryDirectory(dirOpts)]);
+  // 입주자·계좌는 명부로 만들지 않는다.
+  //   · 앱이 이 두 컬렉션의 **모든 필드**를 쓴다(설정 화면이 연락처·메모·계좌번호·
+  //     기초잔액을 편집한다). 부분 명부로는 그 화면이 깨진다.
+  //   · accounts.bankStatements는 통장 사진 URL 배열이라 해마다 늘어난다.
+  //     전 계좌를 한 문서에 담으면 1 MiB 한도에 부딪힐 수 있고, 그때 명부 쓰기가
+  //     조용히 실패해 명부가 낡은 채로 남는다.
+  //   좁히려면 로그인용 필드만 담고 설정 화면이 원본을 따로 읽게 해야 한다.
+  if (need('clients'))    tasks.push(['clients',    fetchInScope(db, COLS.CLIENTS, myScope())]);
+  if (need('accounts'))   tasks.push(['accounts',   fetchInScope(db, COLS.ACCOUNTS, myScope('clientId'))]);
+  // 마감 월 색인 — 예전에는 reports를 status='confirmed'로 조회해 만들었다.
+  // 그런데 보안 규칙은 reports를 담당자(등급 2) 이상만 읽게 하므로, 입력자가
+  // 로그인하면 이 조회가 거부되고 아래 Promise.all이 깨져 **앱 초기화가 통째로
+  // 실패**했다(화면이 빈 채로 멈춤). 규칙을 적용한 뒤에야 드러나는 문제였다.
+  //
+  // 그래서 금액·의견 없이 잠긴 (입주자, 월) 키만 담은 config/lockedMonths 문서를
+  // 읽는다. 전 역할이 조회할 수 있고, 쿼리가 아니라 문서 1건이라 읽기도 준다.
+  // 갱신은 Cloud Functions의 syncLockedMonths 트리거만 한다.
+  if (need('reports'))    tasks.push(['lockedMonths', getDoc(doc(db,COLS.CONFIG,LOCKED_MONTHS_DOC))]);
+  // 팀 목록 — 고를 일이 있는 사람만 읽는다. 담당자·입력자는 팀을 고르는 화면이
+  // 없으므로 한 건도 쓰지 않는다(월초 열흘이 한도를 정한다 — CLAUDE.md §12-1).
+  if (need('users') && (can('assignments.manage') || can('settings.staff'))) {
+    tasks.push(['teams', getDoc(doc(db,COLS.CONFIG,TEAMS_DOC))]);
+  }
+  // 사용자가 추가한 은행 파서 — **엑셀을 올리는 역할만** 읽는다. 팀장·센터장은
+  // 파일을 올리지 않으므로 한 건도 쓰지 않는다(월초 열흘이 한도를 정한다).
+  if (need('categories') && can('excel.upload')) {
+    tasks.push(['bankParsers', getDoc(doc(db,COLS.CONFIG,BANK_PARSERS_DOC))]);
+  }
 
   const results = await Promise.all(tasks.map(t=>t[1]));
   const snapMap = {};
   tasks.forEach((t,i)=>{ snapMap[t[0]] = results[i]; });
 
   if (snapMap.users) {
-    S.users = snapMap.users.docs.map(d=>{const u={id:d.id,...d.data()};u.team=u.team||'';return u;});
+    S.users = snapMap.users.rows.map(u=>({...u, team: u.team || ''}));
   }
   if (snapMap.categories) {
-    S.categories = snapMap.categories.docs.map(d=>({id:d.id,...d.data()}));
+    S.categories = snapMap.categories.rows;
+    // 색을 한 곳에 등록해 둔다. cs() 가 이름만 들고 불리는 자리가 열 곳
+    // 남짓이라, 호출부마다 분류 문서를 찾아 넘기게 하면 한 곳만 빠뜨려도
+    // 같은 분류가 화면마다 다른 색이 된다.
+    registerCategoryColors(S.categories);
   }
 
   // clients/accounts는 활성/비활성 + 권한 필터링이 함께 들어가므로 한 묶음으로 처리
@@ -62,75 +124,96 @@ export async function fetchBaseData(opts) {
     const showInactive=S.settings?.showInactive||false;
     const activeClients=showInactive?S.allClients:S.allClients.filter(c=>c.active!==false);
     const activeAccounts=showInactive?S.allAccounts:S.allAccounts.filter(a=>a.active!==false);
-    S.clients  = isAdmin ? activeClients : activeClients.filter(c=>{
-      const ids=String(c.userIds||'').split(',').map(s=>s.trim());
-      const myUserId=String(S.user.userId);
-      const myDocId=String(S.users.find(u=>String(u.userId)===myUserId)?.id||'');
-      return ids.includes(myUserId)||(myDocId&&ids.includes(myDocId));
-    });
+    const clientScope = myScope();
+    S.clients = activeClients.filter(c => clientScope.all || clientScope.ids.includes(c.id));
     S.accounts = activeAccounts.filter(a=>S.clients.some(c=>c.id===a.clientId));
   }
 
-  if (snapMap.reports) {
-    // status='confirmed' 필터가 이미 적용되어 있으므로 추가 필터 불필요
-    S.confirmedMonths=new Set(snapMap.reports.docs.map(d=>d.data()).map(r=>`${r.clientId}_${r.year}-${String(r.month).padStart(2,'0')}`));
+  if (snapMap.teams) {
+    S.teams = normalizeTeams(snapMap.teams.exists() ? snapMap.teams.data() : null);
+  }
+
+  if (snapMap.bankParsers) {
+    S.bankParsers = normalizeBankParsers(
+      snapMap.bankParsers.exists() ? snapMap.bankParsers.data() : null);
+  }
+
+  if (snapMap.lockedMonths) {
+    // 문서가 없으면(최초 배포·백필 전) 빈 집합이 된다. 그 상태에서는 잠금이 걸리지
+    // 않으므로, 관리자가 설정에서 「마감 색인 재생성」을 눌러 백필해야 한다.
+    const data = snapMap.lockedMonths.exists() ? snapMap.lockedMonths.data() : null;
+    const months = (data && data.months) || {};
+    S.confirmedMonths = new Set(Object.keys(months).filter(k => months[k]));
+    // 제출된 달 — 삭제만 막는다(수정은 회수하면 된다). 규칙이 보는 것과 같은
+    // 색인이라, 여기서 버튼을 숨기면 서버 거부와 어긋나지 않는다.
+    const submitted = (data && data.submittedMonths) || {};
+    S.submittedMonths = new Set(Object.keys(submitted).filter(k => submitted[k]));
+    // 팀장 결재가 끝난 달 — 팀장의 수정을 막는다(센터장은 아직 고칠 수 있다).
+    // 세 색인이 한 문서에 있어 조회는 여전히 1회다.
+    const approved = (data && data.approvedMonths) || {};
+    S.approvedMonths = new Set(Object.keys(approved).filter(k => approved[k]));
   }
 
   // 당월 수입/지출 집계 (대시보드 카드 표시용)
   // 본인 담당 입주자만 쿼리하여 read 절감 (Firestore 'in' 절은 최대 30개)
+  //
+  // **거래를 쓰는 사람만 읽는다.** 이 숫자는 장부를 쓰는 사람이 오늘 무엇을
+  // 더 해야 하는지 보는 것(미분류 몇 건, 고정항목 몇 건 남았나)이다. 팀장·
+  // 센터장은 거래를 입력하지 않으므로(작성자와 결재자의 분리 — CLAUDE.md §4)
+  // 이 카드로 할 일이 생기지 않고, 결재할 숫자는 보고서에서 본다.
+  //
+  // 읽기로도 이것이 센터장 한 세션에서 가장 큰 항목이다 — 전 입주자의 요약
+  // 캐시 + 낡은 것의 재계산이라, 입주자가 늘면 그대로 늘어난다.
+  // tools/read-budget.mjs 로 확인할 수 있다.
   if (need('monthlyStats')) {
-    try {
-      const now=new Date();
-      const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-      const ymStart=ym+'-01';
-      const lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
-      const ymEnd=ym+'-'+String(lastDay).padStart(2,'0');
-      const myClientIds = S.clients.map(c=>c.id);
-      let docs = [];
-      if (myClientIds.length === 0) {
-        docs = [];
-      } else if (myClientIds.length <= 30) {
-        const tSnap = await getDocs(query(collection(db,COLS.TRANSACTIONS),
-          where('clientId','in',myClientIds),
-          where('date','>=',ymStart),
-          where('date','<=',ymEnd)));
-        docs = tSnap.docs;
-      } else {
-        const tSnap = await getDocs(query(collection(db,COLS.TRANSACTIONS),
-          where('date','>=',ymStart),
-          where('date','<=',ymEnd)));
-        docs = tSnap.docs;
-      }
-      const mStats={};
-      S.clients.forEach(c=>{ mStats[c.id]={inc:0,exp:0}; });
-      // 필수 고정항목 미납 카운트 계산을 위해 클라이언트별로 매칭된 fixedItemId 집합 수집
-      const paidFixedIdsByClient={};
-      S.clients.forEach(c=>{ paidFixedIdsByClient[c.id]=new Set(); });
-      docs.forEach(d=>{
-        const t=d.data();
-        if(!mStats[t.clientId])return;
-        if(t.type==='수입')       mStats[t.clientId].inc+=Number(t.amountIn||0);
-        else if(t.type==='지출') mStats[t.clientId].exp+=Number(t.amountOut||0);
-        // 자산이동, 취소 → 집계 제외
-        if(t.isFixed&&t.fixedItemId&&paidFixedIdsByClient[t.clientId]){
-          paidFixedIdsByClient[t.clientId].add(t.fixedItemId);
-        }
-      });
-      S.monthlyStats=mStats;
+    if (!can('trx.create')) {
+      // **읽지 않았다는 것을 null 로 남긴다.** {} 로 두면 대시보드 카드가
+      // 「당월 거래 없음」이라고 적는다 — 읽지 않은 것을 0으로 보고하는 셈이고,
+      // 결재자가 그것을 보고 "이 사람은 이번 달 거래가 없구나" 로 읽는다.
+      S.monthlyStats = null; S.fixedGap = null; S.allFixedItems = [];
+    } else { try {
+      const ym = currentMonth();
+      const myClientIds = S.clients.map(c => c.id);
 
-      // 필수 고정항목 전체 로드 + 미납 카운트
+      // 당월 요약은 **캐시 문서 1건**으로 읽는다.
+      //
+      // 예전에는 담당 입주자 전원의 당월 거래를 전부 읽어 합산했다. 관리자가
+      // 입주자 30명을 보면 한 세션에 1,200건이고, 하루 두 번 접속하는 사람이
+      // 25명이면 그것만으로 무료 한도의 절반을 썼다
+      // (tools/read-budget.mjs 로 모델을 볼 수 있다).
+      //
+      // 캐시가 없거나 낡았으면 그 입주자만 직접 계산한다 —
+      // 서버 트리거가 배포되지 않았어도 **값은 항상 맞는다.**
+      const { summaries } = await fetchMonthlySummaries(myClientIds, ym);
+
+      const mStats = {};
+      S.clients.forEach(c => {
+        const sm = summaries[c.id] || { inc: 0, exp: 0, unclassified: 0 };
+        // partial: 입력자가 본인 입력분만 합산한 값. 카드가 라벨을 바꿔 표시한다.
+        mStats[c.id] = {
+          inc: sm.inc, exp: sm.exp, partial: !!sm.partial,
+          unclassified: Number(sm.unclassified || 0),
+        };
+      });
+      S.monthlyStats = mStats;
+
+      // 필수 고정항목 미납 카운트
       try {
-        const fSnap=await getDocs(collection(db,'fixedItems'));
-        S.allFixedItems=fSnap.docs.map(d=>({id:d.id,...d.data()}));
-        const unpaid={};
-        S.clients.forEach(c=>{
-          const mandatory=S.allFixedItems.filter(f=>f.clientId===c.id&&f.isMandatory);
-          const paid=paidFixedIdsByClient[c.id]||new Set();
-          unpaid[c.id]=mandatory.filter(f=>!paid.has(f.id)).length;
+        const fSnap = await fetchInScope(db, COLS.FIXED_ITEMS, myScope('clientId'));
+        S.allFixedItems = fSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const unpaid = {};
+        S.clients.forEach(c => {
+          const mine = S.allFixedItems.filter(f => f.clientId === c.id);
+          unpaid[c.id] = countUnenteredFixed(mine, (summaries[c.id] || {}).paidFixedIds);
         });
-        S.mandatoryUnpaid=unpaid;
-      } catch(e) { S.allFixedItems=[]; S.mandatoryUnpaid={}; }
-    } catch(e) { S.monthlyStats={}; S.mandatoryUnpaid={}; }
+        S.fixedGap = unpaid;
+      } catch (e) { S.allFixedItems = []; S.fixedGap = {}; }
+    } catch (e) {
+      // 집계 실패가 로그인을 막지는 않는다 — 카드가 잔액만 보여주고 나머지는
+      // 동작한다. 여기서도 {} 가 아니라 null 이다: 실패한 것과 0인 것은 다르다.
+      console.warn('[core] 당월 집계 실패:', e);
+      S.monthlyStats = null; S.fixedGap = null;
+    } }
   }
 
   rebuildSelectors();
@@ -138,18 +221,95 @@ export async function fetchBaseData(opts) {
   if (snapMap.users) Settings.updateSignupBadge();
 }
 
-// 부분 갱신 헬퍼 (CRUD 후 호출)
-export const refetchUsers      = () => fetchBaseData({ only: ['users'] });
+// ── 부분 갱신 헬퍼 — **방금 쓴 것을 화면에 반영하려고** 부르는 것들 ──
+//
+// 직원·분류에 `fresh: true` 가 붙는 이유: 그 둘만 파생 명부(문서 1건)로 읽는데,
+// 명부를 다시 만드는 것은 **비동기 트리거**다. 이름을 바꾸고 곧바로 다시 읽으면
+// 트리거가 아직 안 돌아 **바뀌기 전 이름이 그대로 온다** — 사용자는 저장이 안
+// 된 줄 알고 다시 저장하고, 잠시 뒤 새로고침하면 낫는 것이 더 나쁘다(무엇이
+// 저장됐는지 확인할 방법이 없다). 입주자·계좌는 애초에 컬렉션을 직접 읽으므로
+// 이 문제가 없다. 로그인·새로고침(`fetchBaseData()` 인자 없이)은 그대로 명부
+// 1건으로 읽는다 — 아낄 곳은 거기다.
+export const refetchUsers      = () => fetchBaseData({ only: ['users'], fresh: true });
 export const refetchClients    = () => fetchBaseData({ only: ['clients','accounts','monthlyStats'] }); // 입주자 변경 시 권한 필터 + 계좌 매핑 + 통계 재계산
 export const refetchAccounts   = () => fetchBaseData({ only: ['accounts'] });
-export const refetchCategories = () => fetchBaseData({ only: ['categories'] });
+export const refetchCategories = () => fetchBaseData({ only: ['categories'], fresh: true });
 export const refetchReports    = () => fetchBaseData({ only: ['reports'] });
 
 export function isConfirmedLocked(clientId, dateStr){
-  // 관리자는 최종 결재 완료 월도 추가/수정/삭제 가능 (잠금 우회)
-  if(S.user?.role==='관리자')return false;
+  // 잠금 우회는 전용 권한 키로 판정한다. 역할 문자열이나 isAdmin 플래그를 직접 보면
+  // 설정 화면의 권한 등급표로 이 동작을 조정할 수 없다(등급표에 있는데 안 먹는 키가 된다).
+  if(can('lock.bypass'))return false;
+  const ym=(dateStr||'').substring(0,7);          // 'YYYY-MM'
+  if(ym.length!==7)return false;
+  // 키 형식은 lockKey 한 곳에서만 만든다 — 서버 트리거(functions/locked-months.cjs)와
+  // 같은 형식이어야 하고, 손으로 조립한 곳이 늘면 반드시 어긋난다.
+  return !!(S.confirmedMonths?.has(lockKey(clientId, ym.substring(0,4), ym.substring(5,7))));
+}
+
+/**
+ * 제출된 달인가 — **삭제만** 막는다.
+ *
+ * isConfirmedLocked 와 달리 lock.bypass 로 우회하지 않는다. 그 권한은 아무도
+ * 갖지 않고(FORBIDDEN_KEYS), 설령 생기더라도 "마감 월 편집"이지 "결재 중인
+ * 달의 삭제"가 아니다.
+ *
+ * 근거는 서버 규칙이 읽는 바로 그 색인(config/lockedMonths.submittedMonths)이다.
+ * 다른 근거를 쓰면 버튼은 보이는데 서버가 거부한다.
+ */
+export function isSubmittedLocked(clientId, dateStr){
   const ym=(dateStr||'').substring(0,7);
-  return !!(S.confirmedMonths?.has(`${clientId}_${ym}`));
+  if(ym.length!==7)return false;
+  return !!(S.submittedMonths?.has(lockKey(clientId, ym.substring(0,4), ym.substring(5,7))));
+}
+
+/**
+ * 팀장 결재가 끝난 달인가 — **팀장의 수정만** 막는다.
+ *
+ * 규칙이 읽는 바로 그 색인(config/lockedMonths.approvedMonths)을 본다.
+ * 다른 근거를 쓰면 버튼은 보이는데 서버가 거부한다.
+ */
+export function isTeamApprovedLocked(clientId, dateStr){
+  const ym=(dateStr||'').substring(0,7);
+  if(ym.length!==7)return false;
+  return !!(S.approvedMonths?.has(lockKey(clientId, ym.substring(0,4), ym.substring(5,7))));
+}
+
+/**
+ * 이 거래(또는 이 입주자·날짜)를 고칠 수 없는 이유. 고칠 수 있으면 null.
+ *
+ * 규칙은 하나다 — **내가 결재한 뒤에는 회수하기 전까지 못 고친다.** 그 경계가
+ * 역할마다 다르므로 판정은 domain/ledger-edit-window.js 한 곳에 있고,
+ * 여기는 색인 세 벌을 그 판정에 넘겨 주기만 한다.
+ *
+ * 예전에는 최종 결재(isConfirmedLocked)만 봤다. 그래서 담당자가 제출한 뒤에도
+ * 자기 거래를 고칠 수 있었고, 팀장이 결재한 숫자가 그 뒤에 조용히 달라졌다.
+ */
+export function trxEditBlockReason(clientId, dateStr){
+  const role = String(S.authz?.role || S.user?.role || '');
+  const blockedBy = ledgerEditBlockedBy(role, {
+    submitted:    isSubmittedLocked(clientId, dateStr),
+    teamApproved: isTeamApprovedLocked(clientId, dateStr),
+    confirmed:    isConfirmedLocked(clientId, dateStr),
+  });
+  return blockedBy ? ledgerEditBlockMessage(blockedBy) : null;
+}
+
+/**
+ * 이 거래를 지울 수 없는 이유. 지울 수 있으면 null.
+ *
+ * 단건 삭제와 일괄 삭제가 같은 질문을 따로 물으면 언젠가 한쪽만 고쳐진다.
+ * 규칙도 같은 두 색인(마감·제출)을 보므로, 여기가 서버 거부와 어긋나지 않는
+ * 유일한 자리다. 문구는 **어떻게 푸는지**까지 말한다 — 못 한다는 말만
+ * 남기면 사용자가 다음에 할 일을 모른다.
+ */
+export function trxDeleteBlockReason(trx){
+  if(!trx)return null;
+  if(isConfirmedLocked(trx.clientId,trx.date))
+    return '최종 결재 완료된 월의 거래는 삭제할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)';
+  if(isSubmittedLocked(trx.clientId,trx.date))
+    return '결재 중인 월의 거래는 삭제할 수 없습니다. 보고서를 회수한 뒤 삭제하세요.';
+  return null;
 }
 
 /**
@@ -158,49 +318,70 @@ export function isConfirmedLocked(clientId, dateStr){
  * @param {Object} [opts]
  * @param {'month'|'all'|{start:string,end:string}} [opts.range='month'] - 조회 범위
  */
+/**
+ * 마지막으로 시작된 거래 조회의 일련번호.
+ * 재진입 가드가 없어서, 입주자를 빠르게 두 번 바꾸면 **늦게 끝난 응답이 이겼다.**
+ * 화면에는 방금 고른 입주자가 표시되는데 표에는 이전 입주자의 거래가 남는다.
+ */
+let trxLoadSeq = 0;
+
 export async function loadTransactions(clientId, opts) {
   if (!clientId) return;
+  const clientScope = myScope();
+  if (!hasLoadedIdentity() || (!clientScope.all && !clientScope.ids.includes(clientId))) {
+    toast('담당 범위 밖의 거래는 조회할 수 없습니다.', 'error'); return;
+  }
+  const mySeq = ++trxLoadSeq;
   showLoading(true);
   try {
     const { getDocs, collection, query, where } = fb();
-    const range = (opts && opts.range) ? opts.range : 'month';
+    // 기본 범위는 **달력이 정한다.** 월초에는 지난달을 포함해 읽는다 —
+    // 이 장부의 일은 1~10일에 지난달을 정리하는 것이라, 당월만 읽으면
+    // 사용자가 곧바로 기간을 넓혀 같은 조회를 한 번 더 한다.
+    const range = (opts && opts.range) ? opts.range : defaultTrxRange();
     const db = fdb();
-    let q;
-    if (range === 'all') {
-      q = query(collection(db,COLS.TRANSACTIONS), where('clientId','==',clientId));
-    } else if (range && typeof range === 'object' && range.start && range.end) {
-      q = query(collection(db,COLS.TRANSACTIONS),
-                where('clientId','==',clientId),
-                where('date','>=',range.start),
-                where('date','<=',range.end));
-    } else {
-      // 'month' (기본) — 당월
-      const now = new Date();
-      const ymStart = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
-      const lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
-      const ymEnd = ymStart.substring(0,8)+String(lastDay).padStart(2,'0');
-      q = query(collection(db,COLS.TRANSACTIONS),
-                where('clientId','==',clientId),
-                where('date','>=',ymStart),
-                where('date','<=',ymEnd));
-    }
+
+    // 입력자는 본인이 작성한 거래만 볼 수 있다.
+    // ⚠️ 이 조건은 **쿼리에** 걸어야 한다. 보안 규칙이 본인 작성분만 허용하므로,
+    //    조건 없이 조회하면 규칙 엔진이 결과 전체의 충족을 증명할 수 없어
+    //    쿼리가 통째로 거부된다(가져온 뒤 걸러내는 방식으로는 안 된다).
+    //    필요한 복합 인덱스는 firestore.indexes.json에 등록되어 있다.
+    const ownOnly = !can('trx.view.all');
+    const scope = ownOnly
+      ? [where('clientId','==',clientId), where('createdBy','==',String(S.user.userId))]
+      : [where('clientId','==',clientId)];
+
+    // 경계 계산은 domain/trx-range.js 하나다 — 예전에는 여기와
+    // needsBroaderRange 두 곳이 각자 당월을 만들었고, 어긋나면 화면에 있는
+    // 거래를 필터가 못 찾았다.
+    const bounds = rangeBounds(range);
+    const q = bounds
+      ? query(collection(db,COLS.TRANSACTIONS), ...scope,
+              where('date','>=',bounds.start),
+              where('date','<=',bounds.end))
+      : query(collection(db,COLS.TRANSACTIONS), ...scope);
     const snap = await getDocs(q);
-    let allTrx = snap.docs.map(d=>({id:d.id,...d.data()}));
-    if(!can('trx.view.all')) allTrx=allTrx.filter(t=>t.createdBy===S.user.userId);
-    S.transactions = allTrx.sort((a,b)=>{
-      const oA=a.sortOrder!=null?a.sortOrder:99999;
-      const oB=b.sortOrder!=null?b.sortOrder:99999;
-      if(oA!==oB)return oA-oB;
-      const dtA=(a.date||'')+(a.time?' '+a.time:'');
-      const dtB=(b.date||'')+(b.time?' '+b.time:'');
-      return dtA.localeCompare(dtB);
-    });
+    // 내가 시작한 조회가 더 이상 최신이 아니면 결과를 버린다
+    if (mySeq !== trxLoadSeq) return;
+    const allTrx = snap.docs.map(d=>({id:d.id,...d.data()}));
+    // 장부 순서는 domain/trx-order.js 하나다 — 세 벌로 흩어져 있었고,
+    // 한 곳만 고치면 같은 거래가 화면마다 다른 자리에 나타났다.
+    S.transactions = sortTrx(allTrx);
     S.activeClient=clientId; S.trxRange=range; S.page=1; S.sortKey='date'; S.sortDir='asc';
     Trx.rebuildAccountFilter();
     Trx.applyFilters();
+    // 보고서 캐시는 **여기서 버리지 않는다.** 거래를 다시 읽었다고 보고서가
+    // 낡는 것이 아니라, 거래가 바뀌었을 때 낡는다 — 그 판정은 쓰기 쪽
+    // (services/firestore.js)이 한다. 예전에는 기간 필터만 바꿔도 캐시가
+    // 날아가, 보고서를 열 때마다 그 입주자의 전체 이력을 다시 읽었다.
     Rpt.syncReportTrxList();
-  } catch(e) { toast('거래 로드 실패: '+e.message,'error'); }
-  showLoading(false);
+  } catch(e) {
+    if (mySeq === trxLoadSeq) {
+      toast(missingIndexMessage(e,'거래 조회')||('거래 로드 실패: '+e.message),'error',6000);
+    }
+  }
+  // 뒤늦게 끝난 조회가 로딩 표시를 꺼서 진행 중인 조회를 가리지 않도록
+  if (mySeq === trxLoadSeq) showLoading(false);
 }
 
 export function rebuildSelectors() {
@@ -211,19 +392,61 @@ export function rebuildSelectors() {
     S.clients.forEach(c=>sel.add(new Option(c.name,c.id)));
     if (S.clients.some(c=>c.id===prev)) sel.value=prev;
   });
+  // 검색칸은 select 를 따라간다 — 목록이 바뀌면 고른 사람이 사라졌을 수 있다.
+  syncClientPicker();
   Trx.rebuildAccountFilter();
 }
 
+/** 좁은 화면(휴대폰)인지 — CSS 미디어 쿼리와 같은 기준을 쓴다 */
+export function isNarrowScreen() {
+  return window.matchMedia('(max-width:768px)').matches;
+}
+
+/**
+ * 화면이 좁아지면 PC 전용 화면에서 빠져나온다.
+ * 태블릿을 세로로 돌리거나 창을 줄이면 보고서 화면이 조작 불가 상태로 남기 때문.
+ */
+export function watchViewportForDesktopOnlyViews() {
+  const mq = window.matchMedia('(max-width:768px)');
+  const onChange = (e) => {
+    if (!e.matches) return;
+    const current = ['report'].find(v => {
+      const el = document.getElementById('view-' + v);
+      return el && el.style.display !== 'none';
+    });
+    if (current) changeView('dashboard');
+    const settings = document.getElementById('view-settings');
+    if (settings && settings.style.display !== 'none') changeView('settings');
+  };
+  // Safari 13 이하는 addEventListener를 지원하지 않는다
+  if (mq.addEventListener) mq.addEventListener('change', onChange);
+  else if (mq.addListener) mq.addListener(onChange);
+}
+
+/**
+ * 좁은 화면에서 숨기는 화면들.
+ * 보고서·결재는 표와 결재란이 많아 휴대폰에서 읽기 어렵다는 현장 판단에 따라
+ * PC 전용으로 두고, 휴대폰에서는 조회와 수기입력만 노출한다.
+ */
+const DESKTOP_ONLY_VIEWS = { report: '보고서' };
+
 export function changeView(view) {
   if(view==='management') view='settings';
-  if((view==='report'&&!can('nav.report'))||(view==='settings'&&!can('nav.settings'))){
+  if((view==='report'&&!can('nav.report'))||(view==='settings'&&!hasLoadedIdentity())){
     toast('접근 권한이 없습니다.','error'); return;
+  }
+  if(DESKTOP_ONLY_VIEWS[view] && isNarrowScreen()){
+    toast(`${DESKTOP_ONLY_VIEWS[view]}는 PC에서 이용해 주세요.`,'info',4000);
+    return;
   }
   if(view==='annual'){ changeView('report'); switchRptSubtab('annual'); return; }
   if(view!=='report'){
+    // 화면만 감춘다. **버리지 않는다** — 예전에는 여기서 S.reportData=null 이라
+    // 대시보드에서 숫자 하나 보고 돌아오면 입주자·연·월을 다시 고르고 조회를
+    // 다시 눌러야 했다. 돌아올 때 무엇을 보고 있었는지로 다시 조회한다
+    // (낡은 숫자를 그대로 보여주지 않으려고 계산 결과는 다시 만든다).
     const ra=document.getElementById('report-area');
     if(ra)ra.style.display='none';
-    S.reportData=null;
   }
   ['dashboard','history','report','settings'].forEach(v=>{
     const el=document.getElementById('view-'+v); if(el)el.style.display=v===view?'block':'none';
@@ -241,12 +464,26 @@ export function changeView(view) {
   };
   const [t,s]=titles[view]||['',''];
   setText('view-title',t); setText('view-sub',s);
-  if (view==='dashboard') { Dash.renderDashboard(); Rpt.refreshPendingApprovalBadge(); }
-  if (view==='settings')  {
-    // 캐시된 데이터로 즉시 렌더 (CRUD 시 부분 갱신으로 최신 상태 유지)
-    Settings.renderManagement(); Settings.loadSettings();
+  if (view==='dashboard') {
+    // 먼저 들고 있는 값으로 그린다 — 빈 화면을 보여주지 않는다.
+    Dash.renderDashboard(); Rpt.refreshPendingApprovalBadge();
+    // 그 사이 거래를 썼는데 로컬로 덮지 못한 것이 있으면 여기서 다시 읽는다.
+    // 쓸 때마다가 아니라 **볼 때 한 번**이다(services/summary-live.js).
+    flushPendingMonthlyStats().then(changed => { if (changed) Dash.renderDashboard(); });
   }
-  if (view==='report')    { Rpt.loadReportList(); switchRptSubtab('monthly'); }
+  if (view==='settings')  {
+    // 캐시된 데이터로 즉시 렌더 (CRUD 시 부분 갱신으로 최신 상태 유지).
+    // 어떤 패널을 그릴지는 initSettingsTabs가 세운 셸이 정한다 —
+    // 여기서 renderManagement를 직접 부르면 열려 있지 않은 탭까지 그린다.
+    S.settingsGuideOnly = isNarrowScreen() || !can('nav.settings');
+    if (S.settingsGuideOnly) {
+      Settings.initSettingsTabs();
+      Settings.switchSettingsTab('permissions');
+    } else {
+      Settings.loadSettings();
+    }
+  }
+  if (view==='report')    { Rpt.loadReportList(); switchRptSubtab('monthly'); Rpt.restoreOpenReport(); }
 }
 
 export function switchRptSubtab(tab){

@@ -12,14 +12,35 @@
 'use strict';
 
 import { S } from '../state.js';
-import { toast, showConfirm, showLoading, escAttr } from '../utils/ui.js';
+import { iconSvg } from '../utils/icons.js';
+import { toast, showConfirm, showLoading, escAttr, escHtml } from '../utils/ui.js';
 import { fb, fdb, batchUpdateDocs, batchDeleteDocs, batchAddDocs, batchMixedOps } from '../services/firestore.js';
-import { deleteManyFromStorage, recompressStorageImage } from '../services/storage.js';
-import { COLS } from '../constants.js';
+import { deleteManyFromStorage } from '../services/storage.js';
+import { COLS, DEFAULT_CATEGORIES, cs } from '../constants.js';
+import { formatDate } from '../domain/timestamps.js';
+const SYSTEM_OPS = COLS.SYSTEM_OPS;
 // loadTransactions: settings.js에서 직접 호출 없음 — modals.js(Task 4)에서 사용
-import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
+import { fetchBaseData, refetchUsers, refetchClients, refetchAccounts, refetchCategories } from './core.js';
 import { openModal, renderFixedItemsList } from './modals.js';
-import { can, savePermissions, DEFAULT_PERMISSIONS } from './permissions.js';
+import { initSettingsShell, switchSettingsTab, registerPanel } from './settings-shell.js';
+import { registerCrudDeps } from './settings-crud.js';
+import { renderSettingsOverview, refreshOverviewBadges } from './settings-overview.js';
+import { renderSettingsAudit } from './settings-audit.js';
+import { renderTeamsPanel } from './settings-teams.js';
+import { renderBankParserPanel } from './bank-parser-ui.js';
+import { auditLog } from '../services/audit.js';
+import {
+  DATA_RESET_CONFIRM_TEXT, RESET_PRESERVED, MAX_DELETES_PER_BATCH,
+  RESET_OPERATION_ID, isResetLockActive, remainingCollections,
+  resetProgressPercent, resetProgressLabel, isResetConfirmed,
+} from '../domain/data-reset.js';
+import { can, unavailableMessage } from './permissions.js';
+// 권한 패널은 settings-permissions.js 로 나갔다. 여기서 다시 내보내는 이유는
+// app.js 의 전역 등록과 설정 탭 전환이 이 모듈을 통해 부르기 때문이다.
+import { renderPermissionPanel } from './settings-permissions.js';
+import { openCategoryEdit } from './settings-category.js';
+import { resetStaffPassword } from './password.js';
+export { renderPermissionPanel };
 
 // ─────────────────────────────────────────────
 // 직원·입주자·계좌 관리 통합 렌더
@@ -28,20 +49,31 @@ import { can, savePermissions, DEFAULT_PERMISSIONS } from './permissions.js';
 // (openModal, toggleClientActive, toggleAccountActive 등)
 // window 경유로 해석되므로 import된 심볼명으로 교체하면 런타임 오류 발생
 export function renderManagement(){
-  const isAdmin=can('nav.staff');
+  const canViewStaff=can('nav.staff');
+  const canManageStaff=can('settings.staff');
+  const canApproveStaffRole=can('staff.role.approve');
+  const canManageAssignments=can('assignments.manage');
+  const canDecideStaffRole=canApproveStaffRole||canManageStaff;
+  const canRequestStaffRole=canDecideStaffRole||canManageAssignments;
+  const canManageClients=can('settings.client');
+  const canManageAccounts=can('settings.account');
+  const canViewAllClients=can('client.view.all');
   updateSignupBadge();
   // B005: admin-staff 섹션 및 등록 버튼 역할별 표시/숨김
   const adminStaff=document.getElementById('admin-staff');
-  if(adminStaff)adminStaff.style.display=isAdmin?'block':'none';
+  if(adminStaff)adminStaff.style.display=canViewStaff?'block':'none';
   const btnAddClient=document.getElementById('btn-add-client');
   const btnAddAccount=document.getElementById('btn-add-account');
-  if(btnAddClient)btnAddClient.style.display=isAdmin?'':'none';
-  if(btnAddAccount)btnAddAccount.style.display=isAdmin?'':'none';
+  if(btnAddClient)btnAddClient.style.display=canManageClients?'':'none';
+  if(btnAddAccount)btnAddAccount.style.display=canManageAccounts?'':'none';
   // 일괄 등록 버튼 표시 및 이벤트 바인딩 (관리자 전용)
   ['bulk-staff','bulk-client','bulk-account'].forEach(key=>{
     const btn=document.getElementById('btn-'+key);
     if(btn){
-      btn.style.display=isAdmin?'':'none';
+      const allowed={
+        'bulk-staff':canManageStaff,'bulk-client':canManageClients,'bulk-account':canManageAccounts,
+      }[key];
+      btn.style.display=allowed?'':'none';
       if(!btn.dataset.bound){
         btn.dataset.bound='1';
         btn.addEventListener('click',()=>openModal(key));
@@ -49,7 +81,7 @@ export function renderManagement(){
     }
   });
   const sl=document.getElementById('staff-list'); if(sl)sl.innerHTML='';
-  if(isAdmin&&sl){
+  if(canViewStaff&&sl){
     // 승인 대기 직원 (노란 카드)
     const pendingUsers=S.users.filter(u=>u.approved===false);
     if(pendingUsers.length){
@@ -61,10 +93,41 @@ export function renderManagement(){
         const d=document.createElement('div'); d.className='card'; d.style.cssText='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fffbeb;border-color:#fde68a;flex-wrap:wrap;';
         const roles=['입력자','담당자','팀장','센터장'];
         const roleOpts=roles.map(r=>`<option value="${r}"${(u.role||'입력자')===r?' selected':''}>${r}</option>`).join('');
-        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${escAttr(u.userId||'')} ${u.team?'· '+escAttr(u.team):''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div><div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="승인할 역할(권한)을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn" onclick="approveStaff('${escAttr(u.id)}')" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">✓ 승인</button></div>`;
+        const hasActiveRequest=u.privilegeChange&&['pending','approved'].includes(u.privilegeChange.state);
+        const actionLabel=canDecideStaffRole?'직원 승인':'승인 요청';
+        const requestControls=hasActiveRequest
+          ?(canDecideStaffRole
+            ?'<button class="btn approve-staff-btn" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">요청 승인</button>'
+            :'<span style="font-size:12px;color:var(--muted);">센터장·관리자 처리 대기</span>')
+          :(canRequestStaffRole?`<div style="display:flex;gap:6px;align-items:center;"><select id="pending-role-${escAttr(u.id)}" class="input" title="승인할 역할을 선택하세요" style="width:auto;min-height:auto;height:32px;padding:4px 8px;font-size:12px;">${roleOpts}</select><button class="btn approve-staff-btn" style="font-size:12px;padding:5px 12px;min-height:32px;background:#10b981;border:none;">${actionLabel}</button></div>`:'<span style="font-size:12px;color:var(--muted);">센터장·관리자 승인 대기</span>');
+        d.innerHTML=`<div><div style="font-weight:700;color:#92400e;">${escAttr(u.name||u.userId)}</div><div style="font-size:12px;color:#b45309;">${escAttr(u.userId||'')} ${u.team?'· '+escAttr(u.team):''}<span style="margin-left:6px;background:#fef3c7;border:1px solid #fde68a;border-radius:99px;padding:1px 7px;font-size:10px;color:#92400e;">승인 대기</span></div></div>${requestControls}`;
+        d.querySelector('.approve-staff-btn')?.addEventListener('click',()=>approveStaff(u.id,hasActiveRequest?u.privilegeChange:null));
         sl.appendChild(d);
       });
       const divider=document.createElement('div'); divider.style.cssText='height:1px;background:var(--border);margin:8px 0;'; sl.appendChild(divider);
+    }
+    const privilegeChanges=S.users.filter(u=>u.approved!==false&&u.privilegeChange&&['pending','approved'].includes(u.privilegeChange.state));
+    if(privilegeChanges.length){
+      const header=document.createElement('div');
+      header.className='card';
+      header.textContent=`역할·관리자 변경 대기 ${privilegeChanges.length}건`;
+      sl.appendChild(header);
+      privilegeChanges.forEach(u=>{
+        const change=u.privilegeChange;
+        const d=document.createElement('div'); d.className='card';
+        const stateLabel=change.state==='approved'?'기존 승인 건 · 최종 적용 대기':'센터장·관리자 승인 대기';
+        const myUserId=String(S.user?.userId||'');
+        const canCancel=[change.requestedBy,change.approvedBy].some(id=>String(id||'')===myUserId);
+        const buttons=[
+          canDecideStaffRole?'<button class="btn privilege-change-btn">변경 승인</button>':'',
+          canCancel?'<button class="btn privilege-cancel-btn">취소</button>':'',
+        ].filter(Boolean).join('');
+        const controls=buttons?`<div>${buttons}</div>`:'<span style="font-size:12px;color:var(--muted);">센터장·관리자 처리 대기</span>';
+        d.innerHTML=`<div><strong>${escHtml(u.name||u.userId)}</strong><div style="font-size:12px;color:var(--muted);">${escHtml(u.role||'미승인')} → ${escHtml(change.role)}${change.isAdmin?' + 시스템 관리자':''} · ${stateLabel}</div></div>${controls}`;
+        d.querySelector('.privilege-change-btn')?.addEventListener('click',()=>approveStaff(u.id,change));
+        d.querySelector('.privilege-cancel-btn')?.addEventListener('click',()=>cancelStaffPrivilegeChange(u.id));
+        sl.appendChild(d);
+      });
     }
     // 승인된 직원 — 재직(활성)→퇴사(비활성) 순, 비활성 흐리게 + 재직/퇴사 토글
     const approvedUsers=S.users.filter(u=>u.approved!==false);
@@ -73,13 +136,21 @@ export function renderManagement(){
     [...activeUsers,...inactiveUsers].forEach(u=>{
       const isActive=u.active!==false;
       const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:12px 14px;display:flex;justify-content:space-between;align-items:center;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
-      const toggleSwitch=`<div onclick="toggleStaffActive('${escAttr(u.id)}',${!isActive})" title="${isActive?'퇴사 등으로 비활성화(로그인 차단)':'다시 재직 상태로 전환'}" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+      const toggleSwitch=canManageStaff?`<div onclick="toggleStaffActive('${escAttr(u.id)}',${!isActive})" title="${isActive?'퇴사 등으로 비활성화(로그인 차단)':'다시 재직 상태로 전환'}" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
         <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;flex-shrink:0;">
           <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
         </span>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'재직':'퇴사'}</span>
-      </div>`;
-      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${u.name||u.userId}</div><div style="font-size:12px;color:var(--muted);">${u.role||''} ${u.team?'· '+u.team:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      </div>`:'';
+      const editButton=canManageStaff&&isActive?`<button class="icon-btn edit" title="수정" onclick="openModal('staff',S.users.find(x=>x.id==='${escAttr(u.id)}'))" style="color:#64748b;">${iconSvg('pen',18)}</button>`:'';
+      // 비밀번호 재설정 — 관리자만. 결재에 닿는 계정은 서버가 2인을 요구한다.
+      const pwButton=canManageStaff&&isActive&&String(u.id)!==String(S.user?.userId||'')
+        ?`<button class="icon-btn pw-reset" data-id="${escAttr(u.id)}" data-name="${escAttr(u.name||u.userId)}" title="비밀번호 재설정(임시 비밀번호 발급)" style="color:#b45309;">${iconSvg('key',18)}</button>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${escHtml(u.name||u.userId)}</div><div style="font-size:12px;color:var(--muted);">${escHtml(u.role||'')} ${u.team?'· '+escHtml(u.team):''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${pwButton}${editButton}</div>`;
+      d.querySelector('.pw-reset')?.addEventListener('click',ev=>{
+        const b=ev.currentTarget;
+        resetStaffPassword(b.dataset.id,b.dataset.name);
+      });
       sl.appendChild(d);
     });
   }
@@ -87,9 +158,12 @@ export function renderManagement(){
   // 관리자: 전체 목록 / 비관리자: 담당 입주자만 (비활성 포함) — 입주자·계좌 공통 기준
   const myUserId=String(S.user?.userId||'');
   const visibleClients=(S.allClients?.length?S.allClients:S.clients).filter(c=>
-    isAdmin||(()=>{
+    canViewAllClients||(()=>{
       const ids=String(c.userIds||'').split(',').map(s=>s.trim());
       const myDocId=String(S.users.find(u=>String(u.userId)===myUserId)?.id||'');
+      if(String(S.authz?.role||S.user?.role||'')==='팀장'){
+        return String(c.teamLeader||'')===myUserId||(myDocId&&String(c.teamLeader||'')===myDocId);
+      }
       return ids.includes(myUserId)||(myDocId&&ids.includes(myDocId));
     })()
   );
@@ -104,13 +178,14 @@ export function renderManagement(){
       const isActive=c.active!==false;
       const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
       const leader=S.users.find(u=>String(u.id)===String(c.teamLeader));
-      const toggleSwitch=isAdmin?`<div onclick="toggleClientActive('${escAttr(c.id)}',${!isActive})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+      const toggleSwitch=canManageClients?`<div onclick="toggleClientActive('${escAttr(c.id)}',${!isActive})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
         <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;flex-shrink:0;">
           <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
         </span>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'활성':'비활성'}</span>
       </div>`:'';
-      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${c.name}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('client',(S.allClients||S.clients).find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      const editButton=(canManageClients||canManageAssignments)?`<button class="icon-btn edit" title="수정" onclick="openModal('client',(S.allClients||S.clients).find(x=>x.id==='${escAttr(c.id)}'))" style="color:#64748b;">${iconSvg('pen',18)}</button>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${c.name}</div><div style="font-size:11px;color:var(--muted);">${leader?'팀장: '+leader.name:''}</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${editButton}</div>`;
       cl.appendChild(d);
     });
   }
@@ -119,7 +194,7 @@ export function renderManagement(){
   const al=document.getElementById('account-list'); if(al)al.innerHTML='';
   if(al){
     const allA=(S.allAccounts?.length?S.allAccounts:S.accounts).filter(a=>
-      isAdmin||visibleClientIds.has(a.clientId)
+      canViewAllClients||visibleClientIds.has(a.clientId)
     );
     const active=allA.filter(a=>a.active!==false);
     const inactive=allA.filter(a=>a.active===false);
@@ -127,13 +202,14 @@ export function renderManagement(){
       const isActive=a.active!==false;
       const client=(S.allClients||S.clients).find(c=>c.id===a.clientId);
       const d=document.createElement('div'); d.className='card'; d.style.cssText=`padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;${!isActive?'opacity:0.6;background:#f8f9fa;':''}`;
-      const toggleSwitch=isAdmin?`<div onclick="toggleAccountActive('${escAttr(a.id)}',${!isActive})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+      const toggleSwitch=canManageAccounts?`<div onclick="toggleAccountActive('${escAttr(a.id)}',${!isActive})" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
         <span style="display:inline-block;width:36px;height:20px;border-radius:10px;background:${isActive?'#10b981':'#cbd5e1'};transition:background 0.2s;position:relative;flex-shrink:0;">
           <span style="display:block;width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:${isActive?'18px':'2px'};transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
         </span>
         <span style="font-size:10px;color:${isActive?'#10b981':'#94a3b8'};font-weight:700;min-width:28px;">${isActive?'활성':'비활성'}</span>
       </div>`:'';
-      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${a.label}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:${isActive?'var(--blue)':'#94a3b8'};">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}<button class="icon-btn" onclick="openModal('account',(S.allAccounts||S.accounts).find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">✏️</button></div>`;
+      const editButton=canManageAccounts?`<button class="icon-btn edit" title="수정" onclick="openModal('account',(S.allAccounts||S.accounts).find(x=>x.id==='${escAttr(a.id)}'))" style="color:#64748b;">${iconSvg('pen',18)}</button>`:'';
+      d.innerHTML=`<div><div style="font-weight:700;color:${isActive?'var(--text)':'#94a3b8'};">${a.label}</div><div style="font-size:11px;color:var(--muted);">${client?.name||''}</div><div style="font-size:12px;font-weight:700;color:${isActive?'var(--blue)':'#94a3b8'};">${Number(a.currentBalance||0).toLocaleString()}원</div></div><div style="display:flex;gap:8px;align-items:center;">${toggleSwitch}${editButton}</div>`;
       al.appendChild(d);
     });
   }
@@ -144,64 +220,21 @@ export const renderUserManagement    = renderManagement;
 export const renderClientManagement  = renderManagement;
 export const renderAccountManagement = renderManagement;
 
-export async function toggleClientActive(id,makeActive){
-  try{
-    const{doc,updateDoc}=fb();
-    await updateDoc(doc(fdb(),COLS.CLIENTS,id),{active:makeActive});
-    toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
-    await refetchClients(); renderManagement();
-  }catch(e){ toast('저장 오류: '+e.message,'error'); }
-}
-export async function toggleAccountActive(id,makeActive){
-  try{
-    const{doc,updateDoc}=fb();
-    await updateDoc(doc(fdb(),COLS.ACCOUNTS,id),{active:makeActive});
-    toast(makeActive?'활성화되었습니다.':'비활성화되었습니다.','success');
-    await refetchAccounts(); renderManagement();
-  }catch(e){ toast('저장 오류: '+e.message,'error'); }
-}
-// 직원 재직/퇴사(비활성) 토글 — 비활성 시 로그인 차단, 데이터·결재 이력은 보존
-export async function toggleStaffActive(id,makeActive){
-  // 본인 계정 비활성화 방지 (셀프 잠금 방지)
-  const self=S.users.find(u=>String(u.userId)===String(S.user?.userId));
-  if(!makeActive&&self&&String(self.id)===String(id)){toast('본인 계정은 비활성화할 수 없습니다.','error');return;}
-  try{
-    const{doc,updateDoc}=fb();
-    await updateDoc(doc(fdb(),COLS.USERS,id),{active:makeActive});
-    // 비활성화 대상이 어느 입주자의 팀장이면 안내 (결재 공백 방지)
-    if(!makeActive){
-      const asLeader=(S.allClients||S.clients).filter(c=>String(c.teamLeader)===String(id));
-      if(asLeader.length)toast(`이 직원은 입주자 ${asLeader.length}명의 팀장입니다. 팀장을 재지정하거나, 공석 시 센터장이 팀장 결재를 대행할 수 있어요.`,'info',5000);
-    }
-    toast(makeActive?'재직 상태로 전환했습니다.':'퇴사(비활성) 처리했습니다. 해당 계정은 로그인할 수 없습니다.','success');
-    await refetchUsers(); renderManagement();
-  }catch(e){ toast('저장 오류: '+e.message,'error'); }
-}
-
-export function confirmDelete(type,id){
-  const labels={client:'입주자',account:'계좌',staff:'직원'};
-  const refetchByType={client:refetchClients,account:refetchAccounts,staff:refetchUsers};
-  showConfirm(labels[type]+' 삭제',labels[type]+'를 삭제하시겠습니까?',async()=>{
-    const{doc,deleteDoc}=fb();
-    const cols={client:COLS.CLIENTS,account:COLS.ACCOUNTS,staff:COLS.USERS};
-    await deleteDoc(doc(fdb(),cols[type],id));
-    await (refetchByType[type]||fetchBaseData)();
-    renderManagement();
-    toast('삭제됨','success');
-  },'삭제','btn btn-danger');
-}
+// 변경(활성 전환·삭제)은 settings-crud.js에 있다 — 서버 콜러블로 옮기면서
+// 유형별 분기가 늘었고, 이 파일은 이미 쪼갤 대상이었다.
+// app.js의 전역 등록이 Settings 경유이므로 여기서 다시 내보낸다.
+export {
+  toggleClientActive, toggleAccountActive, toggleStaffActive, confirmDelete,
+} from './settings-crud.js';
 
 // ─────────────────────────────────────────────
 // 설정 화면
 // ─────────────────────────────────────────────
 export async function loadSettings(){
   const isArchive=can('settings.archive');
-  const isResetAdmin=can('settings.reset');
-  // 권한 없는 탭 버튼은 아예 숨김 (누르면 alert만 뜨는 '유령 탭' 제거)
-  const archiveTabBtn=document.querySelector('.settings-tab-btn[data-tab="archive"]');
-  if(archiveTabBtn)archiveTabBtn.style.display=isArchive?'':'none';
-  const permTabBtn=document.querySelector('.settings-tab-btn[data-tab="permissions"]');
-  if(permTabBtn)permTabBtn.style.display=isResetAdmin?'':'none';
+  const isResetAdmin=can('settings.reset');          // 전체 초기화
+  // 권한별 탭 노출은 settings-shell이 SETTINGS_TABS의 perm으로 판정한다
+  // (화면에서 안 보이는 것과 눌러도 안 되는 것이 같은 근거를 쓴다).
   if(isArchive){
     const ySel=document.getElementById('archive-year');
     if(ySel&&!ySel.options.length){const cy=new Date().getFullYear();for(let y=cy-1;y>=cy-6;y--)ySel.add(new Option(y+'년',y));}
@@ -215,7 +248,9 @@ export async function loadSettings(){
   const expCats=[...new Set(S.categories.filter(c=>c.keyword===''&&c.type==='지출'&&(!c.clientId||c.clientId===settingsClientId)).map(c=>c.category))];
   const incCats=[...new Set(S.categories.filter(c=>c.keyword===''&&c.type==='수입'&&(!c.clientId||c.clientId===settingsClientId)).map(c=>c.category))];
   const rules=S.categories.filter(c=>c.keyword&&c.keyword!==''&&(!c.clientId||c.clientId===settingsClientId));
-  S.settings={expCats,incCats,rules,settingsClientId};
+  S.settings={...S.settings,expCats,incCats,rules,settingsClientId};
+  // 입주자 목록이 늦게 도착해도 대상자 선택이 따라가게 한다.
+  renderCategoryTarget();
   renderCatTags('지출'); renderCatTags('수입'); renderRuleTags(); updateRuleCatSel();
   const fixedClientSel=document.getElementById('fixed-client-sel');
   if(fixedClientSel){
@@ -235,8 +270,7 @@ export async function loadSettings(){
       S.activeClient=cid; openModal('fixed-item');
     });
   }
-  // 이미 패널이 렌더링된 경우 재호출 금지 (편집 중 draft 초기화 방지)
-  if(isResetAdmin&&!document.getElementById('btn-perm-save'))renderPermissionPanel();
+  // 권한 패널은 셸이 그 탭을 열 때 그린다(registerPanel).
   initBudgetSection();
   // 탭 초기화
   renderCategoryTarget();
@@ -246,12 +280,23 @@ export async function loadSettings(){
 // ─────────────────────────────────────────────
 // 카테고리 관리
 // ─────────────────────────────────────────────
+/**
+ * 「카테고리 관리 대상」 선택.
+ *
+ * 두 가지를 지킨다.
+ *   · 다시 그려도 **고르던 대상자를 잃지 않는다.** 예전에는 innerHTML 로
+ *     select 를 통째로 새로 만들면서 선택값을 복원하지 않아, 다시 그릴 때마다
+ *     「공통」으로 돌아갔다 — 고르는 것이 안 먹는 것처럼 보였다.
+ *     (바로 아래 고정항목 선택은 처음부터 prevFixed 로 복원하고 있었다.)
+ *   · 입주자 목록이 **나중에 도착해도** 따라간다. loadSettings 가 이 함수를
+ *     부르므로, 데이터가 늦게 오는 경우에도 목록이 비어 있는 채로 굳지 않는다.
+ */
 export function renderCategoryTarget(){
   const el=document.getElementById('category-target-content');
   if(!el)return;
-  const isAdmin=can('settings.reset');
+  const isAdmin=can('settings.category.common');
   const cSel=document.getElementById('settings-client-sel');
-  const clientId=cSel?.value||'';
+  const clientId=cSel?.value||S.settings?.settingsClientId||'';
   const isCommon=clientId==='';
   let html=`<div class="card" style="padding:20px;">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
@@ -270,7 +315,10 @@ export function renderCategoryTarget(){
   html+=`</div>`;
   el.innerHTML=html;
   const newSel=document.getElementById('settings-client-sel');
-  if(newSel&&!newSel.dataset.bound){
+  if(!newSel)return;
+  // 고르던 대상자를 되돌려 놓는다. 담당에서 빠진 입주자면 공통으로 떨어진다.
+  if(clientId&&S.clients.some(c=>c.id===clientId))newSel.value=clientId;
+  if(!newSel.dataset.bound){
     newSel.dataset.bound='1';
     newSel.addEventListener('change',loadSettings);
   }
@@ -281,11 +329,10 @@ export function renderCatTags(type){
   const el=document.getElementById(id); if(!el)return;
   const settingsClientId=S.settings.settingsClientId||'';
   const clientName=settingsClientId?S.clients.find(c=>c.id===settingsClientId)?.name||'':'';
-  const isAdmin=can('settings.reset');
+  const isAdmin=can('settings.category.common');
   const allCats=S.categories
     .filter(c=>c.keyword===''&&c.type===type&&(!c.clientId||c.clientId===settingsClientId))
     .sort((a,b)=>(a.sortOrder??999)-(b.sortOrder??999));
-  const colors=type==='지출'?['#dc2626','#ea580c','#d97706','#16a34a','#2563eb','#9333ea','#c026d3']:['#059669','#0891b2','#1d4ed8'];
   const targetLabel=settingsClientId?clientName:'공통';
   const badgeId=type==='지출'?'exp-cat-target':'inc-cat-target';
   const badge=document.getElementById(badgeId); if(badge)badge.textContent=targetLabel;
@@ -294,7 +341,10 @@ export function renderCatTags(type){
   const seen=new Set();
   allCats.forEach((catDoc,i)=>{
     const cat=catDoc.category; if(seen.has(cat+(catDoc.clientId||'')))return; seen.add(cat+(catDoc.clientId||''));
-    const color=colors[i%colors.length], tag=document.createElement('span');
+    // 거래내역·보고서와 **같은 색**이어야 한다. 예전에는 여기만 팔레트에서
+    // 순서대로 배정해서, 설정에서 본 색과 표에서 본 색이 서로 달랐다.
+    const color=cs(cat).dot;
+    const tag=document.createElement('span');
     const isPersonal=!!catDoc.clientId;
     const isCommon=!catDoc.clientId;
     const isCommonReadOnly=isCommon&&!isAdmin;
@@ -304,9 +354,10 @@ export function renderCatTags(type){
     tag.draggable=!isCommonReadOnly;
     tag.dataset.docId=catDoc.id;
     tag.dataset.order=String(catDoc.sortOrder??i);
-    tag.innerHTML=`<span style="font-size:11px;color:#94a3b8;margin-right:2px;">⠿</span><span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-size:13px;font-weight:700;color:${color};">${cat}</span>`
+    tag.innerHTML=`<span style="font-size:11px;color:#94a3b8;margin-right:2px;">⠿</span><span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-size:13px;font-weight:700;color:${color};">${escHtml(cat)}</span>`
       +(isPersonal?`<span style="font-size:10px;background:${color}22;color:${color};padding:1px 5px;border-radius:4px;margin-left:2px;">${clientName}</span>`:'')
-      +(cat==='확인필요'||isCommonReadOnly?'':`<button class="cat-del">×</button>`);
+      +(isCommonReadOnly?'':`<button class="cat-edit" title="이름·색상 수정">${iconSvg('pen',14)}</button>`)
+      +(cat==='확인필요'||isCommonReadOnly?'':`<button class="cat-del" title="삭제">${iconSvg('trash',14)}</button>`);
     if(!isCommonReadOnly){
       tag.addEventListener('dragstart',e=>{dragSrc=tag;tag.style.opacity='0.5';e.dataTransfer.effectAllowed='move';});
       tag.addEventListener('dragend',()=>{tag.style.opacity='1';dragSrc=null;});
@@ -334,6 +385,7 @@ export function renderCatTags(type){
         toast('순서 저장됨','success',1500);
       });
     }
+    if(!isCommonReadOnly)tag.querySelector('.cat-edit').addEventListener('click',()=>openCategoryEdit(type,catDoc,color,async()=>{await refetchCategories();loadSettings();}));
     if(cat!=='확인필요'&&!isCommonReadOnly)tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${cat}" 카테고리를 삭제하시겠습니까?`,()=>deleteCategory(type,cat,catDoc.clientId||''),'삭제','btn btn-danger'));
     el.appendChild(tag);
   });
@@ -342,7 +394,6 @@ export function renderRuleTags(){
   const el=document.getElementById('rule-tags'); if(!el)return;
   const settingsClientId=S.settings.settingsClientId||'';
   const clientName=settingsClientId?S.clients.find(c=>c.id===settingsClientId)?.name||'':'';
-  const targetDisplay=settingsClientId?`— ${clientName}`:'— 공통';
   const ruleTargetLabel=settingsClientId?clientName:'공통';
   const ruleBadge=document.getElementById('rule-target'); if(ruleBadge)ruleBadge.textContent=ruleTargetLabel;
   el.innerHTML='';
@@ -352,7 +403,7 @@ export function renderRuleTags(){
     const tc=r.type==='지출'?'#dc2626':'#16a34a', tag=document.createElement('span');
     const isPersonal=!!r.clientId;
     tag.className='rule-tag'; tag.style.borderColor=tc+'33';
-    tag.innerHTML=`<span style="font-size:13px;font-weight:700;color:var(--sub);">"${r.keyword}"</span><span style="font-size:11px;color:var(--muted);">→</span><span style="font-size:13px;font-weight:700;color:${tc};">${r.category}</span>`
+    tag.innerHTML=`<span style="font-size:13px;font-weight:700;color:var(--sub);">"${escHtml(r.keyword)}"</span><span style="font-size:11px;color:var(--muted);">→</span><span style="font-size:13px;font-weight:700;color:${tc};">${escHtml(r.category)}</span>`
       +(isPersonal?`<span style="font-size:10px;background:${tc}22;color:${tc};padding:1px 5px;border-radius:4px;">${settingsClientName||r.clientId}</span>`:'')
       +`<button class="cat-del">×</button>`;
     tag.querySelector('.cat-del').addEventListener('click',()=>showConfirm('삭제',`"${r.keyword}" 규칙을 삭제하시겠습니까?`,()=>deleteRule(r.id||r.keyword),'삭제','btn btn-danger'));
@@ -367,8 +418,8 @@ export function updateRuleCatSel(){
   cats.forEach(c=>sel.add(new Option(c,c)));
 }
 export async function addCategory(type,clientId=''){
-  if(!clientId&&!can('settings.reset')){
-    toast('공통 카테고리는 관리자만 추가할 수 있습니다.','error');
+  if(!clientId&&!can('settings.category.common')){
+    toast('공통 카테고리는 팀장 이상만 추가할 수 있습니다.','error');
     return;
   }
   const inputId=type==='지출'?'new-exp-cat':'new-inc-cat';
@@ -387,8 +438,8 @@ export async function addCategory(type,clientId=''){
   toast(`"${name}" 추가됨`,'success');
 }
 export async function deleteCategory(type,name,clientId=''){
-  if(!clientId&&!can('settings.reset')){
-    toast('공통 카테고리는 관리자만 삭제할 수 있습니다.','error');
+  if(!clientId&&!can('settings.category.common')){
+    toast('공통 카테고리는 팀장 이상만 삭제할 수 있습니다.','error');
     return;
   }
   const{getDocs,collection,query,where,doc,deleteDoc}=fb();
@@ -423,26 +474,17 @@ export async function deleteRule(docId){
 }
 // Phase 2 최적화: 배치 삭제 + 배치 추가
 export async function resetCategories(){
+  // 전 입주자의 카테고리와 자동분류 규칙을 모두 지우는 작업인데 검사가 없었다.
+  // 설정 탭은 담당자도 들어오므로 버튼 하나로 조직 전체 분류가 날아갔다.
+  if(!can('settings.category.common')){toast('공통 카테고리 초기화는 팀장 이상만 할 수 있습니다.','error');return;}
   showConfirm('기본값 초기화','기존 카테고리와 규칙을 모두 삭제하고 기본값으로 초기화합니다.',async()=>{
     const{getDocs,collection}=fb();
     const snap=await getDocs(collection(fdb(),COLS.CATEGORIES));
     // 배치 삭제
     const toDelete=snap.docs.map(d=>({col:COLS.CATEGORIES,docId:d.id}));
     if(toDelete.length)await batchDeleteDocs(toDelete);
-    // 기본값 준비
-    const defaults=[
-      {keyword:'',type:'지출',category:'식비',subcategory:'',sortOrder:0},
-      {keyword:'',type:'지출',category:'교통비',subcategory:'',sortOrder:1},
-      {keyword:'',type:'지출',category:'의료비',subcategory:'',sortOrder:2},
-      {keyword:'',type:'지출',category:'생필품',subcategory:'',sortOrder:3},
-      {keyword:'',type:'지출',category:'여가비',subcategory:'',sortOrder:4},
-      {keyword:'',type:'지출',category:'기타',subcategory:'',sortOrder:5},
-      {keyword:'',type:'지출',category:'확인필요',subcategory:'',sortOrder:6},
-      {keyword:'',type:'수입',category:'수입',subcategory:'',sortOrder:0},
-      {keyword:'',type:'수입',category:'확인필요',subcategory:'',sortOrder:1},
-    ];
-    // 배치 추가
-    const toAdd=defaults.map(d=>({col:COLS.CATEGORIES,data:d}));
+    // 기본값 — 초기 설정 마법사(setup.js)와 같은 목록을 쓴다 (constants.js)
+    const toAdd=DEFAULT_CATEGORIES.map(d=>({col:COLS.CATEGORIES,data:{...d}}));
     if(toAdd.length)await batchAddDocs(toAdd);
     await refetchCategories(); loadSettings(); toast('기본값으로 초기화됨','success');
   },'초기화','btn btn-danger');
@@ -461,7 +503,13 @@ export async function loadArchiveHistory(){
     if(!list.length){el.innerHTML='<div style="font-size:13px;color:var(--muted);">마감 이력 없음</div>';return;}
     list.forEach(r=>{
       const div=document.createElement('div'); div.style.cssText='display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;';
-      div.innerHTML=`<span>${r.year}년 마감</span><span style="color:var(--muted);">${r.count}건 · ${r.archivedAt?new Date(r.archivedAt).toLocaleDateString('ko-KR'):''}</span>`;
+      // 중단된 마감을 숨기지 않는다. 예전에는 이력을 마지막에 남겨서, 중간에
+      // 끊기면 화면상 미마감으로 보이고 다시 누르면 거래가 삼중으로 쌓였다.
+      const stuck=r.status==='in_progress';
+      const when=r.archivedAt||r.startedAt;
+      div.innerHTML=`<span>${escHtml(r.year)}년 마감${stuck?' <span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:5px;font-size:11px;font-weight:700;">중단됨 · 다시 실행하면 이어서 진행</span>':''}</span>`
+        // archivedAt 은 서버 타임스탬프다 — new Date() 에 그냥 넣으면 Invalid Date.
+        +`<span style="color:var(--muted);">${r.count??0}건 · ${escHtml(formatDate(when))}</span>`;
       el.appendChild(div);
     });
   }catch(e){console.warn('archive history:',e);}
@@ -471,53 +519,68 @@ export async function confirmArchive(){
   if(!year){toast('연도를 선택하세요.','error');return;}
   showConfirm(`${year}년 데이터 마감`,`${year}년 거래 데이터를 보관하고 계좌 기초잔액을 업데이트합니다.\n영수증·통장사진은 삭제하지 않고 저해상도로 압축 보관됩니다.\n이 작업은 되돌릴 수 없습니다.`,()=>executeArchive(year),'마감 실행','btn btn-danger');
 }
-// Phase 3 최적화: 배치 처리 + 500개 단위 자동 분할
+/**
+ * 연도 마감 — 그 해 거래를 archive_YYYY로 옮기고 기초잔액을 다음 해로 전진시킨다.
+ *
+ * 왜 이렇게 복잡한가
+ *   예전에는 복사 → 기초잔액 전진 → 원본 삭제 → 이력 기록 순서였는데,
+ *   3단계에서 실패하면 거래가 **두 벌 존재하면서 기초잔액은 이미 반영된** 상태가
+ *   되어 잔액이 이중 계상됐다. 이력이 없으니 화면에는 미마감으로 보이고,
+ *   다시 누르면 삼중이 됐다.
+ *
+ *   Firestore 배치는 500개 제한이 있어 1년치를 한 트랜잭션으로 묶을 수 없다.
+ *   그래서 원자성 대신 **중단되어도 안전하게 다시 돌릴 수 있게** 만들었다.
+ *
+ *   1. 이력을 in_progress로 **먼저** 남긴다 → 중단돼도 흔적이 남는다
+ *   2. 사본은 원본 문서 ID를 그대로 써서 저장한다 → 다시 돌려도 덮어쓸 뿐 복제되지 않는다
+ *   3. 기초잔액 전진은 initialBalanceDate로 이미 했는지 확인한다 → 두 번 더해지지 않는다
+ *   4. 원본 삭제는 원래 멱등하다
+ *   5. 이력을 done으로 마무리
+ *
+ * 또 하나 — 예전에는 S.accounts(활성 계좌만)를 순회해서 **비활성 계좌는 거래만
+ * 삭제되고 기초잔액은 전진하지 않아 1년치가 영구 증발했다.** 이제 전 계좌를 본다.
+ */
 export async function executeArchive(year){
+  // 탭 버튼만 숨겨져 있었고 window.executeArchive는 노출되어 있었다
+  if(!can('settings.archive')){toast('연도 마감 권한이 없습니다.','error');return;}
   showLoading(true);
+  const btn=document.getElementById('btn-archive');
   try{
-    const{getDocs,collection,query,where,addDoc,doc}=fb();
-    const db=fdb();
-    const snap=await getDocs(query(collection(db,COLS.TRANSACTIONS),where('date','>=',year+'-01-01'),where('date','<=',year+'-12-31')));
-    const trxList=snap.docs.map(d=>({id:d.id,...d.data()}));
-    if(!trxList.length){showLoading(false);toast(`${year}년 거래 데이터가 없습니다.`,'error');return;}
-    // 0. 아카이브 보관용 이미지 저해상도 재압축 — 삭제하지 않고 Storage 공간만 확보 (best-effort)
-    //    (재압축을 위해 이미지를 다시 읽으므로 버킷 CORS 설정 필요. 실패해도 마감은 진행)
-    let recompressed=0;
-    toast('보관용 이미지 압축 중...','info',3000);
-    for(const t of trxList){
-      if(t.receiptUrl){const nu=await recompressStorageImage(t.receiptUrl);if(nu){t.receiptUrl=nu;recompressed++;}}
+    // 마감은 **서버가** 한다. 두 가지가 브라우저에서는 불가능하다:
+    //   · 마감된 달의 거래 삭제 — 규칙이 막는다(막아야 한다)
+    //   · 보관 이미지 덮어쓰기 — Web SDK 에는 generation 사전조건이 없어
+    //     같은 순간의 증빙 교체를 조용히 뭉갠다
+    //
+    // 한 해 거래가 수천 건이면 한 번의 호출로 끝나지 않으므로, 서버가
+    // "아직 남았다"를 돌려주는 동안 계속 부른다. 모든 단계가 멱등이라
+    // 중간에 끊겨도 같은 연도로 다시 실행하면 이어서 진행된다.
+    let out={done:false}, rounds=0;
+    while(!out.done){
+      if(++rounds>200)throw new Error('마감이 끝나지 않습니다. 다시 실행하면 이어서 진행됩니다.');
+      const res=await window._fbFn.call('runArchive')({year});
+      out=res.data||{};
+      const phase={copy:'거래 보관 중',balance:'기초잔액 전진 중',recompress:'보관 이미지 압축 중',done:'마무리'}[out.phase]||'진행 중';
+      if(btn)btn.textContent=`${phase}... (${out.copied||out.count||0}건)`;
     }
-    const yr=String(year);
-    const bankUpdateMap={}; // accId → 재압축 반영된 bankStatements
-    for(const acc of S.accounts){
-      const stmts=acc.bankStatements||[]; let changed=false; const newStmts=[];
-      for(const s of stmts){
-        const item=typeof s==='string'?{url:s,month:''}:{...s};
-        if(item.url&&(item.month||'').startsWith(yr)){const nu=await recompressStorageImage(item.url);if(nu){item.url=nu;changed=true;recompressed++;}}
-        newStmts.push(item);
-      }
-      if(changed)bankUpdateMap[acc.id]=newStmts;
-    }
-    // 1. 배치 추가: archive_YYYY 테이블에 거래 복제 (재압축된 receiptUrl 반영, 500개씩 자동 분할)
-    const archiveData=trxList.map(t=>({col:'archive_'+year,data:t}));
-    await batchAddDocs(archiveData);
-    // 2. 배치 업데이트: 계좌 기초잔액 + (재압축된) 통장사진 URL (500개 제한 자동 처리)
-    const accUpdates=S.accounts.map(acc=>{
-      const net=trxList.filter(t=>t.accountId===acc.id&&t.type!=='취소').reduce((s,t)=>s+(Number(t.amountIn||0)-Number(t.amountOut||0)),0);
-      const newBal=(Number(acc.initialBalance||0))+net;
-      const data={initialBalance:newBal,initialBalanceDate:(year+1)+'-01-01',currentBalance:newBal};
-      if(bankUpdateMap[acc.id])data.bankStatements=bankUpdateMap[acc.id];
-      return {col:COLS.ACCOUNTS,docId:acc.id,data};
+
+    // 마감은 거래 원본을 삭제하고 기초잔액을 전진시킨다. 되돌릴 수 없으므로
+    // 누가 언제 실행했는지가 남아야 한다.
+    await auditLog('archive.run',{
+      resourceId:'archive_'+year,
+      summary:{ year, count:out.count||0 },
     });
-    if(accUpdates.length)await batchUpdateDocs(accUpdates);
-    // 3. 배치 삭제: 원본 거래만 제거 (Storage 파일은 보관, 500개씩 자동 분할)
-    const trxDeletes=trxList.map(t=>({col:COLS.TRANSACTIONS,docId:t.id}));
-    await batchDeleteDocs(trxDeletes);
-    // 4. 아카이브 기록 추가 (1건, 배치 불필요)
-    await addDoc(collection(db,COLS.CONFIG),{type:'archive',year,archivedAt:new Date().toISOString(),count:trxList.length});
     await fetchBaseData(); loadSettings();
-    toast(`${year}년 마감 완료! ${trxList.length}건 보관, 이미지 ${recompressed}건 압축.`,'success',5000);
-  }catch(e){toast('마감 오류: '+e.message,'error');}
+    toast(`${year}년 마감 완료! ${out.count||0}건 보관, 이미지 ${out.recompressed||0}건 압축.`,'success',5000);
+  }catch(e){
+    // 실패도 기록한다 — 중단된 마감은 데이터가 어중간한 상태로 남을 수 있어
+    // 나중에 "언제 무엇이 중단됐는지"가 복구의 출발점이 된다.
+    await auditLog('archive.failed',{
+      resourceId:'archive_'+year,
+      summary:{ year, reason:String(e.message||e) },
+    });
+    toast(`마감 중단: ${e.message}\n같은 연도로 다시 실행하면 이어서 진행됩니다(사본은 중복되지 않습니다).`,'error',8000);
+  }
+  if(btn)btn.textContent='연도 마감 실행';
   showLoading(false);
 }
 
@@ -584,6 +647,7 @@ export async function loadBudgetForm(){
 
 // Phase 2 최적화: 배치 혼합 작업 사용
 export async function saveBudget(){
+  if(!can('settings.budget')){toast('예산 설정 권한이 없습니다.','error');return;}
   const clientId=document.getElementById('budget-client-sel')?.value;
   const year=Number(document.getElementById('budget-year-sel')?.value);
   if(!clientId||!year)return;
@@ -612,169 +676,179 @@ export async function saveBudget(){
 // ─────────────────────────────────────────────
 // Firebase 초기화 (관리자 전용)
 // ─────────────────────────────────────────────
+/**
+ * 전체 초기화.
+ *
+ * 종전 구현의 문제
+ *   · `await deleteDoc` 한 건씩 — 수천 건이면 매우 느리고, 중간에 실패하면
+ *     **DB가 반쯤 지워진 채로 남으며** 어디까지 지웠는지 알 수 없어 이어서
+ *     진행할 수도 없었다.
+ *   · 확인이 브라우저 prompt() 하나.
+ *   · 화면 설명은 "거래/계좌/입주자/보고서"인데 실제로는 카테고리·고정항목·
+ *     설정(config)까지 지웠다 — 동의한 범위와 실제 범위가 달랐다.
+ *     특히 config를 지우면 권한 등급표와 마감 색인이 함께 사라졌다.
+ *
+ * 지금
+ *   · 지울 대상은 domain/data-reset.js의 표 하나가 정하고, 확인 창이 그 표를
+ *     그대로 보여준다(보존되는 것도 함께).
+ *   · 배치(499건)로 지우고 진행 상태를 systemOperations 문서에 남긴다 →
+ *     중단되면 이어서 진행한다.
+ *   · 성공·실패 모두 변경 이력에 남는다.
+ */
 export async function executeFirebaseReset(){
-  if(!can('settings.reset')){toast('권한이 없습니다.','error');return;}
-  showConfirm('Firebase 전체 초기화','모든 거래/계좌/입주자/보고서 데이터를 삭제합니다. 정말로 진행하시겠습니까?',async()=>{
-    const code=prompt('확인을 위해 "초기화"를 입력하세요:');
-    if(code!=='초기화'){toast('취소되었습니다.','info');return;}
-    showLoading(true);
-    try{
-      const{getDocs,collection,deleteDoc,doc}=fb();
-      const db=fdb();
-      const cols=[COLS.TRANSACTIONS,COLS.CLIENTS,COLS.ACCOUNTS,COLS.CATEGORIES,COLS.REPORTS,COLS.CONFIG,COLS.EXCEL_UPLOADS,'fixedItems'];
-      const storageUrls=[]; // Storage 고아 파일 방지: 삭제 전 파일 URL 수집
-      for(const col of cols){
+  if(!can('settings.reset')){toast(unavailableMessage('settings.reset'),'error',5000);return;}
+
+  const{getDoc,doc}=fb();
+  const db=fdb();
+  const opRef=doc(db,SYSTEM_OPS,RESET_OPERATION_ID);
+
+  // 다른 사람이 지금 돌리고 있으면 겹치지 않게 막는다.
+  let state=null;
+  try{ const s=await getDoc(opRef); state=s.exists()?s.data():null; }catch(e){ /* 상태를 못 읽으면 새로 시작 */ }
+  if(isResetLockActive(state)){
+    toast('초기화가 이미 진행 중입니다. 잠시 후 다시 확인하세요.','error',6000);
+    return;
+  }
+
+  const resuming=state&&state.status==='running';
+  const remaining=remainingCollections(state);
+  const willDelete=remaining.map(c=>'· '+c.label).join('\n');
+  const preserved=RESET_PRESERVED.map(p=>'· '+p).join('\n');
+
+  showConfirm(
+    resuming?'초기화 이어서 진행':'전체 초기화',
+    `지웁니다:\n${willDelete}\n\n그대로 둡니다:\n${preserved}\n\n`
+      + `되돌릴 수 없습니다. 계속하려면 다음 화면에 "${DATA_RESET_CONFIRM_TEXT}"를 입력하세요.`,
+    async()=>{
+      const code=prompt(`확인을 위해 "${DATA_RESET_CONFIRM_TEXT}"를 입력하세요:`);
+      if(!isResetConfirmed(code)){toast('취소되었습니다.','info');return;}
+      await runReset(opRef,state);
+    },
+    resuming?'이어서 진행':'초기화 실행','btn btn-danger');
+}
+
+/** 진행률 표시 갱신. */
+function paintResetProgress(state,visible=true){
+  const wrap=document.getElementById('reset-progress');
+  if(!wrap)return;
+  wrap.style.display=visible?'block':'none';
+  const bar=document.getElementById('reset-progress-bar');
+  if(bar)bar.style.width=resetProgressPercent(state)+'%';
+  const label=document.getElementById('reset-progress-label');
+  if(label)label.textContent=resetProgressLabel(state);
+}
+
+async function runReset(opRef,prevState){
+  const{getDocs,collection,setDoc,updateDoc}=fb();
+  const db=fdb();
+
+  const doneCollections=[...((prevState&&prevState.doneCollections)||[])];
+  const deletedCounts={...((prevState&&prevState.deletedCounts)||{})};
+  const startedAt=(prevState&&prevState.startedAt)||new Date().toISOString();
+
+  const touch=async(extra={})=>{
+    const data={status:'running',startedAt,updatedAt:new Date().toISOString(),
+      doneCollections,deletedCounts,by:String(S.user?.userId||''),...extra};
+    await setDoc(opRef,data,{merge:true});
+    paintResetProgress(data);
+    return data;
+  };
+
+  showLoading(true);
+  const storageUrls=[];   // Storage 고아 파일 방지: 삭제 전 URL을 모은다
+  try{
+    await touch();
+
+    for(const {col,label} of remainingCollections(prevState)){
+      // 컬렉션이 비어 있을 때까지 반복한다 — 한 배치가 499건이므로
+      // 큰 컬렉션은 여러 번 돈다. 삭제는 멱등하므로 재시도해도 안전하다.
+      for(;;){
         const snap=await getDocs(collection(db,col));
-        for(const d of snap.docs){
+        if(snap.empty)break;
+        const chunk=snap.docs.slice(0,MAX_DELETES_PER_BATCH);
+        for(const d of chunk){
           const data=d.data();
           if(col===COLS.TRANSACTIONS&&data.receiptUrl)storageUrls.push(data.receiptUrl);
-          else if(col===COLS.ACCOUNTS)(data.bankStatements||[]).forEach(s=>{if(s&&typeof s==='object'){if(s.url)storageUrls.push(s.url);if(s.thumbUrl)storageUrls.push(s.thumbUrl);}else if(typeof s==='string')storageUrls.push(s);});
-          else if(col===COLS.EXCEL_UPLOADS&&data.url)storageUrls.push(data.url); // 구형 데이터 호환
-          await deleteDoc(doc(db,col,d.id));
+          else if(col===COLS.ACCOUNTS)(data.bankStatements||[]).forEach(s=>{
+            if(s&&typeof s==='object'){if(s.url)storageUrls.push(s.url);if(s.thumbUrl)storageUrls.push(s.thumbUrl);}
+            else if(typeof s==='string')storageUrls.push(s);
+          });
+          else if(col===COLS.EXCEL_UPLOADS&&data.url)storageUrls.push(data.url);
         }
+        await batchDeleteDocs(chunk.map(d=>({col,docId:d.id})));
+        deletedCounts[col]=(deletedCounts[col]||0)+chunk.length;
+        await touch();
+        if(chunk.length<MAX_DELETES_PER_BATCH)break;
       }
-      // Firestore 삭제 후 Storage 파일도 전량 삭제(best-effort)
-      await deleteManyFromStorage(storageUrls);
-      await fetchBaseData();
-      loadSettings();
-      toast(`초기화 완료. 모든 데이터가 삭제되었습니다. (첨부 파일 ${storageUrls.length}건 정리)`,'success',5000);
-    }catch(e){toast('초기화 오류: '+e.message,'error');}
-    showLoading(false);
-  },'초기화 실행','btn btn-danger');
-}
+      doneCollections.push(col);
+      await touch();
+      toast(`${label} 삭제 완료`,'info',1500);
+    }
 
-// ─────────────────────────────────────────────
-// 권한 관리 패널 (관리자 전용)
-// ─────────────────────────────────────────────
-const PERM_SECTIONS=[
-  {label:'📌 내비게이션',keys:['nav.report','nav.settings','nav.staff']},
-  {label:'💳 거래내역',keys:['trx.view.all','trx.create','trx.edit','trx.delete','trx.delete.bulk','trx.reorder','trx.transfer','trx.category.edit','trx.csv']},
-  {label:'📁 엑셀·증빙',keys:['excel.upload','receipt.upload','receipt.print','bankbook.upload']},
-  {label:'📑 보고서',keys:['report.view.all','report.view.own','report.draft','report.edit','report.delete','report.recall','report.submit','report.approve.team','report.approve.center','report.reject']},
-  {label:'⚙️ 설정',keys:['settings.staff','settings.client','settings.account','settings.fixed','settings.archive','settings.reset']},
-];
-const PERM_LABELS={
-  'nav.report':'보고서 탭','nav.settings':'설정 탭','nav.staff':'직원관리 패널',
-  'trx.view.all':'전체 거래 조회','trx.create':'수기 입력','trx.edit':'거래 수정',
-  'trx.delete':'거래 삭제','trx.delete.bulk':'일괄 삭제','trx.reorder':'드래그 순서 변경',
-  'trx.transfer':'자산이동 입력','trx.category.edit':'카테고리 인라인 수정','trx.csv':'CSV 내보내기',
-  'excel.upload':'엑셀 업로드','receipt.upload':'영수증 업로드','receipt.print':'영수증 일괄 출력',
-  'bankbook.upload':'통장 사진 업로드',
-  'report.view.all':'전체 보고서 열람','report.view.own':'본인 담당 열람','report.draft':'초안 작성',
-  'report.edit':'보고서 수정','report.delete':'보고서 삭제','report.recall':'보고서 회수',
-  'report.submit':'보고서 제출','report.approve.team':'팀장 결재','report.approve.center':'센터장 결재','report.reject':'보고서 반려',
-  'settings.staff':'직원 등록/수정/삭제','settings.client':'입주자 관리','settings.account':'계좌 관리',
-  'settings.fixed':'고정항목 관리','settings.archive':'연도 마감','settings.reset':'전체 초기화',
-};
-const ROLES=['입력자','담당자','팀장','센터장','관리자'];
+    // Firestore 삭제 후 Storage 파일도 전량 삭제(best-effort)
+    await deleteManyFromStorage(storageUrls);
 
-export function renderPermissionPanel(){
-  const container=document.getElementById('permission-panel-content');
-  if(!container)return;
-  // 현재 저장된 권한 또는 기본값
-  const perms=S.permissions||DEFAULT_PERMISSIONS;
-  // 편집용 임시 복사본 (deep copy)
-  const draft=JSON.parse(JSON.stringify(perms));
-  // 역할 탭
-  let activeRole=ROLES[1]; // 기본: 담당자
-  function renderPanel(){
-    container.innerHTML=`
-      <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap;">
-        ${ROLES.map(r=>`<button onclick="window._permSetRole('${escAttr(r)}')" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:1.5px solid ${r===activeRole?'#7c3aed':'#e2e8f0'};background:${r===activeRole?'#f5f3ff':'#fff'};color:${r===activeRole?'#7c3aed':'#64748b'};cursor:pointer;">${r}</button>`).join('')}
-      </div>
-      <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:12px;">
-          <thead><tr>
-            <th style="text-align:left;padding:8px 10px;background:#1e293b;color:#fff;font-size:11px;min-width:120px;">권한</th>
-            <th style="padding:8px 10px;background:#1e293b;color:#fff;font-size:11px;min-width:60px;text-align:center;">허용</th>
-          </tr></thead>
-          <tbody>
-            ${PERM_SECTIONS.map(sec=>`
-              <tr><td colspan="2" style="background:#3b82f6;color:#fff;font-weight:700;padding:6px 10px;font-size:11px;">${sec.label}</td></tr>
-              ${sec.keys.map(key=>{
-                const val=draft[activeRole]?.[key]??DEFAULT_PERMISSIONS[activeRole]?.[key]??false;
-                return `<tr style="border-bottom:1px solid #f1f5f9;">
-                  <td style="padding:7px 10px;color:#475569;">${PERM_LABELS[key]||key}</td>
-                  <td style="text-align:center;padding:7px 10px;">
-                    <input type="checkbox" data-role="${activeRole}" data-key="${key}" ${val?'checked':''} style="width:15px;height:15px;cursor:pointer;accent-color:#7c3aed;">
-                  </td>
-                </tr>`;
-              }).join('')}
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
-        <button id="btn-perm-save" style="padding:9px 20px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">💾 저장</button>
-        <button id="btn-perm-reset" style="padding:9px 20px;background:#fff;color:#64748b;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">↺ 기본값으로 초기화</button>
-      </div>
-    `;
-    // 체크박스 이벤트
-    container.querySelectorAll('input[type=checkbox]').forEach(cb=>{
-      cb.addEventListener('change',()=>{
-        const r=cb.dataset.role;
-        const k=cb.dataset.key;
-        if(!draft[r])draft[r]={};
-        draft[r][k]=cb.checked;
-      });
-    });
-    // 저장 버튼
-    document.getElementById('btn-perm-save')?.addEventListener('click',async()=>{
-      // draft에서 누락된 역할/키는 DEFAULT_PERMISSIONS로 채움
-      const full={};
-      ROLES.forEach(r=>{full[r]={};Object.keys(DEFAULT_PERMISSIONS[r]).forEach(k=>{full[r][k]=draft[r]?.[k]??DEFAULT_PERMISSIONS[r][k];});});
-      try{
-        await savePermissions(full);
-        toast('권한이 저장되었습니다. 5초 후 페이지가 새로고침됩니다.','success');
-        setTimeout(()=>location.reload(),5000);
-      }catch(e){toast('저장 실패: '+e.message,'error');}
-    });
-    // 기본값 초기화 버튼
-    document.getElementById('btn-perm-reset')?.addEventListener('click',()=>{
-      const code=prompt('모든 역할 권한을 기본값으로 초기화합니다.\\n확인을 위해 "초기화"를 입력하세요:');
-      if(code!=='초기화')return;
-      ROLES.forEach(r=>Object.keys(DEFAULT_PERMISSIONS[r]).forEach(k=>{if(!draft[r])draft[r]={};draft[r][k]=DEFAULT_PERMISSIONS[r][k];}));
-      renderPanel();
-      toast('기본값으로 초기화되었습니다. 저장 버튼을 눌러 적용하세요.','info');
-    });
+    const total=Object.values(deletedCounts).reduce((s,n)=>s+Number(n||0),0);
+    await updateDoc(opRef,{status:'done',finishedAt:new Date().toISOString()});
+    await auditLog('data.reset',{summary:{count:total}});
+    await fetchBaseData();
+    loadSettings();
+    paintResetProgress({doneCollections,deletedCounts},false);
+    toast(`초기화 완료 — ${total}건 삭제, 첨부 파일 ${storageUrls.length}건 정리.`,'success',6000);
+  }catch(e){
+    // 상태를 'failed'로 남긴다 — 다음 실행이 이어서 진행할 수 있게.
+    try{ await updateDoc(opRef,{status:'failed',error:String(e.message||e),
+      updatedAt:new Date().toISOString()}); }catch(_){ /* 상태 기록 실패는 무시 */ }
+    await auditLog('data.resetFailed',{summary:{reason:String(e.message||e)}});
+    toast(`초기화 중단: ${e.message}\n다시 실행하면 남은 항목부터 이어서 진행합니다.`,'error',9000);
   }
-  window._permSetRole=(r)=>{activeRole=r;renderPanel();};
-  renderPanel();
+  showLoading(false);
 }
 
+
 // ─────────────────────────────────────────────
-// 탭 전환 함수
+// 탭 전환
 // ─────────────────────────────────────────────
+/**
+ * 설정 탭 초기화.
+ *
+ * 탭 목록·권한·전환은 settings-shell.js(+settings-nav.js)가 담당한다.
+ * 여기서는 각 탭이 열릴 때 어떤 렌더 함수를 부를지 등록하고, 카테고리
+ * 서브탭만 바인딩한다.
+ *
+ * 왜 옮겼나: 종전에는 탭을 추가할 때 HTML 버튼 · 패널 div · 권한 if문 ·
+ * 클래스 토글 네 곳을 손대야 했고, 가로 탭이라 개수가 늘면 무너졌다.
+ * 이제 SETTINGS_TABS 배열 한 줄 + 패널 div 하나로 끝난다.
+ */
 export function initSettingsTabs(){
-  document.querySelectorAll('.settings-tab-btn').forEach(btn=>{
-    btn.addEventListener('click',e=>{
-      const tab=e.target.dataset.tab;
-      switchSettingsTab(tab);
-    });
+  // 탭별 렌더 함수 등록 (없는 탭은 정적 HTML만 보여진다)
+  registerPanel('overview',    renderSettingsOverview);
+  registerPanel('list',        renderManagement);
+  registerPanel('audit',       renderSettingsAudit);
+  registerPanel('team',        renderTeamsPanel);
+  registerPanel('bankparser',  renderBankParserPanel);
+  // 권한 패널은 편집 중인 draft를 들고 있다. 이미 그려져 있으면 다시 그리지 않는다
+  // — 탭을 왕복할 때마다 저장하지 않은 변경이 사라지면 쓸 수 없다.
+  registerPanel('permissions', () => {
+    if (!document.getElementById('btn-perm-save')) renderPermissionPanel();
   });
+
   document.querySelectorAll('.category-subtab-btn').forEach(btn=>{
+    if(btn.dataset.bound)return; btn.dataset.bound='1';
     btn.addEventListener('click',e=>{
-      const subtab=e.target.dataset.subtab;
-      switchCategorySubtab(subtab);
+      switchCategorySubtab(e.currentTarget.dataset.subtab);
     });
   });
+
+  registerCrudDeps({ refresh: renderManagement, refetchUsers, refetchClients, refetchAccounts });
+  initSettingsShell();
+  // 열려 있지 않은 탭에도 알림 개수가 붙어야 한다 — 「개요」를 보지 않아도
+  // 승인 대기나 미납이 있다는 것이 레일에서 보이게.
+  refreshOverviewBadges();
 }
 
-export function switchSettingsTab(tab){
-  // 마감은 settings.archive(센터장·관리자), 권한 관리는 settings.reset(관리자)로 각각 게이트
-  if(tab==='archive'&&!can('settings.archive')){
-    alert('데이터 마감은 센터장·관리자만 사용할 수 있습니다.');
-    return;
-  }
-  if(tab==='permissions'&&!can('settings.reset')){
-    alert('권한 관리는 관리자만 사용할 수 있습니다.');
-    return;
-  }
-  document.querySelectorAll('.settings-tab-btn').forEach(b=>b.classList.remove('active'));
-  document.querySelector(`[data-tab="${tab}"]`)?.classList.add('active');
-  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
-  document.getElementById(`${tab}-tab-content`)?.classList.add('active');
-}
+// 다른 모듈·인라인 onclick이 부르던 이름을 유지한다.
+export { switchSettingsTab };
 
 export function switchCategorySubtab(subtab){
   document.querySelectorAll('.category-subtab-btn').forEach(b=>b.classList.remove('active'));
@@ -784,18 +858,36 @@ export function switchCategorySubtab(subtab){
 }
 
 // ─────────────────────────────────────────────
-// 회원가입 승인 (inline onclick에서 호출)
+// 회원가입 승인
 // ─────────────────────────────────────────────
-window.approveStaff = async (docId) => {
-  const { doc, updateDoc } = fb();
-  const sel = document.getElementById('pending-role-' + docId);
-  const role = sel?.value || '입력자';
+export async function approveStaff(userId, requested=null) {
+  const sel = document.getElementById('pending-role-' + userId);
+  const role = requested?.role || sel?.value || '입력자';
+  const isAdmin = requested?.isAdmin === true;
   try {
-    await updateDoc(doc(fdb(), COLS.USERS, docId), { approved: true, role });
-    toast(`승인 완료 — ${role} 권한으로 로그인할 수 있습니다.`, 'success');
+    // users 쓰기는 보안 규칙이 막는다. 서버가 호출자 등급을 확인하고 처리한다
+    // (예전에는 팀장이 신규 가입자를 센터장으로 승인할 수 있었다).
+    const response=await window._fbFn.call('approveStaff')({ userId, role, isAdmin });
+    const state=response.data?.state;
+    // 누구를 어떤 권한으로 들였는지가 가장 중요한 기록 중 하나다.
+    await auditLog('staff.approve',{resourceId:userId,summary:{
+      target:S.users.find(u=>u.id===userId)?.name||userId, role}});
+    const msg={
+      pending:'변경을 요청했습니다. 센터장 또는 관리자의 승인을 기다립니다.',
+      executed:`변경 완료 — ${role}${isAdmin?' + 시스템 관리자':''}`,
+    }[state]||'처리 상태를 확인해 주세요.';
+    toast(msg, state==='executed'?'success':'info', 5000);
     await refetchUsers(); renderManagement(); updateSignupBadge();
-  } catch(e) { toast('승인 오류: '+e.message, 'error'); }
-};
+  } catch(e) { toast('승인 오류: '+(e.message||'다시 시도하세요.'), 'error'); }
+}
+
+export async function cancelStaffPrivilegeChange(userId){
+  try{
+    await window._fbFn.call('cancelStaffPrivilegeChange')({userId});
+    toast('역할 변경 요청을 취소했습니다. 이력은 보존됩니다.','info');
+    await refetchUsers(); renderManagement(); updateSignupBadge();
+  }catch(e){toast('취소 오류: '+(e.message||'다시 시도하세요.'),'error');}
+}
 
 // 설정 네비게이션의 회원가입 승인 대기 뱃지 갱신 (관리 권한자에게만 표시)
 export function updateSignupBadge(){
@@ -804,3 +896,4 @@ export function updateSignupBadge(){
   const n=(can('nav.staff')&&Array.isArray(S.users))?S.users.filter(u=>u.approved===false).length:0;
   if(n>0){badge.textContent=n;badge.style.display='inline';}else badge.style.display='none';
 }
+

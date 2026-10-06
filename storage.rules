@@ -1,9 +1,181 @@
 rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────
+// Smart Care Ledger — Storage 보안 규칙
+//
+// 영수증 · 통장 사진 · 은행 원본 파일이 들어 있다. 거주인의 금전 기록이므로
+// 담당 배정 밖에서는 보이지 않아야 한다.
+//
+// 판정 근거는 Firestore 의 authz/{uid} 문서다 — firestore.rules 와 같은 것이다.
+// 토큰 클레임을 쓰지 않는 이유도 같다: 퇴사·강등이 반영되지 않는다.
+//
+// ⚠️ Storage 규칙은 평가 한 번에 **Firestore 문서를 2개까지만** 읽을 수 있다.
+//    그래서 재직 여부·권한·담당 목록을 authz 한 문서에 모아 두었고, 여기서는
+//    그 문서 하나만 읽는다. 계좌→입주자를 되짚는 조회를 넣으면 한도에 걸리므로
+//    통장 경로에 clientId 를 **직접 넣는다**(아래 참고).
+//
+// ⚠️ firestore.rules 와 함께 적용한다. authz 백필이 끝난 뒤여야 한다 —
+//    문서가 없으면 평가가 실패해 전원이 막힌다(fail-closed).
+// ─────────────────────────────────────────────────────────────
+
 service firebase.storage {
   match /b/{bucket}/o {
-    match /{allPaths=**} {
-      allow read: if true;
-      allow write: if true;
+
+    function signedIn() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    /** 권한 스냅샷. 이 평가에서 읽는 유일한 Firestore 문서다. */
+    function me() {
+      return firestore.get(/databases/(default)/documents/authz/$(request.auth.uid)).data;
+    }
+
+    function active() {
+      return signedIn() && me().get('enabled', false) == true;
+    }
+
+    function validRole(role) {
+      return role in ['입력자', '담당자', '팀장', '센터장'];
+    }
+
+    /** 고정 역할 정책. 저장된 과거 caps는 권한 근거가 아니다. */
+    function cap(name) {
+      let role = me().get('role', '');
+      return active()
+        && (validRole(role) || (role == '' && me().get('isAdmin', false) == true))
+        && ((role == '입력자' && name in ['receiptUpload', 'receiptAttachOwn'])
+          || (role == '담당자' && name in [
+            'trxViewAll', 'excelUpload', 'bankbookUpload', 'receiptUpload',
+            'receiptAttachOwn', 'receiptAttachAny', 'receiptReplace', 'receiptPrint'
+          ])
+          || (role == '팀장' && name in ['trxViewAll', 'receiptPrint'])
+          || (role == '센터장' && name in ['clientViewAll', 'trxViewAll', 'receiptPrint']));
+    }
+
+    function mine(clientId) {
+      return me().get('role', '') == '팀장'
+        ? clientId in me().get('leaderClientIds', [])
+        : clientId in me().get('accessibleClientIds', []);
+    }
+
+    /** 담당이거나, 담당과 무관하게 전체를 보는 권한이 있거나(팀장 이상). */
+    function seesClient(clientId) {
+      return cap('clientViewAll') || (active() && mine(clientId));
+    }
+
+    // 업로드 크기 상한 — services/storage.js validateUploadSize 와 같은 기준
+    function sizeOk() {
+      return request.resource.size < 15 * 1024 * 1024;
+    }
+
+    function receiptTypeOk() {
+      return request.resource.contentType.matches('image/(jpeg|png|webp|heic|heif)');
+    }
+
+    /**
+     * 서버가 먼저 만든, 아직 유효한 본인 job 한 건에만 파일 한 장을 허용한다.
+     *
+     * Storage 규칙은 Firestore 조회가 평가당 2회뿐이다. active()/cap()과
+     * receiptJob()을 조건마다 부르면 같은 문서라도 런타임이 반복 조회해 한도를
+     * 넘길 수 있으므로 authz 1회 + job 1회로 스냅샷을 고정한다.
+     */
+    function canWriteReceiptStaging(uid, uploadId) {
+      let authz = firestore.get(
+        /databases/(default)/documents/authz/$(request.auth.uid)
+      ).data;
+      let job = firestore.get(
+        /databases/(default)/documents/receiptJobs/$(uid)/items/$(uploadId)
+      ).data;
+      return signedIn()
+        && request.auth.uid == uid
+        && authz.get('enabled', false) == true
+        && (authz.get('role', '') == '입력자' || authz.get('role', '') == '담당자')
+        && job.get('uid', '') == uid
+        && job.get('uploadId', '') == uploadId
+        && job.get('state', '') == 'uploaded'
+        && job.expireAt > request.time;
+    }
+
+    // ── 영수증 ──
+    //
+    // 경로에 clientId 가 있어 그것만으로 범위를 판정한다.
+    //
+    // 쓰기는 **서버만** 한다(functions/receipt-fns.js finalizeReceipts).
+    // 브라우저가 여기에 쓸 수 있으면 이미 붙어 있는 증빙을 조용히 덮어쓸 수
+    // 있고, 그러면 감사 근거가 사라진다. 올리는 자리는 아래 스테이징이다.
+    //
+    // 삭제도 서버만. 증빙은 거래에 붙은 기록이고, 지우는 것은 거래 쪽 흐름을
+    // 함께 봐야 하는 일이다.
+    match /receipts/{clientId}/{fileName} {
+      allow get:  if seesClient(clientId);
+      // 목록 조회 차단. 열어 두면 경로를 몰라도 파일 이름을 훑을 수 있고,
+      // 파일 이름에는 영수증 상호·날짜가 들어간다.
+      allow list:  if false;
+      allow write: if false;
+    }
+
+    // ── 영수증 스테이징 ──
+    //
+    // 브라우저가 올리는 자리. 경로에 uid 가 있어 **소유권을 경로로** 검증한다
+    // (문서 안의 필드로 판정하면 남의 것을 가리키는 파일을 만들 수 있다).
+    // 여기서 최종 경로로 옮기는 것은 서버만 한다.
+    // 경로 모양은 receipt-jobs.cjs 의 stagingPath() 가 정한다:
+    //   receiptStaging/{uid}/{uploadId}/source
+    // 규칙은 세그먼트 **개수까지** 맞아야 매치된다. 한 칸이 어긋나면 어떤 규칙도
+    // 걸리지 않아 기본 거부가 되고, 그 사실은 실제 업로드를 해 봐야 드러난다.
+    match /receiptStaging/{uid}/{uploadId}/{fileName} {
+      allow get:    if active() && request.auth.uid == uid
+                    && firestore.exists(
+                      /databases/(default)/documents/receiptJobs/$(uid)/items/$(uploadId)
+                    );
+      allow list:   if false;
+      // 덮어쓰기 금지. 서버가 판독한 내용과 실제 파일이 달라질 수 있다 —
+      // 판독 뒤에 다른 사진으로 바꿔치기하는 경로가 열린다.
+      //
+      // `allow update: if false` 만으로는 부족하다. 같은 경로에 다시 올리는
+      // 요청이 create 로 분류되는 경우가 있어(에뮬레이터에서 확인) 그대로
+      // 통과한다. 그래서 **객체가 이미 있으면 거부**한다고 직접 적는다.
+      allow create: if canWriteReceiptStaging(uid, uploadId)
+                    && fileName == 'source'
+                    && sizeOk() && receiptTypeOk()
+                    && resource == null;
+      allow update: if false;
+      allow delete: if canWriteReceiptStaging(uid, uploadId)
+                    && fileName == 'source';
+    }
+
+    // ── 통장 사진 (신규 경로) ──
+    //
+    // 경로에 clientId 를 넣은 이유: 예전 경로는 accountId 뿐이라 "이 계좌가
+    // 누구 것인가"를 알려면 accounts 문서를 한 번 더 읽어야 했고, 그러면
+    // Firestore 조회가 2회가 되어 한도에 걸린다.
+    match /bankbooks/{clientId}/{accountId}/{fileName} {
+      allow get:  if seesClient(clientId);
+      allow list: if false;
+
+      allow create, update: if cap('bankbookUpload') && seesClient(clientId) && sizeOk();
+      allow delete:         if cap('bankbookUpload') && seesClient(clientId);
+    }
+
+    // ── 통장 사진 (구 경로) ──
+    //
+    // 이미 올라간 사진의 URL 이 이 경로를 가리킨다. 끊으면 예전 통장 사진이
+    // 전부 보이지 않는다. 그래서 **읽기만** 남기고 쓰기는 닫는다.
+    // 경로에 clientId 가 없어 담당 범위를 판정할 근거가 없다는 것이 이
+    // 예외의 대가다 — 재직 여부까지만 본다. 신규 업로드는 위 경로로만 간다.
+    match /bankbooks/{accountId}/{fileName} {
+      allow get:   if false;
+      allow list:  if false;
+      allow write: if false;
+    }
+
+    // ── 은행 원본 파일 (엑셀) ──
+    match /excel/{clientId}/{accountId}/{fileName} {
+      allow get:  if seesClient(clientId);
+      allow list: if false;
+
+      allow create, update: if cap('excelUpload') && seesClient(clientId) && sizeOk();
+      allow delete:         if cap('excelUpload') && seesClient(clientId);
     }
   }
 }

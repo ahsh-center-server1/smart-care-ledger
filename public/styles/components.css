@@ -1,0 +1,448 @@
+/* public/styles/components.css
+ *
+ * 컴포넌트 클래스 — 인라인 스타일을 대체할 이름들.
+ *
+ * 왜 필요한가
+ *   렌더 코드가 마크업을 만들 때마다 style="..." 를 문자열로 붙이고 있어
+ *   같은 모양이 여러 벌 복붙돼 있다(활성/비활성 토글 3벌, 표 헤더 셀 여러 벌,
+ *   버튼 팩토리 2벌). 색을 한 번 바꾸려면 전부 찾아야 하고, 하나를 놓치면
+ *   화면에서만 어긋난다.
+ *
+ *   여기 정의한 클래스로 옮기면 마크업 문자열이 짧아지고 모양이 한 곳에서 정해진다.
+ *   새로 쓰는 UI는 반드시 이 클래스를 쓰고, 기존 인라인 스타일은 모듈 단위로 옮긴다.
+ *
+ * 접근성 원칙 (사용자층: 40~60대 사회복지사)
+ *   · 누르는 것은 최소 44px (--touch-target)
+ *   · 포커스 링은 focus-visible에만 — 마우스 클릭에는 안 뜨고 키보드에는 또렷하게
+ *   · 입력칸 글자는 16px 이상 — iOS Safari가 그보다 작으면 포커스 시 화면을 확대한다
+ *   · 상태를 색만으로 표현하지 않는다 (색 + 굵기/형태/아이콘을 함께)
+ *   · 오류 표시는 [aria-invalid="true"]가 구동한다 — 클래스와 ARIA가 어긋날 수 없게
+ */
+
+/* ─────────────────────────────────────────────────────────────
+ * 버튼
+ * ───────────────────────────────────────────────────────────── */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  min-height: var(--touch-target);
+  padding: .625rem 1.25rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: var(--transition);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* 마우스로 눌렀을 때는 링이 뜨지 않고, 키보드 이동에는 확실히 보인다.
+   ring-offset을 주는 이유: 버튼 색과 링 색이 붙으면 고령 사용자에게 잘 안 보인다. */
+.ui-btn:focus-visible,
+.ui-input:focus-visible,
+.ui-select:focus-visible,
+.ui-icon-btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.ui-btn:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
+
+.ui-btn--primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: var(--shadow-sm);
+}
+.ui-btn--primary:hover:not(:disabled) { background: var(--primary-hover); }
+
+.ui-btn--secondary {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  box-shadow: var(--shadow-sm);
+}
+.ui-btn--secondary:hover:not(:disabled) { background: var(--muted-bg); }
+
+.ui-btn--danger {
+  background: var(--destructive);
+  color: var(--destructive-foreground);
+  box-shadow: var(--shadow-sm);
+}
+.ui-btn--danger:hover:not(:disabled) { filter: brightness(.92); }
+
+.ui-btn--outline {
+  background: transparent;
+  color: var(--foreground);
+  border-color: var(--border-color);
+}
+.ui-btn--outline:hover:not(:disabled) { background: var(--muted-bg); }
+
+.ui-btn--ghost {
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.ui-btn--ghost:hover:not(:disabled) { background: var(--muted-bg); color: var(--foreground); }
+
+/* 크기 — sm도 터치 타깃은 지킨다(패딩만 줄인다). */
+.ui-btn--sm { padding: .375rem .75rem; font-size: .9375rem; }
+.ui-btn--lg { min-height: 3rem; padding: .75rem 1.5rem; font-size: 1.0625rem; }
+
+.ui-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-target);
+  height: var(--touch-target);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.ui-icon-btn:hover { background: var(--muted-bg); color: var(--foreground); }
+
+/* ─────────────────────────────────────────────────────────────
+ * 폼
+ * ───────────────────────────────────────────────────────────── */
+.ui-field { display: block; margin-bottom: 1rem; }
+
+.ui-label {
+  display: block;
+  margin-bottom: .375rem;
+  color: var(--secondary-foreground);
+  font-size: .875rem;
+  font-weight: 700;
+}
+.ui-label--required::after { content: ' *'; color: var(--destructive); }
+
+.ui-input,
+.ui-select,
+.ui-textarea {
+  display: block;
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: .625rem .75rem;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--foreground);
+  /* 16px 미만이면 iOS Safari가 포커스 시 화면을 확대해 레이아웃이 튄다. */
+  font-family: inherit;
+  font-size: 1rem;
+  transition: border-color .18s, box-shadow .18s;
+}
+.ui-textarea { min-height: 5rem; resize: vertical; line-height: 1.5; }
+
+.ui-input:focus,
+.ui-select:focus,
+.ui-textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px hsl(212 90% 38% / .14);
+}
+.ui-input::placeholder, .ui-textarea::placeholder { color: var(--muted-foreground); }
+.ui-input:disabled, .ui-select:disabled, .ui-textarea:disabled {
+  background: var(--muted-bg); color: var(--muted-foreground); cursor: not-allowed;
+}
+
+/* 오류 표시를 ARIA 속성이 구동한다 — 클래스만 붙이고 aria를 빼먹는 일이 생기지 않게. */
+.ui-input[aria-invalid="true"],
+.ui-select[aria-invalid="true"],
+.ui-textarea[aria-invalid="true"] {
+  border-color: var(--destructive);
+  box-shadow: 0 0 0 3px hsl(0 62% 46% / .12);
+}
+
+.ui-error {
+  display: flex;
+  align-items: flex-start;
+  gap: .25rem;
+  margin-top: .375rem;
+  color: var(--destructive);
+  font-size: .875rem;
+  font-weight: 600;
+}
+/* 색만으로 오류를 알리지 않는다. */
+.ui-error::before { content: '⚠'; flex-shrink: 0; }
+
+.ui-hint { margin-top: .375rem; color: var(--muted-foreground); font-size: .875rem; }
+
+/* 활성/비활성 토글 — settings.js에 거의 같은 마크업이 세 벌 복붙돼 있던 것 */
+.ui-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 1.5rem;
+  border: none;
+  border-radius: 999px;
+  background: var(--input-border);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.ui-switch[aria-checked="true"] { background: var(--success); }
+.ui-switch::after {
+  content: '';
+  position: absolute;
+  left: .1875rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition);
+}
+.ui-switch[aria-checked="true"]::after { left: calc(100% - 1.3125rem); }
+
+/* ─────────────────────────────────────────────────────────────
+ * 카드 · 배지
+ * ───────────────────────────────────────────────────────────── */
+.ui-card {
+  padding: 1.25rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow .2s;
+}
+.ui-card:hover { box-shadow: var(--shadow-md); }
+
+.ui-card__title {
+  margin-bottom: .25rem;
+  color: var(--foreground);
+  font-size: 1.0625rem;
+  font-weight: 800;
+}
+.ui-card__desc { color: var(--muted-foreground); font-size: .9375rem; }
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  padding: .1875rem .5rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: .8125rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ui-badge--neutral { background: var(--muted-bg);  color: var(--muted-foreground); border-color: var(--border-color); }
+.ui-badge--primary { background: var(--accent);    color: var(--accent-foreground); }
+.ui-badge--success { background: hsl(152 55% 30% / .12); color: var(--success); }
+.ui-badge--warning { background: hsl(32 85% 40% / .12);  color: var(--warning); }
+.ui-badge--danger  { background: hsl(0 62% 46% / .10);   color: var(--destructive); }
+
+/* 개수 뱃지 — 0이면 감춘다(빈 동그라미가 붙어 있으면 오히려 혼란스럽다) */
+.ui-count { min-width: 1.25rem; padding: 0 .375rem; text-align: center; }
+.ui-count[data-count="0"] { display: none; }
+
+/* ─────────────────────────────────────────────────────────────
+ * 해야 할 일 (설정 개요)
+ * ───────────────────────────────────────────────────────────── */
+.ui-todo { display: grid; gap: .5rem; }
+
+.ui-todo__item {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: .75rem 1rem;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--warning);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 1rem;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.ui-todo__item:hover { background: var(--muted-bg); }
+.ui-todo__item:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.ui-todo__count { margin-left: auto; font-weight: 800; color: var(--warning); }
+
+.ui-todo__empty {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: 1rem;
+  border-radius: var(--radius-md);
+  background: hsl(152 55% 30% / .08);
+  color: var(--success);
+  font-weight: 700;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * 설정 화면 — 그룹 사이드 레일 + 패널
+ * ───────────────────────────────────────────────────────────── */
+.ui-settings { display: grid; gap: 1.25rem; }
+
+@media (min-width: 768px) {
+  .ui-settings { grid-template-columns: 15rem minmax(0, 1fr); align-items: start; }
+  .ui-settings__rail { position: sticky; top: 1rem; }
+  /* 좁은 화면에서는 레일 대신 <select>를 쓴다 — 탭 13개를 가로로 늘어놓으면
+     가로 스크롤이 생기고 40~60대 사용자에게 특히 찾기 어렵다. */
+  .ui-settings__picker { display: none; }
+}
+@media (max-width: 767px) {
+  .ui-settings__rail { display: none; }
+}
+
+.ui-settings__group { margin-bottom: 1.25rem; }
+.ui-settings__group-label {
+  padding: 0 .75rem;
+  margin-bottom: .375rem;
+  color: var(--muted-foreground);
+  font-size: .8125rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.ui-settings__tab {
+  display: flex;
+  align-items: center;
+  gap: .625rem;
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: .5rem .75rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--secondary-foreground);
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.ui-settings__tab:hover { background: var(--muted-bg); }
+.ui-settings__tab:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+
+/* 선택 상태를 색만으로 표시하지 않는다 — 배경 + 굵기 + 왼쪽 막대를 함께 쓴다.
+   색각 이상이나 저조도 화면에서 색 하나에 의존하면 선택 위치를 잃는다. */
+.ui-settings__tab[aria-current="page"] {
+  background: var(--accent);
+  border-color: var(--accent-foreground);
+  color: var(--accent-foreground);
+  font-weight: 800;
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.ui-settings__panel-title {
+  margin-bottom: .25rem;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--foreground);
+}
+.ui-settings__panel-desc {
+  margin-bottom: 1rem;
+  color: var(--muted-foreground);
+  font-size: .9375rem;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * 글자 크기 세그먼트
+ * ───────────────────────────────────────────────────────────── */
+.ui-fontscale { display: inline-flex; gap: .25rem; padding: .25rem; border-radius: var(--radius-md); background: var(--secondary); }
+.ui-fontscale__btn {
+  min-width: 2.75rem;
+  min-height: 2.25rem;
+  padding: 0 .5rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--secondary-foreground);
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.ui-fontscale__btn:hover { background: var(--card); }
+.ui-fontscale__btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.ui-fontscale__btn[aria-pressed="true"] {
+  background: var(--card);
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+/* 글자 크기 견본은 설정값과 무관하게 고정 크기로 보여야 비교가 된다. */
+.ui-fontscale__btn--normal { font-size: 15px; }
+.ui-fontscale__btn--large  { font-size: 17px; }
+.ui-fontscale__btn--xlarge { font-size: 19px; }
+
+/* ─────────────────────────────────────────────────────────────
+ * 감사 로그
+ * ───────────────────────────────────────────────────────────── */
+.ui-log { display: grid; gap: .375rem; }
+
+.ui-log__row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: .75rem;
+  align-items: baseline;
+  padding: .625rem .75rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+.ui-log__time { color: var(--muted-foreground); font-size: .875rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ui-log__what { color: var(--foreground); min-width: 0; }
+.ui-log__who  { color: var(--muted-foreground); font-size: .875rem; white-space: nowrap; }
+.ui-log__detail { display: block; color: var(--muted-foreground); font-size: .875rem; overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .ui-log__row { grid-template-columns: 1fr; gap: .25rem; }
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * 진행률 (마감·초기화처럼 오래 걸리고 중단될 수 있는 작업)
+ * ───────────────────────────────────────────────────────────── */
+.ui-progress {
+  height: .5rem;
+  border-radius: 999px;
+  background: var(--muted-bg);
+  overflow: hidden;
+}
+.ui-progress__bar {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width .3s ease;
+}
+.ui-progress__label {
+  margin-top: .375rem;
+  color: var(--muted-foreground);
+  font-size: .875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 유지보수 모드 띠 — 파괴적 작업이 도는 동안 전 화면에 뜬다 */
+.ui-maintenance {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .75rem 1rem;
+  border-radius: var(--radius-md);
+  background: hsl(32 85% 40% / .12);
+  border: 1px solid var(--warning);
+  color: var(--warning);
+  font-weight: 700;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * 인쇄 — 조작용 UI는 종이에 나오지 않는다
+ * ───────────────────────────────────────────────────────────── */
+@media print {
+  .ui-btn, .ui-icon-btn, .ui-switch, .ui-fontscale,
+  .ui-settings__rail, .ui-settings__picker, .ui-todo__item { display: none !important; }
+}

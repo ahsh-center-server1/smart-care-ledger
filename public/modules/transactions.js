@@ -1,18 +1,26 @@
-/**
- * modules/transactions.js — Smart Care Ledger v2
- * 거래내역: 필터, 정렬, 테이블 렌더링, CRUD, 드래그 정렬
- */
-
 'use strict';
 
 import { S } from '../state.js';
-import { COLS, CAT_COLORS, cs } from '../constants.js';
-import { toast, toastAction, showConfirm, showLoading, setText, escAttr, emptyState } from '../utils/ui.js';
-import { fb, fdb, batchDeleteDocs, batchUpdateDocs } from '../services/firestore.js';
+import { iconSvg } from '../utils/icons.js';
+import { compareTrx, nextOrderInDay, planReorder, sortTrx } from '../domain/trx-order.js';
+import { inLoadedRange, needsBroaderRange } from '../domain/trx-range.js';
+import { COLS, cs } from '../constants.js';
+import { toast, toastAction, showConfirm, escAttr, emptyState } from '../utils/ui.js';
+import {
+  fb, fdb, batchUpdateDocs, batchMixedOps, invalidateReportTrxCache,
+} from '../services/firestore.js';
+import { auditOp } from '../services/audit.js';
+import { calcAccountBalance } from '../services/balance.js';
 import { deleteFromStorage } from '../services/storage.js';
-import { loadTransactions, isConfirmedLocked } from './core.js';
-import { openModal, getUnpaidMandatoryItems } from './modals.js';
-import { can } from './permissions.js';
+import { loadTransactions, isConfirmedLocked, trxDeleteBlockReason, trxEditBlockReason } from './core.js';
+import { openModal, getUnpaidMandatoryItems, openReceiptModal, openReceiptUpload } from './modals.js';
+import { can, unavailableMessage } from './permissions.js';
+import { hasReceipt, receiptAccess } from '../services/receipt-access.js';
+import {
+  renderUnclassifiedBadge, isUnclassifiedTrx, resetFiltersUI,
+  openCatDropdownUI, closeCatDropdowns, methodBadge, excludedBadge, readTrxFilters,
+} from './transactions-widgets.js';
+import { searchMatches } from '../domain/hangul-search.js';
 
 // 필수 고정항목 미납 배너 렌더 (당월 기준)
 function renderTrxMandatoryBanner(){
@@ -27,27 +35,6 @@ function renderTrxMandatoryBanner(){
   el.innerHTML='<div style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;color:#991b1b;">'
     +'<span style="font-weight:700;">⚠️ 이번 달 필수 고정지출 '+unpaid.length+'건 미입력</span>'
     +'<span style="color:#7f1d1d;margin-left:8px;">'+names+'</span></div>';
-}
-
-// 필터 범위가 현재 캐시 범위(S.trxRange)를 벗어나는지 검사
-function needsBroaderRange(filterStart, filterEnd, cachedRange) {
-  if (cachedRange === 'all') return false;
-  if (!filterStart && !filterEnd) return false;
-  if (cachedRange === 'month') {
-    const now = new Date();
-    const ymStart = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
-    const lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
-    const ymEnd = ymStart.substring(0,8)+String(lastDay).padStart(2,'0');
-    if (filterStart && filterStart < ymStart) return true;
-    if (filterEnd && filterEnd > ymEnd) return true;
-    return false;
-  }
-  if (cachedRange && typeof cachedRange === 'object' && cachedRange.start && cachedRange.end) {
-    if (filterStart && filterStart < cachedRange.start) return true;
-    if (filterEnd && filterEnd > cachedRange.end) return true;
-    return false;
-  }
-  return false;
 }
 
 function todayStr() {
@@ -66,14 +53,36 @@ export function rebuildAccountFilter(){
   if(accs.some(a=>a.id===prev))sel.value=prev; else sel.value='';
 }
 
+/**
+ * 페이지 번호를 결과 범위 안으로 당긴다.
+ *
+ * 이 보정이 없어서, 5페이지를 보다가 검색어로 결과를 3건으로 좁히면
+ * slice(400,3)이 되어 빈 표가 뜨고 카운터는 "총 3건 (401–3)"이 됐다.
+ * 페이지 버튼도 사라져서(pages<=1) 1페이지로 돌아갈 방법이 없었다.
+ */
+export function clampPage(page, totalItems, pageSize) {
+  const size = Number(pageSize) > 0 ? Number(pageSize) : 100;
+  const pages = Math.max(1, Math.ceil(Math.max(0, Number(totalItems) || 0) / size));
+  const p = Math.floor(Number(page));
+  if (!Number.isFinite(p) || p < 1) return 1;
+  return Math.min(p, pages);
+}
+
 // ─────────────────────────────────────────────
-export function applyFilters() {
-  const kw=(document.getElementById('h-search')?.value||'').toLowerCase();
-  const sd=document.getElementById('h-start')?.value||'';
-  const ed=document.getElementById('h-end')?.value||'';
-  const tf=document.getElementById('h-type')?.value||'all';
-  const rf=document.getElementById('h-receipt')?.value||'all';
-  const af=document.getElementById('h-account')?.value||'';   // ① 계좌 필터
+/**
+ * 필터를 다시 적용한다.
+ *
+ * @param {Object} [opts]
+ * @param {boolean} [opts.resetPage] 필터 조건이 바뀐 호출이면 true — 1페이지로 돌아간다.
+ *
+ * 페이지 범위는 opts와 무관하게 **항상 보정한다.** 예전에는 보정이 없어서,
+ * 5페이지를 보다가 검색어로 결과를 3건으로 좁히면 slice(400,3)이 되어
+ * 빈 표가 뜨고 카운터는 "총 3건 (401–3)"이 됐다. 페이지 버튼도 사라져서
+ * (pages<=1) **1페이지로 돌아갈 방법이 없었다.**
+ */
+export function applyFilters(opts) {
+  if (opts && opts.resetPage) S.page = 1;
+  const {kw,sd,ed,tf,rf,mf,af}=readTrxFilters();
   // 캐시 범위 부족 시 추가 fetch (loadTransactions 끝나면 applyFilters 자동 재호출)
   if (S.activeClient && (sd || ed) && needsBroaderRange(sd, ed, S.trxRange)) {
     const reqStart = sd || '1900-01-01';
@@ -82,31 +91,28 @@ export function applyFilters() {
     return;
   }
   S.filteredTrx=S.transactions.filter(t=>{
-    const desc=String(t.description||'').toLowerCase();
-    return desc.includes(kw)
+    // 초성 검색도 같은 판정을 쓴다(domain/hangul-search.js).
+    // 「ㄱㅂ」로 김밥천국을 찾을 수 있어야 통장 적요를 훑는 속도가 달라진다.
+    return searchMatches(t.description,kw)
       &&(!sd||t.date>=sd)&&(!ed||t.date<=ed)
       &&(tf==='all'||t.type===tf)
-      &&(rf==='all'||(rf==='yes'?!!t.receiptUrl:!t.receiptUrl))
-      &&(!af||t.accountId===af);   // ① 계좌 필터 조건
+      &&(rf==='all'||(rf==='yes'?hasReceipt(t):!hasReceipt(t)))
+      &&(mf==='all'||(mf==='none'?!t.method:t.method===mf))
+      &&(!af||t.accountId===af)&&(!S.onlyUnclassified||isUnclassifiedTrx(t));
   });
-  const key=S.sortKey, dir=S.sortDir;
+  renderUnclassifiedBadge(()=>applyFilters({resetPage:true}));
+  const key=S.sortKey, sign=S.sortDir==='asc'?1:-1;
+  const accLabel=t=>S.accounts.find(ac=>ac.id===t.accountId)?.label||'';
   S.filteredTrx.sort((a,b)=>{
-    let vA, vB;
-    // 계좌명 기준 정렬
-    if(key==='_accLabel'){
-      vA=S.accounts.find(ac=>ac.id===a.accountId)?.label||'';
-      vB=S.accounts.find(ac=>ac.id===b.accountId)?.label||'';
-      if(vA<vB)return dir==='asc'?-1:1; if(vA>vB)return dir==='asc'?1:-1; return 0;
-    }
-    vA=a[key]; vB=b[key];
-    // 숫자 필드는 숫자로 비교
-    if(key==='amountIn'||key==='amountOut'){
-      vA=Number(vA||0); vB=Number(vB||0);
-      return dir==='asc'?vA-vB:vB-vA;
-    }
-    vA=String(vA||''); vB=String(vB||'');
-    if(vA<vB)return dir==='asc'?-1:1; if(vA>vB)return dir==='asc'?1:-1; return 0;
+    // 날짜순은 곧 장부 순서다 — 같은 날 안에서는 통장에 찍힌 순서를 따른다.
+    // 예전에는 날짜 문자열만 비교하고 그 날 안의 순서는 정렬 안정성에 기댔다.
+    if(key==='date')return sign*compareTrx(a,b);
+    if(key==='amountIn'||key==='amountOut')return sign*(Number(a[key]||0)-Number(b[key]||0));
+    const vA=key==='_accLabel'?accLabel(a):String(a[key]||'');
+    const vB=key==='_accLabel'?accLabel(b):String(b[key]||'');
+    return sign*vA.localeCompare(vB);
   });
+  S.page=clampPage(S.page,S.filteredTrx.length,S.pageSize);
   renderHistoryTable(); renderPagination();
   renderTrxMandatoryBanner();
 }
@@ -148,33 +154,33 @@ export function renderHistoryTable() {
       const sub=Number(t.amountIn||0)>0?'수입':'지출';
       typeTag='<span style="font-size:10px;background:#f4f4f5;color:#71717a;padding:1px 5px;border-radius:4px;margin-left:4px;">취소('+sub+')</span>';
     }
-    const accName=S.accounts.find(a=>a.id===t.accountId)?.label||'';
+    const methodTag=methodBadge(t.method)+excludedBadge(t), accName=S.accounts.find(a=>a.id===t.accountId)?.label||'';
     tr.innerHTML=`
       <td style="text-align:center;width:28px;cursor:grab;color:#cbd5e1;font-size:16px;user-select:none;${isInputOnly?'display:none;':''}" class="drag-handle" title="드래그로 순서 변경">⠿</td>
-      <td style="text-align:center;width:36px;${isInputOnly?'display:none;':''}"><input type="checkbox" class="row-check" value="${t.id}" data-acc="${t.accountId}" style="accent-color:var(--blue);width:14px;height:14px;cursor:pointer;"></td>
-      <td style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--sub);white-space:nowrap;">${t.date||''}</td>
-      <td><div style="position:relative;display:inline-block;">
+      <td class="col-check" style="text-align:center;width:36px;${isInputOnly?'display:none;':''}"><input type="checkbox" class="row-check" value="${t.id}" data-acc="${t.accountId}" style="accent-color:var(--blue);width:14px;height:14px;cursor:pointer;"></td>
+      <td data-label="날짜" style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--sub);white-space:nowrap;">${t.date||''}</td>
+      <td data-label="카테고리"><div style="position:relative;display:inline-block;">
         <span class="cat-chip" data-id="${t.id}" style="background:${c.bg};color:${c.text};border-color:${c.border};">
           <span class="cat-dot" style="background:${c.dot};"></span><span class="cat-label">${t.category||'미분류'}</span>
         </span>
         <div class="cat-dd" id="dd-${t.id}"></div>
       </div></td>
-      <td class="trx-edit" data-id="${t.id}" style="cursor:pointer;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.description||''}">${t.description||''}${typeTag}</td>
-      <td style="font-size:11px;color:var(--muted);white-space:nowrap;">${accName}</td>
-      <td style="text-align:right;" class="col-in">${
+      <td class="trx-edit" data-label="내용" data-id="${t.id}" style="cursor:pointer;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.description||''}">${t.description||''}${methodTag}${typeTag}</td>
+      <td data-label="계좌" style="font-size:11px;color:var(--muted);white-space:nowrap;">${accName}</td>
+      <td data-label="수입" style="text-align:right;" class="col-in">${
         t.type==='취소'&&t.amountIn>0?'<span style="color:#a1a1aa;text-decoration:line-through;">+'+t.amountIn.toLocaleString()+'원</span>':
         t.amountIn>0?'<span style="color:'+(t.type==='자산이동'?'#0ea5e9':'')+'">'+'+'+t.amountIn.toLocaleString()+'원</span>':''
       }</td>
-      <td style="text-align:right;" class="col-out">${
+      <td data-label="지출" style="text-align:right;" class="col-out">${
         t.type==='자산이동'?'<span style="color:#0ea5e9;">'+Math.abs(t.amountOut).toLocaleString()+'원</span>':
         t.type==='취소'&&t.amountOut>0?'<span style="color:#a1a1aa;text-decoration:line-through;">'+t.amountOut.toLocaleString()+'원</span>':
         t.type==='취소'?'':
         t.amountOut<0?'<span style="color:#059669;font-size:12px;">+'+Math.abs(t.amountOut).toLocaleString()+'원 (환불)</span>':
         (t.amountOut>0?'-'+t.amountOut.toLocaleString()+'원':'')
       }</td>
-      <td style="text-align:center;">
-        ${t.receiptUrl
-          ?`<button class="icon-btn receipt-view" data-url="${t.receiptUrl}" title="증빙 보기">📎</button>`
+      <td data-label="증빙" style="text-align:center;">
+        ${hasReceipt(t)
+          ?`<button class="icon-btn receipt-view" data-id="${t.id}" title="증빙 보기">${iconSvg('clip')}</button>`
           :`<span style="display:inline-flex;align-items:center;gap:3px;justify-content:center;">${
               can('receipt.upload')?`<button class="icon-btn receipt-add" data-id="${t.id}" title="증빙 추가" style="color:#94a3b8;">＋</button>`:''
             }${
@@ -183,15 +189,15 @@ export function renderHistoryTable() {
                 :(t.receiptMissing?'<span style="font-size:10px;font-weight:700;color:#b91c1c;background:#fee2e2;padding:1px 6px;border-radius:4px;border:1px solid #fecaca;">분실</span>':'')
             }</span>`}
       </td>
-      <td style="text-align:center;"><div style="display:flex;justify-content:center;gap:4px;flex-wrap:wrap;">${(()=>{
+      <td data-label="관리" style="text-align:center;"><div style="display:flex;justify-content:center;gap:4px;flex-wrap:wrap;">${(()=>{
         const canEdit=can('trx.edit')&&(!isInputOnly||(t.createdBy===S.user?.userId));
         const moveBtns=!isInputOnly
           ?`<button class="icon-btn trx-up-btn" data-id="${t.id}" title="위로 이동" style="color:#94a3b8;font-size:12px;" onmouseover="this.style.background='#e0f2fe';this.style.color='#0369a1';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">▲</button>
         <button class="icon-btn trx-down-btn" data-id="${t.id}" title="아래로 이동" style="color:#94a3b8;font-size:12px;" onmouseover="this.style.background='#e0f2fe';this.style.color='#0369a1';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">▼</button>`
           :'';
         return canEdit
-          ?`${moveBtns}<button class="icon-btn trx-edit-btn" data-id="${t.id}" title="수정" style="color:#64748b;" onmouseover="this.style.background='#dbeafe';this.style.color='#2563eb';" onmouseout="this.style.background='transparent';this.style.color='#64748b';">✏️</button>
-        <button class="icon-btn trx-del-btn"  data-id="${t.id}" data-acc="${t.accountId}" title="삭제" style="color:#94a3b8;" onmouseover="this.style.background='#fee2e2';this.style.color='#dc2626';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">🗑️</button>`
+          ?`${moveBtns}<button class="icon-btn trx-edit-btn" data-id="${t.id}" title="수정" style="color:#64748b;" onmouseover="this.style.background='#dbeafe';this.style.color='#2563eb';" onmouseout="this.style.background='transparent';this.style.color='#64748b';">${iconSvg('pen')}</button>
+        <button class="icon-btn trx-del-btn"  data-id="${t.id}" data-acc="${t.accountId}" title="삭제" style="color:#94a3b8;" onmouseover="this.style.background='#fee2e2';this.style.color='#dc2626';" onmouseout="this.style.background='transparent';this.style.color='#94a3b8';">${iconSvg('trash')}</button>`
           :'';
       })()}</div></td>`;
     tr.querySelector('.trx-edit')?.addEventListener('click',    ()=>editTrx(t.id));
@@ -207,7 +213,8 @@ export function renderHistoryTable() {
     tr.addEventListener('dragleave', ()=>tr.style.background='');
     tr.addEventListener('drop', e=>{e.preventDefault();tr.style.background='';const fromId=e.dataTransfer.getData('text/plain');if(fromId!==t.id)reorderTrx(fromId,t.id);});
     const rvBtn=tr.querySelector('.receipt-view');
-    if(rvBtn)rvBtn.addEventListener('click',()=>openReceiptModal(rvBtn.dataset.url,t.id));
+    if(rvBtn)rvBtn.addEventListener('click',async()=>{try{const a=await receiptAccess(t);openReceiptModal(a.url,t.id,{contentType:a.contentType});}
+      catch(e){toast('증빙을 열지 못했습니다: '+(e.message||e),'error');}});
     const raBtn=tr.querySelector('.receipt-add');
     if(raBtn)raBtn.addEventListener('click',()=>openReceiptUpload(t.id));  // ★ 버그1 수정
     const rmBtn=tr.querySelector('.receipt-miss-toggle');
@@ -217,32 +224,13 @@ export function renderHistoryTable() {
   document.addEventListener('click',closeCatDropdowns,{once:true});
 }
 
-// ★ 버그3 수정 — cat-label span만 변경
-export function openCatDropdown(trxId, chipEl, type) {
-  closeCatDropdowns();
-  const dd=document.getElementById('dd-'+trxId); if(!dd)return;
-  const _clientId=S.activeClient||'';
-  // sortOrder 기준 정렬 (자주 쓰는 순서대로)
-  const catsSorted=S.categories
-    .filter(c=>c.keyword===''&&c.type===type&&(!c.clientId||c.clientId===_clientId))
-    .sort((a,b)=>(a.sortOrder??999)-(b.sortOrder??999));
-  const cats=[...new Set(catsSorted.map(c=>c.category))];
-  if (!cats.includes('확인필요'))cats.push('확인필요');
-  dd.innerHTML='';
-  cats.forEach(cat=>{
-    const c=cs(cat), item=document.createElement('div');
-    item.className='cat-dd-item';
-    item.innerHTML=`<span style="width:9px;height:9px;border-radius:50%;background:${c.dot};display:inline-block;flex-shrink:0;"></span>${cat}`;
-    item.addEventListener('click',e=>{e.stopPropagation();saveCatChange(trxId,cat,chipEl);closeCatDropdowns();});
-    dd.appendChild(item);
-  });
-  dd.classList.add('show');
-}
-export function closeCatDropdowns(){document.querySelectorAll('.cat-dd.show').forEach(d=>d.classList.remove('show'));}
+// 분류 인라인 드롭다운은 transactions-widgets.js 에 있다 — saveCatChange 를 넘겨 순환을 피한다.
+export const openCatDropdown=(trxId,chipEl,type,opts)=>openCatDropdownUI(trxId,chipEl,type,saveCatChange,opts);
+export { closeCatDropdowns };
 
 // 달력형 뷰
 export function renderCalendarView(){
-  const tbody=document.getElementById('h-body'), ce=document.getElementById('h-count');
+  const ce=document.getElementById('h-count');
   // calendarYM 없으면 첫 거래 기준으로 초기화 (S.transactions 전체 기준)
   if(!S.calendarYM){
     const ref=((S.transactions[0]||S.filteredTrx[0])?.date||new Date().toISOString().substring(0,7)+'-01');
@@ -298,7 +286,7 @@ export function showCalendarDayDetail(dateStr){
   const allTrx=S.transactions.length?S.transactions:S.filteredTrx;
   const dayTrx=allTrx.filter(t=>t.date===dateStr);
   detail.style.display='block';
-  const addBtn=`<button onclick="openModalWithDate('${escAttr(dateStr)}')" style="font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--green);color:var(--green);background:#fff;cursor:pointer;">✍️ 거래 추가</button>`;
+  const addBtn=`<button onclick="openModalWithDate('${escAttr(dateStr)}')" style="font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--green);color:var(--green);background:#fff;cursor:pointer;">${iconSvg('pen')}거래 추가</button>`;
   detail.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
     <div style="font-weight:700;font-size:13px;color:var(--text);">${dateStr} 거래 내역 (${dayTrx.length}건)</div>
     ${addBtn}
@@ -329,11 +317,14 @@ export function moveCalendar(dir){
 }
 
 export async function saveCatChange(trxId, newCat, chipEl) {
+  // 분류만 바꾸는 것은 trx.edit 으로도 된다(규칙의 transactionUpdateFieldsOk).
+  if(!can('trx.category.edit')&&!can('trx.edit')){toast('분류 수정 권한이 없습니다.','error');return;}
   const lk=S.transactions.find(x=>x.id===trxId);
-  if(lk&&isConfirmedLocked(lk.clientId,lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
+  const lkBlocked=lk&&trxEditBlockReason(lk.clientId,lk.date); if(lkBlocked){toast(lkBlocked,'error',5000);return;}
   const {doc,updateDoc}=fb();
   await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{category:newCat});
   [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t)t.category=newCat;});
+  invalidateReportTrxCache(lk && lk.clientId);
   if (chipEl) {
     const c=cs(newCat);
     chipEl.style.background=c.bg; chipEl.style.color=c.text; chipEl.style.borderColor=c.border;
@@ -348,6 +339,7 @@ export async function saveCatChange(trxId, newCat, chipEl) {
 export function renderPagination(){
   const el=document.getElementById('h-pages'); if(!el)return;
   const pages=Math.ceil(S.filteredTrx.length/S.pageSize);
+  S.page=clampPage(S.page,S.filteredTrx.length,S.pageSize);
   if(pages<=1){el.innerHTML='';return;} el.innerHTML='';
   const cur=S.page;
   const go=p=>{
@@ -380,20 +372,9 @@ export function renderPagination(){
   el.appendChild(info);
 }
 
-// 모든 필터를 한 번에 초기화 (입주자 선택은 유지, 기간은 이번 달로 복원)
-export function resetFilters(){
-  const defaults={'h-search':'','h-type':'all','h-receipt':'all','h-account':''};
-  Object.entries(defaults).forEach(([id,v])=>{const el=document.getElementById(id);if(el)el.value=v;});
-  const now=new Date();
-  const fmt=dt=>dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
-  const s=document.getElementById('h-start'),e=document.getElementById('h-end');
-  if(s)s.value=fmt(new Date(now.getFullYear(),now.getMonth(),1));
-  if(e)e.value=fmt(new Date(now.getFullYear(),now.getMonth()+1,0));
-  document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));
-  S.page=1;
-  applyFilters();
-  toast('필터를 초기화했습니다.','success',1500);
-}
+// 필터 초기화 UI 는 transactions-filters.js 에 있다. applyFilters 를 넘겨
+// 순환을 만들지 않는다.
+export const resetFilters=()=>resetFiltersUI(()=>applyFilters());
 
 export function applyPeriod(p){
   const now=new Date(),y=now.getFullYear(),m=now.getMonth(),d=now.getDay();
@@ -412,9 +393,22 @@ export function applyPeriod(p){
 // 거래 CRUD
 // ─────────────────────────────────────────────
 export async function saveTrx(data){
-  if(isConfirmedLocked(data.clientId,data.date)){toast('최종 결재 완료된 월의 거래는 추가/수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
-  // 편집 시: 원본 거래가 확정 월에 있으면 다른 월로 이동/수정 금지
-  if(data.id){const prev=S.transactions.find(x=>x.id===data.id);if(prev&&isConfirmedLocked(prev.clientId,prev.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}}
+  // 실행 시점 검증. 예전에는 렌더 시점에만 can()을 봤고 이 함수들은 전부
+  // window에 노출되어 있어 콘솔에서 직접 호출하면 그대로 통과했다.
+  // (실제 차단은 보안 규칙이 하지만, 여기서도 막아 무의미한 요청을 줄인다)
+  const editingOthers = data.id && data.createdBy && data.createdBy !== S.user?.userId;
+  // 고치는 것과 새로 만드는 것은 다른 권한이다. 둘 다 trx.create 를 보면
+  // 검토 역할(팀장·센터장)은 오타 하나도 못 고친다 — 그들에게는 trx.edit 뿐이다.
+  const needed = data.id ? 'trx.edit' : 'trx.create';
+  if(!can(needed)||(editingOthers&&!can('trx.view.all'))){
+    toast('거래 저장 권한이 없습니다.','error'); return;
+  }
+  // 결재 단계 잠금 — **내가 결재한 뒤에는 회수하기 전까지 못 고친다.** 판정은
+  // core.js 한 곳이다(규칙과 같은 색인). 옮겨 갈 달과 원래 있던 달을 둘 다 본다 —
+  // 한쪽만 보면 잠긴 달의 거래를 열린 달로 끌어내 빠져나갈 수 있다.
+  const prevTrx=data.id&&S.transactions.find(x=>x.id===data.id);
+  const blocked=trxEditBlockReason(data.clientId,data.date)||(prevTrx&&trxEditBlockReason(prevTrx.clientId,prevTrx.date));
+  if(blocked){toast(blocked,'error',5000);return;}
   const {doc,addDoc,collection,updateDoc}=fb();
   const isEdit=!!data.id;
   if(isEdit){
@@ -425,25 +419,41 @@ export async function saveTrx(data){
     const idx=S.transactions.findIndex(x=>x.id===id);
     if(idx>=0)S.transactions[idx]={...S.transactions[idx],...data};
     await updateAccBalance(data.accountId);
+    invalidateReportTrxCache(data.clientId);
     applyFilters();   // 전체 재로드 없이 필터/정렬 유지
   } else {
+    // 그 날의 맨 뒤에 놓는다. 예전에는 수기 입력에 sortOrder를 **아예 붙이지
+    // 않아서** 전부 목록 맨 아래로 몰렸다(비교기가 값 없는 것을 99999로 봤다).
+    if(data.sortOrder==null)data.sortOrder=nextOrderInDay(data.date,S.transactions,data.clientId);
     // 입력자: createdBy 필드 추가
     if(!data.createdBy&&S.user?.userId)data.createdBy=S.user.userId;
-    await addDoc(collection(fdb(),COLS.TRANSACTIONS),data);
-    await updateAccBalance(data.accountId);
-    if(S.activeClient===data.clientId)await loadTransactions(data.clientId);
+    data.id=(await addDoc(collection(fdb(),COLS.TRANSACTIONS),data)).id;
+    // **방금 만든 문서의 내용을 이미 들고 있다.** 예전에는 여기서
+    // loadTransactions 로 그 달을 통째로 다시 읽었다 — 수정 경로는 바로 위처럼
+    // 로컬만 고치는데 생성 경로만 그랬고, 월초에 수기 입력을 한 건 할 때마다
+    // 그 입주자의 한 달치를 다시 읽었다.
+    //
+    // 로드된 범위 밖(예: 몇 달 전 날짜)이면 끼워 넣지 않는다. 넣으면 필터가
+    // 숨기지 못하는 유령 행이 남는다 — 사용자가 기간을 넓히면 보인다.
+    if(S.activeClient===data.clientId&&inLoadedRange(data.date,S.trxRange)){
+      S.transactions=sortTrx([...S.transactions,{...data}]);
+    }
+    updateAccBalance(data.accountId);
+    invalidateReportTrxCache(data.clientId);
+    applyFilters();
   }
-  toast('저장되었습니다.','success');
+  toast('저장되었습니다.','success'); return data.id;   // 증빙은 거래 생성 뒤에 서버가 붙인다
 }
 
 // 영수증 분실 표시 토글
 export async function toggleReceiptMissing(id){
   const t=S.transactions.find(x=>x.id===id); if(!t)return;
-  if(isConfirmedLocked(t.clientId,t.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
+  const tBlocked=trxEditBlockReason(t.clientId,t.date); if(tBlocked){toast(tBlocked,'error',5000);return;}
   const newVal=!t.receiptMissing;
   const{doc,updateDoc}=fb();
   try{
     await updateDoc(doc(fdb(),COLS.TRANSACTIONS,id),{receiptMissing:newVal});
+    invalidateReportTrxCache(t.clientId);
     t.receiptMissing=newVal;
     applyFilters();
     toast(newVal?'영수증 분실 표시':'분실 표시 해제','success',1500);
@@ -451,8 +461,16 @@ export async function toggleReceiptMissing(id){
 }
 
 export async function delTrx(id,accId){
-  const trxCheck=S.transactions.find(x=>x.id===id);
-  if(trxCheck&&isConfirmedLocked(trxCheck.clientId,trxCheck.date)){toast('최종 결재 완료된 월의 거래는 삭제할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
+  const t=S.transactions.find(x=>x.id===id);
+  const mine=!t||t.createdBy===S.user?.userId;
+  // 두 거부를 한 문장으로 묶으면 안 된다 — 이유가 다르고 사용자가 할 일도 다르다.
+  // 앞은 "이 기능이 아직 없다"(누구에게 부탁해도 안 된다), 뒤는 담당 범위 문제다.
+  if(!can('trx.delete')){ toast(unavailableMessage('trx.delete'),'error',5000); return; }
+  if(!mine&&!can('trx.view.all')){
+    toast('동료가 입력한 거래는 삭제할 수 없습니다.','error'); return;
+  }
+  const blocked=trxDeleteBlockReason(S.transactions.find(x=>x.id===id));
+  if(blocked){toast(blocked,'error',5000);return;}
   showConfirm('거래 삭제','이 거래 내역을 삭제하시겠습니까?\n삭제 후 잠시 동안 되돌릴 수 있습니다.',()=>{
     scheduleTrxDeletion([id]);
   },'삭제','btn btn-danger');
@@ -463,10 +481,25 @@ export async function delTrx(id,accId){
 function scheduleTrxDeletion(ids){
   // 연결된 자산이동 거래도 함께 삭제 대상에 포함
   const allIds=new Set(ids);
+  const linkedOnly=[];   // 체크되지 않았는데 연결 때문에 딸려오는 상대편
   ids.forEach(id=>{
     const t=S.transactions.find(x=>x.id===id);
-    if(t?.type==='자산이동'&&t.linkedTrxId)allIds.add(t.linkedTrxId);
+    if(t?.type==='자산이동'&&t.linkedTrxId&&!allIds.has(t.linkedTrxId)){
+      allIds.add(t.linkedTrxId);
+      linkedOnly.push(t.linkedTrxId);
+    }
   });
+  // 딸려오는 상대편도 결재 잠금을 확인한다.
+  // 예전에는 체크한 항목만 확인하고 뒤에 추가되는 linkedTrxId는 재확인하지 않아
+  // **최종 결재 완료된 월의 거래가 삭제됐다.**
+  const lockedLinked=linkedOnly
+    .map(id=>S.transactions.find(x=>x.id===id))
+    .filter(t=>t&&isConfirmedLocked(t.clientId,t.date));
+  if(lockedLinked.length){
+    toast('연결된 자산이동 상대편이 최종 결재 완료된 월에 있어 삭제할 수 없습니다. '
+      +'(센터장이 결재를 취소하면 다시 삭제할 수 있어요.)','error',6000);
+    return;
+  }
   // 영향받는 계좌 + 삭제 대상 스냅샷 수집(되돌리기 복원용)
   const accIds=new Set();
   const removed=[];
@@ -478,6 +511,9 @@ function scheduleTrxDeletion(ids){
     }
   });
   if(!removed.length)return;
+  // 상대편이 화면 캐시 밖(다른 입주자·다른 기간)이면 스냅샷이 없다.
+  // 삭제는 되지만 증빙 파일이 고아로 남으므로, 커밋 시점에 문서를 읽어 정리한다.
+  const uncachedIds=[...allIds].filter(id=>!removed.some(t=>t.id===id));
   // 로컬 캐시에서 즉시 제거 후 재렌더 (화면상 삭제된 것처럼 보임)
   S.transactions=S.transactions.filter(t=>!allIds.has(t.id));
   S.filteredTrx=S.filteredTrx.filter(t=>!allIds.has(t.id));
@@ -493,9 +529,33 @@ function scheduleTrxDeletion(ids){
     8000,
     async()=>{ // 유예 만료: 실제 Firestore 삭제 커밋
       try{
-        await batchDeleteDocs([...allIds].map(docId=>({col:COLS.TRANSACTIONS,docId})));
+        // 캐시 밖 상대편의 증빙 URL을 먼저 읽어둔다 (삭제하면 못 읽는다)
+        const extraUrls=[];
+        if(uncachedIds.length){
+          const{getDoc,doc}=fb();
+          for(const id of uncachedIds){
+            try{
+              const snap=await getDoc(doc(fdb(),COLS.TRANSACTIONS,id));
+              const url=snap.exists()?snap.data().receiptUrl:'';
+              if(url)extraUrls.push(url);
+            }catch{ /* 못 읽어도 삭제는 진행한다 */ }
+          }
+        }
+        // 삭제 기록을 같은 배치에 실어 원자적으로 커밋한다 — 삭제는 되고
+        // 기록만 빠지는 상태가 생기지 않게. (되돌릴 수 없는 작업이다)
+        const clientName=S.clients.find(c=>c.id===S.activeClient)?.name||S.activeClient||'';
+        const logOp=auditOp(allIds.size>1?'trx.bulkDelete':'trx.delete',{
+          resourceId:allIds.size===1?[...allIds][0]:undefined,
+          summary:{clientName,count:allIds.size,
+            amount:removed.reduce((s2,t)=>s2+Number(t.amountOut||0)+Number(t.amountIn||0),0)},
+        });
+        await batchMixedOps({
+          deletes:[...allIds].map(docId=>({col:COLS.TRANSACTIONS,docId})),
+          adds:logOp?[{col:logOp.col,data:logOp.data}]:[],
+        });
         // 증빙 파일도 Storage에서 제거(고아 파일 방지, best-effort)
         removed.forEach(t=>{ if(t.receiptUrl)deleteFromStorage(t.receiptUrl); });
+        extraUrls.forEach(u=>deleteFromStorage(u));
         for(const a of accIds)await updateAccBalance(a);
       }catch(e){toast('삭제 중 오류가 발생했습니다: '+e.message,'error');}
     }
@@ -504,12 +564,13 @@ function scheduleTrxDeletion(ids){
 
 // I002: 거래내역 CSV 내보내기 (현재 필터 기준)
 export function exportFilteredCSV(){
+  if(!can('trx.csv')){toast('CSV 내보내기 권한이 없습니다.','error');return;}
   if(!S.filteredTrx||!S.filteredTrx.length){toast('내보낼 데이터가 없습니다.','info');return;}
   const client=S.clients.find(c=>c.id===S.activeClient)||{name:'전체'};
   const header=['날짜','시간','계좌','구분','분류','내용','수입','지출','증빙'];
   const rows=S.filteredTrx.map(t=>{
     const acc=S.accounts.find(a=>a.id===t.accountId)?.label||'';
-    return [t.date||'',t.time||'',acc,t.type||'',t.category||'',t.description||'',t.amountIn||0,t.amountOut||0,t.receiptUrl?'O':''].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',');
+    return [t.date||'',t.time||'',acc,t.type||'',t.category||'',t.description||'',t.amountIn||0,t.amountOut||0,hasReceipt(t)?'O':''].map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',');
   });
   const csv='\uFEFF'+[header.join(','),...rows].join('\r\n');
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
@@ -523,11 +584,12 @@ export function exportFilteredCSV(){
 
 // 일괄 삭제 — 되돌리기 유예 후 배치 삭제 (scheduleTrxDeletion 재사용)
 export async function confirmBulkDelete(){
+  if(!can('trx.delete.bulk')){toast(unavailableMessage('trx.delete.bulk'),'error',5000);return;}
   const checked=Array.from(document.querySelectorAll('.row-check:checked'));
   if(!checked.length){toast('삭제할 항목을 선택하세요.','info');return;}
-  // confirmed 월 거래 포함 여부 체크
-  const lockedChecked=checked.filter(cb=>{const t=S.transactions.find(x=>x.id===cb.value);return t&&isConfirmedLocked(t.clientId,t.date);});
-  if(lockedChecked.length){toast(`최종 결재 완료된 월의 거래 ${lockedChecked.length}건이 포함되어 있습니다. 해당 거래는 삭제할 수 없습니다.`,'error');return;}
+  // 마감·제출 월이 섞여 있으면 통째로 막는다(부분 삭제는 더 헷갈린다).
+  const blockedRows=checked.map(cb=>trxDeleteBlockReason(S.transactions.find(x=>x.id===cb.value))).filter(Boolean);
+  if(blockedRows.length){toast(`삭제할 수 없는 거래 ${blockedRows.length}건이 포함돼 있습니다. ${blockedRows[0]}`,'error',5000);return;}
   const ids=checked.map(c=>c.value);
   showConfirm('일괄 삭제',`선택한 ${ids.length}건을 삭제하시겠습니까?\n삭제 후 잠시 동안 되돌릴 수 있습니다.`,()=>{
     scheduleTrxDeletion(ids);
@@ -536,26 +598,25 @@ export async function confirmBulkDelete(){
 
 export function editTrx(id){const t=S.transactions.find(x=>x.id===id);if(!t)return;openModal('trx',t);}
 
-export async function updateAccBalance(accId){
+/**
+ * 화면에 보이는 잔액을 즉시 갱신한다 (낙관적 업데이트).
+ *
+ * ⚠️ Firestore의 currentBalance는 **여기서 쓰지 않는다.**
+ *    Cloud Functions의 syncAccountBalance 트리거가 전체 거래를 근거로 계산해 소유한다.
+ *
+ * 이전 구현은 부분 로드된 S.transactions(기본 당월)로 계산한 값을 Firestore에
+ * 덮어써서, 거래를 하나만 저장해도 지난 달 이전 기록이 잔액에서 사라졌다.
+ * 게다가 입력자는 보안 규칙상 계좌 전체 거래를 읽을 수 없어 클라이언트에서는
+ * 올바른 계산이 원천적으로 불가능하다.
+ *
+ * 따라서 여기서는 로컬 캐시만 손대고, 정확한 값은 트리거가 쓴 뒤
+ * 다음 fetch에서 따라온다. 로드 범위 밖 거래가 있으면 이 값은 부정확할 수 있다.
+ */
+export function updateAccBalance(accId){
   if(!accId)return;
-  const{doc,getDoc,updateDoc}=fb();
-  const accRef=doc(fdb(),COLS.ACCOUNTS,accId);
-  const accSnap=await getDoc(accRef); if(!accSnap.exists())return;
-  const acc=accSnap.data();
-  // Phase 1 최적화: Firestore 쿼리 대신 S.transactions 캐시 사용
-  const accTrx=S.transactions.filter(t=>t.accountId===accId);
-  let bal=Number(acc.initialBalance||0);
-  // ⑫ initialBalanceDate 기준: 해당 날짜 이후 거래만 합산
-  const baseDate=acc.initialBalanceDate||'';
-  // 자산이동/취소는 수입/지출 합계에서 제외하지만 잔액에는 반영
-  accTrx.forEach(t=>{
-    if(baseDate&&(t.date||'')<baseDate)return; // 기준일 이전 거래 제외
-    if(t.type==='취소')return; // 취소 거래는 잔액에 영향 없음
-    // 2. 음수 amountOut(환불/취소성 지출)도 잔액에 정확히 반영
-    bal+=(Number(t.amountIn||0)-Number(t.amountOut||0));
-  });
-  await updateDoc(accRef,{currentBalance:bal});
-  const local=S.accounts.find(a=>a.id===accId); if(local)local.currentBalance=bal;
+  const acc=S.accounts.find(a=>a.id===accId);
+  if(!acc)return;
+  acc.currentBalance=calcAccountBalance(acc,S.transactions);
 }
 
 // ─────────────────────────────────────────────
@@ -572,34 +633,53 @@ export function moveTrxRow(id,dir){
   reorderTrx(id,S.filteredTrx[target].id);
 }
 
-// Phase 2 최적화: 배치 업데이트 사용
+/** 순서를 직접 바꿀 수 있는 정렬 상태인가 */
+export function canReorderNow(){
+  return S.sortKey==='sortOrder'||S.sortKey==='date';
+}
+
+/**
+ * 드래그/버튼으로 거래 순서를 바꾼다. **그 날 안에서만.**
+ *
+ * 예전에는 화면의 한 페이지를 통째로 0..99로 다시 매겼다. 계좌 필터를 켠 채
+ * 한 줄을 옮기면 필터 밖 같은 날 거래의 번호와 충돌했고, 엑셀이 준 큰 번호가
+ * 0..99로 깎였다 — "한참 수정하다 보면 순서가 이상해진다"가 이것이다.
+ *
+ * 이제 판정도 대상도 domain/trx-order.js 가 정한다. 여기서는 권한과 결재
+ * 잠금만 보고 쓴다.
+ */
 export async function reorderTrx(fromId,toId){
-  if(fromId===toId)return;
-  const fromIdx=S.filteredTrx.findIndex(x=>x.id===fromId);
-  const toIdx  =S.filteredTrx.findIndex(x=>x.id===toId);
-  if(fromIdx<0||toIdx<0)return;
-  const movedItem=S.filteredTrx[fromIdx];
-  if(movedItem&&isConfirmedLocked(movedItem.clientId,movedItem.date)){toast('최종 결재 완료된 월의 거래는 순서를 변경할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
-  const arr=[...S.filteredTrx];
-  const [moved]=arr.splice(fromIdx,1);
-  arr.splice(toIdx,0,moved);
-  const base=(S.page-1)*S.pageSize;
-  const pageItems=arr.slice(base,base+S.pageSize);
-  // 배치 업데이트할 항목 수집
-  const toUpdate=[];
-  for(let i=0;i<pageItems.length;i++){
-    const t=pageItems[i];
-    const newOrder=base+i;
-    if(t.sortOrder!==newOrder){
-      t.sortOrder=newOrder;
-      toUpdate.push({col:COLS.TRANSACTIONS,docId:t.id,data:{sortOrder:newOrder}});
-      const orig=S.transactions.find(x=>x.id===t.id);
-      if(orig)orig.sortOrder=newOrder;
+  if(!can('trx.reorder')){toast('순서 변경 권한이 없습니다.','error');return;}
+  if(!canReorderNow()){
+    toast('순서를 바꾸려면 날짜순으로 정렬한 상태여야 합니다.\n'
+      +'지금 정렬 상태에서 옮기면 옮긴 자리가 화면과 다르게 저장됩니다.','error',5000);
+    return;
+  }
+  const plan=planReorder(S.transactions,fromId,toId);
+  if(!plan.ok){
+    // 장부에서 3월 15일 줄을 3월 10일 앞으로 옮긴다는 것은 순서가 아니라
+    // 날짜를 고치는 일이다. 말없이 무시하면 드래그가 먹지 않는 것처럼 보인다.
+    if(plan.reason==='cross-date'){
+      toast('날짜가 다른 거래끼리는 순서를 바꿀 수 없습니다.\n'
+        +'날짜 자체가 잘못됐다면 거래를 수정하세요.','info',5000);
+    }
+    return;
+  }
+  if(!plan.changed.length)return;
+
+  const client=S.transactions.find(x=>x.id===fromId)?.clientId;
+  // 순서도 거래 문서를 고치는 일이다 — 규칙이 같은 단계 잠금을 건다.
+  const orderBlocked=trxEditBlockReason(client,plan.date); if(orderBlocked){toast('순서를 바꿀 수 없습니다. '+orderBlocked,'error',6000);return;}
+
+  await batchUpdateDocs(plan.changed.map(c=>
+    ({col:COLS.TRANSACTIONS,docId:c.id,data:{sortOrder:c.sortOrder}})));
+  for(const c of plan.changed){
+    for(const arr of [S.transactions,S.filteredTrx]){
+      const t=arr.find(x=>x.id===c.id); if(t)t.sortOrder=c.sortOrder;
     }
   }
-  // 배치 업데이트 실행 (순차 호출 대신 1회 배치)
-  if(toUpdate.length)await batchUpdateDocs(toUpdate);
-  S.filteredTrx=arr;
-  renderHistoryTable(); renderPagination();
+  // 재정렬 뒤에 applyFilters를 부르지 않으면, 다음 필터 입력·저장 때
+  // 정렬이 다시 적용되면서 방금 바꾼 순서가 원래대로 돌아간다.
+  applyFilters();
   toast('순서가 저장되었습니다.','success',1500);
 }

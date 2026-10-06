@@ -22,71 +22,162 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 
-  <!-- Firebase SDK (Firestore + Auth + Storage) -->
+  <!-- 디자인 토큰 · 컴포넌트 클래스 (styles/) -->
+  <link rel="stylesheet" href="./styles/tokens.css">
+  <link rel="stylesheet" href="./styles/components.css">
+
+  <!-- 글자 크기 설정을 **페인트 전에** 적용한다.
+       스타일시트나 모듈에서 적용하면 기본 크기로 한 번 그려진 뒤 커지면서
+       화면이 눈에 띄게 튄다(고령 사용자에게 특히 거슬린다). 그래서 인라인 동기
+       스크립트로 <html>에 속성만 먼저 박는다. localStorage가 막힌 환경(사생활
+       보호 모드 등)에서도 앱이 죽지 않도록 try/catch로 감싼다. -->
+  <script>
+    (function () {
+      try {
+        var v = localStorage.getItem('scl_fontScale');
+        if (v === 'large' || v === 'xlarge') document.documentElement.dataset.fontScale = v;
+      } catch (e) { /* 저장소를 못 읽는 환경 — 기본 크기로 둔다 */ }
+    })();
+  </script>
+
+  <!-- Firebase SDK (Firestore + Auth + Storage) — public/vendor/ 에서 로컬 로드.
+       CDN(gstatic)에서 받아오던 것을 npm 결과물로 바꿨다. 이유는 tools/vendor.mjs 참고:
+       PWA 오프라인 동작, 폐쇄망 화면 검증, 서드파티 런타임 의존 제거. -->
   <script type="module">
-    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
-    import { getFirestore, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
-    import { getAuth, signInWithCustomToken, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
-    import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js';
+    import {
+      initializeApp,
+      getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, CACHE_SIZE_UNLIMITED,
+      collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, limit, startAfter, writeBatch, getCountFromServer, increment, runTransaction, serverTimestamp, documentId, connectFirestoreEmulator,
+      getAuth, signInWithCustomToken, signOut, onAuthStateChanged, setPersistence, browserSessionPersistence, connectAuthEmulator,
+      getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator,
+      getFunctions, httpsCallable, connectFunctionsEmulator,
+    } from './vendor/firebase.js';
+    import { pickFirebaseEnv } from './firebase-env.js';
 
-    // ★ 본인 Firebase 설정으로 변경하세요
-    const firebaseConfig = {
-      apiKey:            "AIzaSyBYm__B_uz6hg_epUlpvI8jWdjhkRQgMuo",
-      authDomain:        "smart-care-ledger.firebaseapp.com",
-      projectId:         "smart-care-ledger",
-      storageBucket:     "smart-care-ledger.firebasestorage.app",
-      messagingSenderId: "731965168909",
-      appId:             "1:731965168909:web:1fa16a4b4d050a32e7e444"
-    };
+    // 접속 대상은 호스트명이 정한다 — 운영 URL에서만 프로덕션, 그 외는 스테이징.
+    // 설정값과 판정 규칙은 firebase-env.js에 있다 (STAGING.md 참고).
+    const env = pickFirebaseEnv(location, window.sessionStorage);
 
-    const app = initializeApp(firebaseConfig);
-    const db  = getFirestore(app);
+    const app = initializeApp(env.config);
+
+    // ── 영속 캐시 — 무엇을 해 주고 무엇을 안 해 주나 ──────────────
+    //
+    // ⚠️ 여기에 "영속 캐시를 쓰면 바뀌지 않은 문서는 과금되지 않는다"고 적혀
+    //    있었다. **이 앱에서는 사실이 아니다.** 앱의 읽기는 전부 getDocs 인데,
+    //    getDocs 는 온라인이면 언제나 서버 동기화를 기다린다(SDK 의
+    //    waitForSyncWhenOnline). 캐시에 같은 문서가 그대로 있어도 서버에 다시
+    //    묻고, 그 응답이 과금된다.
+    //
+    //    재 봤다: tools/measure-cache.mjs 가 브라우저를 띄워 받은 바이트를 센다.
+    //    콜드 조회·같은 세션 재조회·새로고침 뒤 조회가 모두 같은 양이었다.
+    //    절감 0%.
+    //
+    // 그래서 이 캐시가 실제로 해 주는 일은 **망이 끊겼을 때 버티는 것**이다.
+    // 그때 getDocs 는 캐시로 떨어져 화면이 비지 않는다. 읽기 비용은 줄지 않는다.
+    //
+    // cacheSizeBytes 무제한·persistentMultipleTabManager 는 그 목적에 그대로
+    // 쓸모가 있다(축출되면 오프라인에서 못 보고, 단일 탭 매니저는 두 번째 탭에서
+    // 캐시가 아예 동작하지 않는다).
+    //
+    // 읽기를 줄이는 것은 캐시가 아니라 **덜 읽는 것**이다 — 무엇을 어떻게
+    // 줄였는지는 CLAUDE.md §12-1 에 있다.
+    let db;
+    try {
+      db = initializeFirestore(app, {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+          cacheSizeBytes: CACHE_SIZE_UNLIMITED,
+        }),
+      });
+    } catch (err) {
+      // 사생활 보호 모드처럼 IndexedDB를 못 쓰는 환경에서는 실패한다.
+      // 그때는 메모리 캐시로 떨어져도 앱은 정상 동작한다(읽기만 늘어난다).
+      console.warn('영속 캐시를 쓸 수 없어 메모리 캐시로 동작합니다:', err);
+      db = getFirestore(app);
+    }
     const auth = getAuth(app);
     const storage = getStorage(app);
+    // Cloud Functions는 Firestore와 같은 리전(서울)에 배포된다
+    const functions = getFunctions(app, 'asia-northeast3');
+
+    // 에뮬레이터 모드(?env=emulator) — Blaze 플랜 없이 전 기능을 로컬에서 돌린다
+    if (env.emulators) {
+      const host = location.hostname || '127.0.0.1';
+      connectAuthEmulator(auth, `http://${host}:${env.emulators.auth.port}`, { disableWarnings: true });
+      connectFirestoreEmulator(db, host, env.emulators.firestore.port);
+      connectFunctionsEmulator(functions, host, env.emulators.functions.port);
+      connectStorageEmulator(storage, host, env.emulators.storage.port);
+    }
+
+    // 세션을 탭 단위로 유지한다 (기존 sessionStorage 동작과 같은 수명).
+    // 탭을 닫으면 로그아웃되지만, 새로고침으로는 로그아웃되지 않는다.
+    setPersistence(auth, browserSessionPersistence).catch(err =>
+      console.warn('세션 지속성 설정 실패:', err)
+    );
 
     // 전역 노출
-    window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, writeBatch, storage, ref, uploadBytes, getDownloadURL, deleteObject };
-    window._fbAuth = { auth, signInWithCustomToken, signOut };
+    // ⚠️ 여기에 없는 심볼을 fb()에서 꺼내 쓰면 undefined가 되고, 보통 조용히
+    //    실패한다(batchMixedOps처럼 폴백이 있는 곳은 더 조용하다).
+    //    test/fb-surface.test.mjs가 코드에서 꺼내 쓰는 이름과 이 목록을 대조한다.
+    window._fb = { db, collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, query, where, orderBy, limit, startAfter, writeBatch, getCountFromServer, increment, runTransaction, serverTimestamp, documentId, storage, ref, uploadBytes, getDownloadURL, deleteObject };
+    window._fbAuth = { auth, signInWithCustomToken, signOut, onAuthStateChanged };
+    // endpoint — 호출이 실패했을 때 "어느 주소에 못 닿았는지"를 화면에 보여주기 위해.
+    // 그 주소를 새 탭에서 열면 403(비공개)인지 404(미배포)인지 바로 갈린다.
+    const FN_REGION = 'asia-northeast3';
+    window._fbFn = {
+      call: (name) => httpsCallable(functions, name),
+      endpoint: (name) => (env.emulators
+        ? `http://${location.hostname || '127.0.0.1'}:${env.emulators.functions.port}/${env.config.projectId}/${FN_REGION}/${name}`
+        : `https://${FN_REGION}-${env.config.projectId}.cloudfunctions.net/${name}`),
+    };
+    window._fbEnv = env;
+
+    // 프로덕션이 아니면 화면에 띠를 하나 붙인다. 스테이징을 실서비스로 착각한
+    // 채로 입력하는 사고를 막는 유일한 장치다.
+    if (!env.isProd) {
+      document.addEventListener('DOMContentLoaded', () => {
+        const bar = document.createElement('div');
+        bar.id = 'env-banner';
+        bar.textContent = `${env.label} 환경 · ${env.config.projectId} — 실제 데이터가 아닙니다`;
+        document.body.prepend(bar);
+      });
+    }
 
     // Firestore 준비 완료 → 앱 초기화 트리거
     window._fbReady = true;
     if (window.onFirebaseReady) window.onFirebaseReady();
   </script>
 
-  <!-- 외부 라이브러리 -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 외부 라이브러리 — public/vendor/ 에서 로컬 로드 (npm run vendor 로 재생성).
+       Tailwind CDN은 제거했다: 전 소스에서 유틸리티 클래스가 실제로 쓰인 곳이 없었고
+       (index.html의 class="hidden" 하나뿐인데 그마저 inline display:none과 중복),
+       매 로드마다 CSS를 재컴파일하는 런타임 스크립트를 금전 장부에 둘 이유가 없다.
+       그 한 줄은 아래 .hidden 규칙이 대신한다. -->
+  <script src="./vendor/chart.umd.js"></script>
+  <script src="./vendor/xlsx.bundle.js"></script>
   <!-- 파서 설정 — 은행/카드사 추가 시 이 파일만 수정 -->
-  <script src="parser-config.js"></script>
 
   <style>
-    :root {
-      --bg:             #f8fafc;
-      --surface:        #ffffff;
-      --green:          #10b981;
-      --card:           #ffffff;
-      --sidebar:        #1e293b;
-      --sidebar-border: #334155;
-      --nav-text:       #94a3b8;
-      --navy:           #0f172a;
-      --border:         #e2e8f0;
-      --bm:             #cbd5e1;
-      --text:           #1e293b;
-      --sub:            #475569;
-      --muted:          #556070;
-      --blue:           #0ea5e9;
-      --blue2:          #0284c7;
-      --green:          #10b981;
-      --red:            #f43f5e;
-      --amber:          #f59e0b;
-      --shadow:         0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);
-      --shadow2:        0 4px 12px rgba(0,0,0,0.08);
-      --r:              12px;
-      --r2:             18px;
-      --tr:             all 0.18s cubic-bezier(0.4,0,0.2,1);
+    /* 비프로덕션 환경 표시 — 스테이징/에뮬레이터를 실서비스로 착각하지 않도록.
+       레이아웃에 영향을 주지 않게 화면 위에 떠 있고 클릭을 가로채지 않는다. */
+    /* 오른쪽 아래에 둔다. 위쪽은 헤더 조작 영역(글자 크기 설정 등)이라
+       띠가 겹쳐 버튼을 가린다. */
+    #env-banner {
+      position: fixed; bottom: 0; right: 0; z-index: 99999;
+      padding: 4px 12px; border-top-left-radius: 8px;
+      background: #b45309; color: #fff;
+      font-size: 11px; font-weight: 700; letter-spacing: .02em;
+      pointer-events: none; user-select: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,.2);
     }
+    @media print { #env-banner { display: none; } }
+
+    /* 디자인 토큰은 styles/tokens.css 로 옮겼다 (--blue 등 기존 이름은 별칭으로 유지).
+       색 정의가 여기 있으면 값 하나 바꿀 때마다 index.html을 건드려야 하고,
+       --green 이 두 번 선언돼 있던 것처럼 중복도 눈에 띄지 않는다. */
     *{box-sizing:border-box;margin:0;padding:0;}
+    /* Tailwind CDN에서 유일하게 쓰던 유틸리티. CDN을 뺐으므로 여기서 정의한다. */
+    .hidden{display:none;}
     body{font-family:'Noto Sans KR',-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;}
     .spinner{width:32px;height:32px;border:3px solid #e2e8f0;border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;}
     @keyframes spin{to{transform:rotate(360deg);}}
@@ -130,6 +221,14 @@
     .cat-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;transition:var(--tr);white-space:nowrap;border:1.5px solid transparent;}
     .cat-chip:hover{opacity:.85;}
     .cat-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+    /* 입주자 찾기 — 목록이 아니라 검색이다(modules/client-picker.js).
+       칸 바로 아래에 붙고, 줄마다 팀·담당자를 함께 적어 동명이인을 가른다. */
+    .client-dd{position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:300;background:#fff;
+      border:1px solid var(--bm);border-radius:10px;box-shadow:var(--shadow2);padding:5px;
+      max-height:260px;overflow-y:auto;display:none;}
+    .client-dd.show{display:block;}
+    .client-dd-item{display:flex;align-items:baseline;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--text);}
+    .client-dd-item:hover{background:var(--bg);}
     .cat-dd{position:absolute;z-index:300;background:#fff;border:1px solid var(--bm);border-radius:10px;box-shadow:var(--shadow2);padding:5px;min-width:130px;display:none;}
     .cat-dd.show{display:block;}
     .cat-dd-item{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);}
@@ -155,6 +254,9 @@
     #modal-wrap{position:fixed;inset:0;background:rgba(15,23,42,.4);backdrop-filter:blur(4px);z-index:700;display:none;align-items:center;justify-content:center;padding:20px;}
     #modal-wrap.show{display:flex;}
     #modal-box{background:#fff;border:1px solid var(--border);padding:24px;border-radius:24px;width:100%;max-width:500px;box-shadow:0 10px 30px rgba(0,0,0,.1);position:relative;max-height:90vh;overflow-y:auto;animation:fadeUp .2s ease;}
+    /* 검토 표가 들어가는 모달(영수증 자동입력·엑셀 미리보기)은 500px에 들어가지
+       않는다. 자식에 min-width를 주면 상자를 넘쳐 잘리므로 상자를 넓힌다. */
+    #modal-box.wide{max-width:64rem;}
     #modal-close-btn{position:absolute;top:14px;right:14px;width:28px;height:28px;border-radius:50%;background:#f1f5f9;border:none;cursor:pointer;font-size:14px;color:var(--sub);display:flex;align-items:center;justify-content:center;}
     #modal-close-btn:hover{background:#fee2e2;color:#dc2626;}
     .loading-overlay{position:fixed;inset:0;background:rgba(255,255,255,.8);z-index:500;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;backdrop-filter:blur(3px);}
@@ -176,7 +278,22 @@
     .empty-state p{font-size:15px;font-weight:500;margin-bottom:16px;}
     .empty-state .btn{margin-top:8px;}
     .cat-tag{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:99px;border:1.5px solid;cursor:default;transition:var(--tr);background:#fff;}
-    .cat-del{margin-left:2px;width:15px;height:15px;border-radius:50%;background:#f1f5f9;color:#94a3b8;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;border:none;}
+    /* 칩 안의 편집·삭제 — 이모지가 아니라 아이콘 한 벌(utils/icons.js)을 쓴다.
+       OS마다 다른 그림이 그려지면 한 화면에서 굵기도 색도 통일되지 않는다. */
+    .cat-edit,.cat-del{margin-left:2px;width:18px;height:18px;border-radius:50%;background:#f1f5f9;color:#94a3b8;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;border:none;padding:0;flex-shrink:0;}
+    .cat-edit svg,.cat-del svg{width:14px;height:14px;}
+    .cat-edit:hover{background:#dbeafe;color:var(--blue);}
+    /* 보고서 표 — 어느 줄을 보고 있는지는 줄 전체의 밑줄이, 고칠 수 있는 칸은
+       그 칸의 진한 배경이 말한다. 둘 다 hover 라 인쇄물에는 흔적이 없다.
+       손가락 커서는 고칠 수 있는 칸에만 — 줄 전체에 주면 못 고치는 칸도 눌러 본다. */
+    .rpt-row-edit:hover>td{background:#eff6ff;box-shadow:inset 0 -2px 0 #93c5fd;}
+    .rpt-cell-inline,.rpt-cell-cat{cursor:pointer;}
+    .rpt-row-edit:hover>td.rpt-cell-inline:hover,
+    .rpt-row-edit:hover>td.rpt-cell-cat:hover{background:#dbeafe;}
+    /* 그 자리에서 고치는 입력칸 — 칸 크기를 그대로 쓴다. 폭이 달라지면 표가
+       한 번 출렁이고, 그 순간 눈이 고치던 줄을 놓친다. */
+    .rpt-inline-input{width:100%;box-sizing:border-box;border:1px solid var(--blue);border-radius:5px;
+      padding:2px 4px;font:inherit;font-size:13px;background:#fff;color:var(--text);outline:none;}
     .cat-del:hover{background:#fee2e2;color:#dc2626;}
     .rule-tag{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:9px;background:#f8fafc;border:1.5px solid var(--bm);}
     .stat-card{background:var(--card);padding:20px;border-radius:var(--r2);border:1px solid var(--border);box-shadow:var(--shadow);}
@@ -194,9 +311,9 @@
     .stat-num{font-size:22px;font-weight:900;font-family:'JetBrains Mono',monospace;margin-top:4px;}
     /* 인쇄 */
     @media print{
-      body{background:#fff!important;font-size:15px!important;margin:0!important;}
+      body{background:#fff!important;font-size:11px!important;margin:0!important;}
       #toast-wrap,#confirm-dialog,#receipt-modal,#modal-wrap,#loading-overlay,
-      aside,header,.no-print,.mobile-nav,#m-bottom-nav{display:none!important;}
+      aside,header,.no-print,.mobile-nav{display:none!important;}
       /* 조회영역/결재현황/자동요약/트랙 인쇄 제외 */
       #view-report>*:not(#rpt-subtab-monthly){display:none!important;}
       #rpt-subtab-monthly>*:not(#report-area){display:none!important;}
@@ -213,60 +330,228 @@
       /* 페이지 설정 — 프린터/PDF 모두 A4 강제 */
       @page{
         size:A4 portrait;
-        margin:10mm 12mm;
+        margin:9mm 10mm;
       }
       /* print-area: mm 단위로 폭 고정 → 프린터 OS 설정과 무관하게 A4에 맞춤 */
       #print-area{
         box-shadow:none!important;border-radius:0!important;border:none!important;
-        font-size:13px!important;
-        width:186mm!important;        /* 210mm - 좌12mm - 우12mm */
-        max-width:186mm!important;
+        font-size:11px!important;line-height:1.3!important;
+        width:190mm!important;        /* 210mm - 좌10mm - 우10mm */
+        max-width:190mm!important;
         margin:0 auto!important;
       }
       /* 섹션 padding 축소 */
-      #print-area>div{padding:8px 12px!important;}
+      #print-area>div{padding:5px 10px!important;}
+      /* 섹션 제목(대문자 라벨)의 아래 여백 — 줄마다 10~14px 이 붙어 있어
+         섹션 여섯이면 그것만으로 한 뼘이 된다. */
+      #print-area div[style*="text-transform:uppercase"]{margin-bottom:3px!important;}
+      /* 수입/지출/잔액 카드 — 인쇄물에서는 숫자만 읽으면 된다 */
+      #rpt-sum-cards{gap:6px!important;}
+      #rpt-sum-cards>div{padding:5px!important;}
+      #rpt-sum-cards>div>div:last-child{font-size:13px!important;}
       /* 헤더 섹션 */
-      #print-area h1{font-size:18px!important;margin:0!important;}
+      #print-area h1{font-size:15px!important;margin:0!important;}
       /* 테이블 공통 */
       #print-area table{width:100%!important;border-collapse:collapse!important;table-layout:fixed!important;}
       #print-area table td,#print-area table th{
-        font-size:13px!important;padding:5px 3px!important;
+        font-size:10px!important;padding:1.5px 3px!important;line-height:1.3!important;
         word-break:break-all!important;overflow-wrap:break-word!important;
       }
-      /* 거래내역 테이블 컬럼 — mm 단위 (합계 186mm) */
+      /* 거래내역 테이블 컬럼 — mm 단위 (합계 190mm) */
       #rpt-trx-body tr td:nth-child(1){width:17mm!important;}   /* 날짜 */
       #rpt-trx-body tr td:nth-child(2){width:20mm!important;}   /* 분류 */
-      #rpt-trx-body tr td:nth-child(3){width:95mm!important;}   /* 내용 */
+      #rpt-trx-body tr td:nth-child(3){width:99mm!important;}   /* 내용 */
       #rpt-trx-body tr td:nth-child(4){width:22mm!important;}   /* 수입 */
       #rpt-trx-body tr td:nth-child(5){width:22mm!important;}   /* 지출 */
       #rpt-trx-body tr td:nth-child(6){width:10mm!important;}   /* 증빙 */
       /* 헤더도 동일 */
       #print-area table thead tr th:nth-child(1){width:17mm!important;}
       #print-area table thead tr th:nth-child(2){width:20mm!important;}
-      #print-area table thead tr th:nth-child(3){width:95mm!important;}
+      #print-area table thead tr th:nth-child(3){width:99mm!important;}
       #print-area table thead tr th:nth-child(4){width:22mm!important;}
       #print-area table thead tr th:nth-child(5){width:22mm!important;}
       #print-area table thead tr th:nth-child(6){width:10mm!important;}
+      /* 결재란 — 도장이 들어갈 자리는 남기되, 종이 한 뼘까지 쓰지는 않는다 */
+      #rpt-approval-grid>div>div:last-child{height:42px!important;padding-bottom:5px!important;}
+      /* 의견란 */
+      #rpt-comments-area>div{margin-bottom:5px!important;}
+      #rpt-comments-area textarea{min-height:34px!important;font-size:10px!important;padding:3px 5px!important;}
+      #rpt-comments-area>div>div:last-child{font-size:10px!important;min-height:16px!important;padding:3px 5px!important;}
       /* 색상 보존 */
       #print-area *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
       /* I001: 테이블 행 페이지 경계 잘림 방지 */
       #print-area table tr{page-break-inside:avoid!important;}
       #print-area table tbody tr{page-break-inside:avoid!important;break-inside:avoid!important;}
-      /* 섹션 단위로 페이지 나눔 방지 */
-      #print-area>div{page-break-inside:avoid!important;break-inside:avoid!important;}
+      /* 섹션 단위로 페이지 나눔 방지 — **거래 내역만 빼고.**
+         거래가 스무 줄만 넘어도 이 섹션은 한 쪽에 들어가지 않는다. 그런데
+         avoid 가 걸려 있으면 브라우저는 먼저 다음 쪽으로 통째로 밀어 보고,
+         거기서도 안 들어가니 결국 쪼갠다 — 밀기 전 쪽의 남은 절반이 그대로
+         빈 채로 인쇄된다. 50건에 4쪽이 나오던 이유가 이것이다. */
+      #print-area>div:not(#rpt-trx-section){page-break-inside:avoid!important;break-inside:avoid!important;}
+      /* 쪽을 넘어가면 표 머리를 다시 찍는다 — 둘째 쪽부터 어느 칸이 수입인지
+         알 수 없으면 결재자가 첫 쪽으로 되돌아가야 한다. */
+      #print-area table thead{display:table-header-group!important;}
+      #print-area table tfoot{display:table-footer-group!important;}
       /* 인쇄 시 숨겨진 섹션 여백 제거 */
       #rpt-bank-stmt-section{display:none!important;padding:0!important;margin:0!important;border:none!important;}
       #print-area>div[style*="display: none"],#print-area>div[style*="display:none"]{padding:0!important;margin:0!important;border:none!important;height:0!important;overflow:hidden!important;}
     }
-    @media(max-width:768px){aside{display:none;}}
-    /* Mobile bottom navigation */
-    .mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--border);padding:8px 0 calc(8px + env(safe-area-inset-bottom));z-index:100;box-shadow:0 -2px 10px rgba(0,0,0,.06);}
+    /* aside에 인라인 style="display:flex"가 붙어 있어 !important가 없으면
+       이 규칙이 무시된다. 모바일 전용 앱이 있을 때는 드러나지 않던 문제로,
+       반응형 통합 후에는 휴대폰에서 216px 사이드바가 화면을 잡아먹는다. */
+    @media(max-width:768px){aside{display:none!important;}}
+    /* 아이콘 — utils/icons.js 가 그리는 인라인 SVG.
+       크기·굵기·색을 **여기 한 곳에서** 정한다. 호출부가 저마다 크기를 적으면
+       같은 버튼 줄에서 아이콘 크기가 갈리고, 그게 이모지의 문제였다.
+
+       크기는 자리로 정한다(버튼 16 · 퀵 액션 30 · 네비 24 · 시트 26).
+       svg 의 width/height 속성보다 CSS 가 이기므로 여기가 결론이다. */
+    .icon{display:inline-block;vertical-align:-0.18em;width:24px;height:24px;flex-shrink:0;}
+    [data-icon]{display:inline-flex;align-items:center;justify-content:center;line-height:0;}
+    /* 글자 옆에 서는 아이콘 — 간격은 **svg 에** 준다. 감싼 span 에 주면 어떤 곳은
+       span, 어떤 곳은 svg 로 채우는 탓에 간격이 두 배가 되는 자리가 생긴다. */
+    button .icon,.btn .icon,.btn-sub .icon{width:16px;height:16px;margin-right:6px;}
+    .dash-action-btn .icon{width:30px;height:30px;margin-right:0;}
+    .record-action__icon .icon{width:26px;height:26px;margin-right:0;}
+    #btn-trx-view-toggle,#btn-csv-export,#btn-bulk-del,#btn-filter-reset,.btn-sub,.nav-item,.nav-sub{
+      display:inline-flex;align-items:center;}
+    /* 권한·화면폭으로 감추는 자리.
+       인라인 style="display:none" 대신 클래스를 쓰는 이유: 인라인은 미디어 쿼리를
+       이겨서, 휴대폰에서만 보여야 할 버튼이 데스크톱에도 나온다. */
+    .perm-hidden{display:none!important;}
+    /* 헤더의 아이콘 버튼 — 휴대폰에서만 보인다(설정) */
+    .header-icon-btn{display:none;align-items:center;justify-content:center;width:38px;height:38px;
+      border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--muted);cursor:pointer;}
+    .header-icon-btn:active{background:#f1f5f9;}
+
+    /* Mobile bottom navigation — 세 자리(담당 · ＋ · 내역) */
+    .mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--border);padding:6px 0 calc(6px + env(safe-area-inset-bottom));z-index:100;box-shadow:0 -2px 10px rgba(0,0,0,.06);}
     .mobile-nav-inner{display:flex;justify-content:space-around;align-items:center;}
-    .mobile-nav-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 12px;border:none;background:none;cursor:pointer;color:var(--muted);font-size:10px;font-weight:600;transition:var(--tr);border-radius:10px;min-width:64px;}
+    .mobile-nav-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 12px;border:none;background:none;cursor:pointer;color:var(--muted);font-size:11px;font-weight:700;transition:var(--tr);border-radius:10px;min-width:72px;}
     .mobile-nav-item:active{background:#f1f5f9;}
     .mobile-nav-item.active{color:var(--blue);}
-    .mobile-nav-item .nav-icon{font-size:22px;line-height:1;}
-    @media(max-width:768px){.mobile-nav{display:block;}main{padding-bottom:80px!important;}}
+    .mobile-nav-item .icon{width:24px;height:24px;}
+    /* ＋ 기록 — 손가락이 가장 쉽게 닿는 가운데 아래, 56px(권장 최소 44px보다 크게) */
+    .record-fab{display:flex;align-items:center;justify-content:center;width:56px;height:56px;margin-top:-18px;
+      border:4px solid #fff;border-radius:50%;background:var(--blue);color:#fff;cursor:pointer;
+      box-shadow:0 6px 16px rgba(37,99,235,.35);}
+    .record-fab:active{transform:scale(.96);}
+    .record-fab .icon{width:28px;height:28px;stroke-width:2.2;}
+    /* 기록 시트 */
+    .sheet-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:200;display:flex;align-items:flex-end;}
+    .sheet{width:100%;background:#fff;border-radius:18px 18px 0 0;padding:10px 14px calc(14px + env(safe-area-inset-bottom));
+      box-shadow:0 -8px 30px rgba(0,0,0,.2);animation:sheet-up .18s ease-out;}
+    @keyframes sheet-up{from{transform:translateY(14px);opacity:.6;}to{transform:none;opacity:1;}}
+    .sheet__grip{width:40px;height:4px;border-radius:99px;background:#cbd5e1;margin:2px auto 10px;}
+    .sheet__title{font-size:13px;font-weight:800;color:var(--muted);padding:0 4px 8px;}
+    .record-action{display:flex;align-items:center;gap:14px;width:100%;padding:14px 12px;margin-bottom:6px;
+      border:1px solid var(--border);border-radius:14px;background:#fff;cursor:pointer;text-align:left;}
+    .record-action:active{background:#f8fafc;}
+    .record-action[disabled]{opacity:.5;cursor:not-allowed;}
+    .record-action__icon{display:flex;align-items:center;justify-content:center;width:44px;height:44px;
+      border-radius:12px;background:#f1f5f9;flex-shrink:0;}
+    .record-action__text{display:flex;flex-direction:column;gap:2px;min-width:0;}
+    .record-action__label{font-size:15px;font-weight:800;color:var(--text);}
+    .record-action__hint{font-size:12px;color:var(--muted);}
+    .sheet__cancel{width:100%;padding:13px;margin-top:4px;border:none;border-radius:14px;background:#f1f5f9;
+      font-size:15px;font-weight:800;color:var(--muted);cursor:pointer;}
+    @media(max-width:768px){
+      .mobile-nav{display:block;}
+      main{padding-bottom:88px!important;}
+      .header-icon-btn:not(.perm-hidden){display:inline-flex;}
+      /* 스테이징 띠(#env-banner)는 오른쪽 아래 고정이라 하단 네비의 「내역」
+         글자를 덮는다. 프리뷰로 확인하는 사람에게만 보이는 가림이지만,
+         확인하는 화면이 실제와 달라지면 확인이 안 된다. 네비 위로 올린다. */
+      #env-banner{bottom:calc(70px + env(safe-area-inset-bottom))!important;}
+      /* 대시보드 퀵 액션은 휴대폰에서 세 줄로 접혀 화면 절반을 먹었다.
+         갈 곳은 전부 네비·헤더·＋ 시트에 있다(test/mobile-record.test.mjs 가 대조). */
+      #dashboard-actions{display:none!important;}
+    }
+
+    /* ───────────────────────────────────────────────────────────
+       좁은 화면(휴대폰) — 거래내역 표를 카드로 전환
+       모바일 전용 앱을 없애고 같은 화면 하나를 CSS로 접는다.
+       별도 렌더 함수를 만들면 정렬·잔액·결재가 데스크톱과 어긋나기 때문이다.
+       ─────────────────────────────────────────────────────────── */
+    @media(max-width:768px){
+      #history-table{min-width:0!important;}
+      #history-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}
+      #history-table tbody tr{
+        display:block;margin-bottom:10px;padding:12px 14px;background:var(--surface);
+        border:1px solid var(--border);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);
+      }
+      #history-table tbody td{
+        display:flex;justify-content:space-between;align-items:center;gap:12px;
+        border:none!important;padding:5px 0!important;text-align:left!important;
+        max-width:none!important;white-space:normal!important;overflow:visible!important;
+      }
+      /* 각 줄 앞에 컬럼 이름을 붙인다 (헤더를 숨겼으므로) */
+      #history-table tbody td[data-label]::before{
+        content:attr(data-label);flex-shrink:0;
+        font-size:11px;font-weight:700;color:var(--muted);min-width:52px;
+      }
+      /* 좁은 화면에서 의미가 적거나 조작이 어려운 열은 감춘다
+         (:has() 대신 클래스로 지정 — 구형 안드로이드 브라우저 호환) */
+      #history-table tbody td.drag-handle,
+      #history-table tbody td.col-check{display:none!important;}
+      /* 내용은 카드 제목처럼 크게 */
+      #history-table tbody td[data-label="내용"]{
+        font-size:15px;font-weight:700;color:var(--text);
+        padding-bottom:8px!important;margin-bottom:4px;border-bottom:1px solid var(--border)!important;
+      }
+      #history-table tbody td[data-label="내용"]::before{display:none;}
+      /* 금액은 눈에 띄게 */
+      #history-table tbody td.col-in,
+      #history-table tbody td.col-out{font-size:15px;font-weight:800;}
+      /* 빈 금액 칸은 줄을 차지하지 않게 */
+      #history-table tbody td.col-in:empty,
+      #history-table tbody td.col-out:empty{display:none!important;}
+    }
+
+    /* 좁은 화면에서는 보고서만 감춘다. 설정은 헤더 버튼으로 열리고,
+       내용은 「내 역할 안내」뿐이다(core.js settingsGuideOnly). */
+    @media(max-width:768px){
+      .nav-item[data-view="report"]{display:none!important;}
+    }
+
+    /* ───────────────────────────────────────────────────────────
+       좁은 화면(휴대폰) — 거래내역에서 지금 안 쓰는 것을 내린다
+
+       휴대폰에서 이 화면을 여는 이유는 거의 하나다: **어떤 거래를 찾아
+       영수증을 붙이거나 한 칸 고치는 것**(§7). 그런데 화면은 데스크톱의
+       관리 도구를 그대로 접어 놓은 것이라, 필터 여섯 개와 버튼 아홉 개가
+       표보다 먼저 나왔다 — 찾으려는 거래에 닿기까지 두 번을 스크롤한다.
+
+       남기는 것: 입주자 · 계좌 · 기간, 그리고 줄마다 날짜 · 내용 · 증빙 · 수정.
+       내리는 것은 **데스크톱에 그대로 있다.** 여기서 지우는 것이 아니라
+       좁은 화면에서만 접는 것이고, 기록을 남기는 행동은 ＋ 시트가 덮는다.
+
+       ⚠️ 권한으로 감추는 쪽(auth.js 의 show())은 인라인 style 을 쓴다.
+       그쪽이 `display:''` 로 되돌려도 이 규칙이 이기도록 !important 를 둔다.
+       ─────────────────────────────────────────────────────────── */
+    @media(max-width:768px){
+      /* 필터 — 입주자·계좌·기간만 남긴다 */
+      .trx-filter-extra{display:none!important;}
+      /* 기간은 남기되 자주 안 쓰는 단축만 내린다 — 이 장부의 일은 「이번 달」과
+         「지난 달」에 몰린다(§12-1). 나머지는 날짜 칸으로 고른다. */
+      .period-btn[data-p="this-week"],
+      .period-btn[data-p="last-3month"],
+      .period-btn[data-p="this-year"],
+      #btn-filter-reset{display:none!important;}
+      /* 작업 버튼 — 수기 입력부터 엑셀 저장까지. 기록은 ＋ 시트가 받는다.
+         일괄 삭제도 함께 내린다: 체크박스 열이 이미 숨어 있어 누를 수는
+         있는데 고를 수가 없다 — 보이는데 안 되는 버튼이 가장 나쁘다. */
+      #btn-h-trx, #btn-h-excel, #btn-h-receipt-intake, #btn-h-fixed,
+      #btn-h-receipt-print, #h-unclassified,
+      #btn-trx-view-toggle, #btn-csv-export, #btn-bulk-del{display:none!important;}
+      /* 남는 것은 건수뿐이다. 구분선이 홀로 떠 보이지 않게 여백을 줄인다. */
+      #trx-actions{border-top:none!important;padding-top:0!important;}
+      /* 줄에서 접는 것은 분류와 계좌뿐이다.
+         **금액은 남긴다** — 같은 날 같은 가맹점 두 건을 가르는 유일한 값이고,
+         장부에서 금액이 안 보이면 무엇을 보고 있는지 알 수 없다. */
+      #history-table tbody td[data-label="카테고리"],
+      #history-table tbody td[data-label="계좌"]{display:none!important;}
+    }
     /* Screen reader only */
     .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
     /* 대시보드 퀵 액션 버튼 — 창 너비에 따라 자동 조정 */
@@ -306,25 +591,60 @@
     .category-subtab-btn.active{color:var(--blue);border-bottom-color:var(--blue);}
     .subtab-content{display:none;}
     .subtab-content.active{display:block;}
-    /* 큰 글씨 모드 — 40~60대 사용자 가독성 향상 (토글 시 body.large-text) */
-    body.large-text{font-size:17px;}
-    body.large-text table tbody td{font-size:16px;}
-    body.large-text table thead th{font-size:14px;}
-    body.large-text .col-in,body.large-text .col-out{font-size:17px;}
-    body.large-text .label{font-size:14px;}
-    body.large-text .btn{font-size:16px;min-height:50px;}
-    body.large-text .btn-sub{font-size:15px;padding:9px 15px;}
-    body.large-text .input{font-size:16px;min-height:50px;}
-    body.large-text .badge,body.large-text .period-btn,body.large-text .cat-chip,body.large-text .cat-dd-item{font-size:14px;}
-    body.large-text .nav-item{font-size:16px;}
-    body.large-text .nav-sub{font-size:15px;}
-    body.large-text .mobile-nav-item{font-size:12px;}
-    body.large-text .mobile-nav-item .nav-icon{font-size:24px;}
-    body.large-text #view-title{font-size:23px;}
-    body.large-text #btn-csv-export,body.large-text #btn-bulk-del,body.large-text #btn-trx-view-toggle,body.large-text #btn-filter-reset{font-size:14px;}
-    #btn-large-text{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9px;font-size:13px;font-weight:700;color:var(--sub);background:#fff;border:1.5px solid var(--bm);cursor:pointer;transition:var(--tr);white-space:nowrap;}
-    #btn-large-text:hover{border-color:var(--blue);color:var(--blue);}
-    #btn-large-text.on{background:var(--blue);color:#fff;border-color:var(--blue);}
+    /* ── 글자 크기 3단계 (기존 화면) ──────────────────────────────
+       styles/tokens.css의 html[data-font-scale]가 루트 font-size를 올리지만,
+       그것만으로는 **rem 기반 크기만** 커진다. 이 화면의 기존 CSS는 값이 px로
+       박혀 있어 따라오지 않으므로 아래에서 함께 올린다.
+
+       종전에는 이 목록이 body.large-text 아래 12줄로 손으로 나열돼 있었고,
+       새 UI를 만들 때마다 한 줄씩 추가해야 했다(빠뜨린 곳은 그 부분만 작게 남았다).
+       그래서 크기를 변수로 뽑아 단계별로 재정의한다 — 규칙은 한 벌이고
+       단계를 늘릴 때 값 블록만 추가한다.
+
+       새로 쓰는 CSS는 rem을 쓴다(styles/components.css). 그러면 이 목록에
+       손댈 필요가 없다. 인라인 스타일의 px는 리팩토링 단계에서 걷어낸다. */
+    :root {
+      --fs-body: 15px; --fs-td: 14px; --fs-th: 12px; --fs-amount: 15px;
+      --fs-label: 12px; --fs-btn: 14px; --fs-btn-sub: 13px; --fs-input: 14px;
+      --fs-chip: 12px; --fs-nav: 14px; --fs-nav-sub: 13px;
+      --fs-mnav: 11px; --fs-mnav-icon: 22px; --fs-title: 21px; --fs-toolbtn: 13px;
+      --ctl-min: 44px;
+    }
+    html[data-font-scale="large"] {
+      --fs-body: 17px; --fs-td: 16px; --fs-th: 14px; --fs-amount: 17px;
+      --fs-label: 14px; --fs-btn: 16px; --fs-btn-sub: 15px; --fs-input: 16px;
+      --fs-chip: 14px; --fs-nav: 16px; --fs-nav-sub: 15px;
+      --fs-mnav: 12px; --fs-mnav-icon: 24px; --fs-title: 23px; --fs-toolbtn: 14px;
+      --ctl-min: 50px;
+    }
+    html[data-font-scale="xlarge"] {
+      --fs-body: 19px; --fs-td: 18px; --fs-th: 15px; --fs-amount: 19px;
+      --fs-label: 15px; --fs-btn: 18px; --fs-btn-sub: 16px; --fs-input: 18px;
+      --fs-chip: 15px; --fs-nav: 18px; --fs-nav-sub: 16px;
+      --fs-mnav: 13px; --fs-mnav-icon: 26px; --fs-title: 26px; --fs-toolbtn: 15px;
+      --ctl-min: 54px;
+    }
+    body{font-size:var(--fs-body);}
+    table tbody td{font-size:var(--fs-td);}
+    table thead th{font-size:var(--fs-th);}
+    .col-in,.col-out{font-size:var(--fs-amount);}
+    .label{font-size:var(--fs-label);}
+    .btn{font-size:var(--fs-btn);min-height:var(--ctl-min);}
+    .btn-sub{font-size:var(--fs-btn-sub);}
+    .input{font-size:var(--fs-input);min-height:var(--ctl-min);}
+    .badge,.period-btn,.cat-chip,.cat-dd-item{font-size:var(--fs-chip);}
+    .nav-item{font-size:var(--fs-nav);}
+    .nav-sub{font-size:var(--fs-nav-sub);}
+    .mobile-nav-item{font-size:var(--fs-mnav);}
+    /* 아이콘이 SVG 라서 font-size 로는 커지지 않는다 — 크기를 직접 준다.
+       (글자만 커지고 아이콘은 그대로면 큰 글씨를 고른 사람에게는 오히려 답답하다) */
+    .mobile-nav-item .nav-icon .icon{width:var(--fs-mnav-icon);height:var(--fs-mnav-icon);}
+    #view-title{font-size:var(--fs-title);}
+    #btn-csv-export,#btn-bulk-del,#btn-trx-view-toggle,#btn-filter-reset{font-size:var(--fs-toolbtn);}
+    /* 인쇄물은 사용자 설정에 따라 페이지가 밀리면 안 된다 (A4 결재 문서) */
+    @media print { :root, html[data-font-scale="large"], html[data-font-scale="xlarge"] {
+      --fs-body:11px; --fs-td:10px; --fs-th:10px; --fs-amount:11px; --fs-title:15px;
+    } }
   </style>
 </head>
 <body>
@@ -386,7 +706,9 @@
         <a href="#" id="goto-login" style="font-size:13px;color:var(--blue);text-decoration:none;">로그인으로 돌아가기</a>
       </div>
     </div>
-    <p id="login-err" style="color:var(--red);font-size:13px;text-align:center;margin-top:10px;display:none;"></p>
+    <!-- white-space:pre-line — 설정 오류 안내는 줄바꿈과 주소를 담는다.
+         overflow-wrap — 긴 함수 주소가 카드 밖으로 삐져나가지 않게. -->
+    <p id="login-err" style="color:var(--red);font-size:13px;text-align:center;margin-top:10px;display:none;white-space:pre-line;overflow-wrap:anywhere;"></p>
   </div>
 </div>
 
@@ -411,37 +733,38 @@
         </div>
       </div>
       <nav style="flex:1;padding:0 8px;overflow-y:auto;">
-        <button class="nav-item active" data-view="dashboard">📊 대시보드</button>
-        <button class="nav-item" data-view="history">📜 거래 내역</button>
-        <button class="nav-item" data-view="report">📑 보고서 <span id="nav-rpt-badge" style="display:none;background:#ef4444;color:#fff;font-size:10px;font-weight:900;padding:1px 6px;border-radius:99px;margin-left:4px;"></span></button>
-        <button class="nav-item" data-view="settings">⚙️ 설정 <span id="nav-settings-badge" style="display:none;background:#f59e0b;color:#fff;font-size:10px;font-weight:900;padding:1px 6px;border-radius:99px;margin-left:4px;"></span></button>
+        <button class="nav-item active" data-view="dashboard"><span data-icon="chart" data-icon-size="18"></span>대시보드</button>
+        <button class="nav-item" data-view="history"><span data-icon="list" data-icon-size="18"></span>거래 내역</button>
+        <button class="nav-item" data-view="report"><span data-icon="report" data-icon-size="18"></span>보고서 <span id="nav-rpt-badge" style="display:none;background:#ef4444;color:#fff;font-size:10px;font-weight:900;padding:1px 6px;border-radius:99px;margin-left:4px;"></span></button>
+        <button class="nav-item" data-view="settings"><span data-icon="settings" data-icon-size="18"></span>설정 <span id="nav-settings-badge" style="display:none;background:#f59e0b;color:#fff;font-size:10px;font-weight:900;padding:1px 6px;border-radius:99px;margin-left:4px;"></span></button>
         <div style="padding:14px 10px 4px;color:#475569;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;">작업</div>
-        <button class="nav-sub" id="btn-trx">✍️ 수기 입력</button>
-        <button class="nav-sub" id="btn-excel">📂 파일 업로드</button>
+        <button class="nav-sub" id="btn-trx"><span data-icon="pen" data-icon-size="16"></span>수기 입력</button>
+        <button class="nav-sub" id="btn-excel"><span data-icon="upload" data-icon-size="16"></span>파일 업로드</button>
       </nav>
       <div style="padding:8px;border-top:1px solid var(--sidebar-border);">
+        <button onclick="openChangePassword({})" style="width:100%;padding:9px;border-radius:9px;font-size:12px;font-weight:700;color:#64748b;background:transparent;border:none;cursor:pointer;transition:var(--tr);" onmouseover="this.style.background='rgba(148,163,184,.12)';this.style.color='#cbd5e1';" onmouseout="this.style.background='transparent';this.style.color='#64748b';"><span data-icon="key" data-icon-size="15"></span>비밀번호 변경</button>
         <button onclick="handleLogout()" style="width:100%;padding:9px;border-radius:9px;font-size:12px;font-weight:700;color:#64748b;background:transparent;border:none;cursor:pointer;transition:var(--tr);" onmouseover="this.style.background='rgba(244,63,94,.1)';this.style.color='#f87171';" onmouseout="this.style.background='transparent';this.style.color='#64748b';">로그아웃</button>
       </div>
     </aside>
 
-    <!-- Mobile Bottom Navigation -->
+    <!-- 휴대폰 하단 네비 — 세 자리뿐이다.
+         가운데가 ＋ 인 이유는 modules/mobile-record.js 머리말에 적혀 있다:
+         휴대폰에서 하는 일은 거의 전부 기록을 남기는 일인데, 예전 네 칸짜리
+         네비에는 그 행동이 아예 없었다. 보고서는 좁은 화면에서 읽기 어려워
+         PC 전용이고(core.js DESKTOP_ONLY_VIEWS), 설정은 헤더로 옮겼다. -->
     <nav class="mobile-nav" role="navigation" aria-label="모바일 메인 메뉴">
       <div class="mobile-nav-inner">
-        <button class="mobile-nav-item active" data-view="dashboard" aria-label="대시보드">
-          <span class="nav-icon">📊</span>
-          <span>대시보드</span>
+        <button class="mobile-nav-item active" data-view="dashboard" aria-label="담당 입주자">
+          <span class="nav-icon" data-icon="people"></span>
+          <span>담당</span>
+        </button>
+        <button id="btn-record" class="record-fab" type="button"
+                aria-label="기록하기" aria-haspopup="dialog" aria-expanded="false">
+          <span class="record-fab__icon" data-icon="plus" data-icon-size="28"></span>
         </button>
         <button class="mobile-nav-item" data-view="history" aria-label="거래 내역">
-          <span class="nav-icon">📜</span>
-          <span>거래내역</span>
-        </button>
-        <button class="mobile-nav-item" data-view="report" aria-label="보고서">
-          <span class="nav-icon">📑</span>
-          <span>보고서</span>
-        </button>
-        <button class="mobile-nav-item" data-view="settings" aria-label="설정">
-          <span class="nav-icon">⚙️</span>
-          <span>설정</span>
+          <span class="nav-icon" data-icon="list"></span>
+          <span>내역</span>
         </button>
       </div>
     </nav>
@@ -455,7 +778,25 @@
           <h2 id="view-title" style="font-size:20px;font-weight:900;color:var(--text);letter-spacing:-0.02em;">대시보드</h2>
           <p  id="view-sub"   style="color:var(--muted);font-size:13px;margin-top:3px;">관리 중인 입주자를 선택하세요</p>
         </div>
-        <button id="btn-large-text" onclick="toggleLargeText()" title="글씨 크기를 크게/작게 전환합니다" aria-pressed="false">🔎 큰 글씨</button>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <!-- 글자 크기 3단계 — modules/font-scale.js가 버튼을 렌더한다 -->
+          <div id="font-scale-control"></div>
+          <!-- 설정은 휴대폰에서 하단 네비가 아니라 여기로 온다. 하루에 몇 번씩
+               누르는 자리(＋ 기록)를 가운데에 두려면 세 자리로 줄여야 했고,
+               설정은 휴대폰에서 드물게 열리는 화면이다(좁은 화면에서는 「내 역할
+               안내」만 열린다 — core.js settingsGuideOnly). -->
+          <button id="btn-mobile-settings" type="button" class="header-icon-btn" aria-label="설정">
+            <span data-icon="settings" data-icon-size="22"></span>
+          </button>
+          <!-- 로그아웃도 휴대폰에서는 여기다. 데스크톱에서는 사이드바 맨 아래에
+               있는데 그 사이드바가 좁은 화면에서 통째로 숨는다 — 즉 휴대폰에는
+               로그아웃할 방법이 아예 없었다. 설정 안에 넣지 않은 이유는 찾는
+               사람이 설정을 먼저 열지 않기 때문이다(공용 단말에서 다음 사람에게
+               넘기기 전에 누르는 버튼이라 한 번에 보여야 한다). -->
+          <button id="btn-mobile-logout" type="button" class="header-icon-btn" aria-label="로그아웃">
+            <span data-icon="logout" data-icon-size="22"></span>
+          </button>
+        </div>
       </header>
 
       <div style="flex:1;padding:22px 28px 28px;">
@@ -466,23 +807,30 @@
           <div id="dash-approval-banner" onclick="changeView('report')" role="button" tabindex="0" style="display:none;align-items:center;gap:10px;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:12px;padding:14px 18px;margin-bottom:16px;cursor:pointer;font-size:15px;font-weight:700;color:#92400e;"></div>
           <!-- 퀵 액션 버튼 -->
           <div id="dashboard-actions">
+            <!-- 영수증 사진 자동입력 — 서버에 AI가 설정되지 않았으면 숨는다
+                 (modules/receipt-intake.js의 refreshReceiptIntakeButtons) -->
+            <button onclick="openModal('receipt-intake')" class="dash-action-btn"
+                    data-receipt-intake style="display:none;color:#0d9488;"
+                    title="영수증 사진에서 날짜·금액·상호명을 읽어 채워 줍니다">
+              <span class="dash-icon" data-icon="camera" data-icon-size="30"></span>영수증 사진
+            </button>
             <button onclick="openModal('excel')" class="dash-action-btn" style="color:var(--amber);">
-              <span class="dash-icon">📤</span>파일 업로드
+              <span class="dash-icon" data-icon="upload" data-icon-size="30"></span>파일 업로드
             </button>
             <button onclick="openModal('bankbook')" class="dash-action-btn" style="color:#0891b2;">
-              <span class="dash-icon">🏦</span>통장 사진
+              <span class="dash-icon" data-icon="book" data-icon-size="30"></span>통장 사진
             </button>
             <button onclick="changeView('history')" class="dash-action-btn" style="color:var(--blue);">
-              <span class="dash-icon">📋</span>거래내역
+              <span class="dash-icon" data-icon="list" data-icon-size="30"></span>거래내역
             </button>
             <button onclick="openModal('trx')" class="dash-action-btn" style="color:var(--green);">
-              <span class="dash-icon">✍️</span>수기 입력
+              <span class="dash-icon" data-icon="pen" data-icon-size="30"></span>수기 입력
             </button>
             <button onclick="changeView('report')" class="dash-action-btn" style="color:#8b5cf6;">
-              <span class="dash-icon">📑</span>보고서
+              <span class="dash-icon" data-icon="report" data-icon-size="30"></span>보고서
             </button>
             <button onclick="changeView('settings')" class="dash-action-btn" style="color:var(--muted);">
-              <span class="dash-icon">⚙️</span>설정
+              <span class="dash-icon" data-icon="settings" data-icon-size="30"></span>설정
             </button>
           </div>
           <!-- 입주자 카드 -->
@@ -494,15 +842,20 @@
           <div id="trx-mandatory-banner" style="display:none;"></div>
           <div class="card" style="padding:20px;margin-bottom:14px;">
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
-              <div style="min-width:150px;">
+              <div style="min-width:190px;position:relative;">
                 <label class="label">입주자</label>
-                <select id="h-client" class="input" style="padding:8px 12px;"></select>
+                <!-- 값의 근거는 여전히 select 다(대시보드 카드·필터가 그것을 읽는다).
+                     검색칸은 그 위에 덧댄 화면 — modules/client-picker.js 참고. -->
+                <input id="h-client-search" class="input" style="padding:8px 12px;"
+                       placeholder="이름·팀·담당자로 찾기" autocomplete="off" role="combobox">
+                <div id="h-client-list" class="client-dd"></div>
+                <select id="h-client" class="input" style="display:none;"></select>
               </div>
-              <div style="flex:1;min-width:150px;">
+              <div class="trx-filter-extra" style="flex:1;min-width:150px;">
                 <label class="label">내용 검색</label>
                 <input id="h-search" class="input" placeholder="가맹점명..." style="padding:8px 12px;">
               </div>
-              <div>
+              <div class="trx-filter-extra">
                 <label class="label">구분</label>
                 <select id="h-type" class="input" style="padding:8px 12px;width:110px;">
                   <option value="all">전체</option>
@@ -518,10 +871,18 @@
                   <option value="">전체 계좌</option>
                 </select>
               </div>
-              <div>
+              <div class="trx-filter-extra">
                 <label class="label">증빙</label>
                 <select id="h-receipt" class="input" style="padding:8px 12px;width:90px;">
                   <option value="all">전체</option><option value="yes">있음</option><option value="no">없음</option>
+                </select>
+              </div>
+              <div class="trx-filter-extra">
+                <label class="label">결제수단</label>
+                <select id="h-method" class="input" style="padding:8px 12px;width:110px;">
+                  <option value="all">전체</option><option value="카드">카드</option>
+                  <option value="계좌이체">계좌이체</option><option value="자동이체">자동이체</option>
+                  <option value="현금">현금</option><option value="none">미확인</option>
                 </select>
               </div>
             </div>
@@ -534,26 +895,28 @@
               <input id="h-start" type="date" class="input" style="width:140px;padding:5px 10px;">
               <span style="color:var(--muted);align-self:center;">~</span>
               <input id="h-end" type="date" class="input" style="width:140px;padding:5px 10px;">
-              <button id="btn-filter-reset" class="period-btn" style="margin-left:auto;color:var(--red);border-color:#fecaca;" title="검색·구분·계좌·증빙·기간 필터를 모두 초기화합니다">↺ 필터 초기화</button>
+              <button id="btn-filter-reset" class="period-btn" style="margin-left:auto;color:var(--red);border-color:#fecaca;" title="검색·구분·계좌·증빙·기간 필터를 모두 초기화합니다"><span data-icon="refresh"></span>필터 초기화</button>
             </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:12px;">
+            <div id="trx-actions" style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:12px;">
               <div style="display:flex;gap:8px;align-items:center;">
-                <button class="btn-sub" id="btn-h-trx" style="color:var(--blue);border-color:#bfdbfe;">✍️ 수기 입력</button>
-                <button class="btn-sub" id="btn-h-excel" style="color:var(--amber);border-color:#fde68a;">📂 파일 업로드</button>
-                <button class="btn-sub" id="btn-h-fixed" style="color:#059669;border-color:#a7f3d0;" title="이번 달 고정항목 자동 입력">📌 고정항목 입력</button>
-                <button class="btn-sub" id="btn-h-receipt-print" style="color:#7c3aed;border-color:#ddd6fe;" title="증빙 A4 일괄 출력">🖨️ 증빙 출력</button>
+                <button class="btn-sub" id="btn-h-trx" style="color:var(--blue);border-color:#bfdbfe;"><span data-icon="pen"></span>수기 입력</button>
+                <button class="btn-sub" id="btn-h-excel" style="color:var(--amber);border-color:#fde68a;"><span data-icon="upload"></span>파일 업로드</button>
+                <button class="btn-sub" id="btn-h-receipt-intake" data-receipt-intake style="display:none;color:#0d9488;border-color:#99f6e4;" title="영수증 사진에서 날짜·금액·상호명을 읽어 채워 줍니다"><span data-icon="camera"></span>영수증 사진</button>
+                <button class="btn-sub" id="btn-h-fixed" style="color:#059669;border-color:#a7f3d0;" title="이번 달 고정항목 자동 입력"><span data-icon="pin"></span>고정항목 입력</button>
+                <button class="btn-sub" id="btn-h-receipt-print" style="color:#7c3aed;border-color:#ddd6fe;" title="증빙 A4 일괄 출력"><span data-icon="printer"></span>증빙 출력</button>
+                <button id="h-unclassified" type="button" style="display:none;font-size:11px;font-weight:700;padding:3px 9px;border-radius:99px;border:1px solid #fde68a;background:#fffbeb;color:#b45309;cursor:pointer;" title="분류가 정해지지 않은 거래만 보기"></button>
                 <span id="h-count" style="font-size:12px;color:var(--muted);font-family:'JetBrains Mono',monospace;"></span>
               </div>
               <div style="display:flex;gap:6px;align-items:center;">
-                <button id="btn-trx-view-toggle" title="달력/목록 전환" style="font-size:12px;font-weight:700;color:#6366f1;border:1px solid #c7d2fe;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;">🗓️ 달력</button>
-                <button id="btn-csv-export" title="현재 목록을 엑셀에서 열 수 있는 파일로 저장합니다" style="font-size:12px;font-weight:700;color:#059669;border:1px solid #a7f3d0;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;">⬇️ 엑셀 저장</button>
-                <button id="btn-bulk-del" style="font-size:12px;font-weight:700;color:var(--red);border:1px solid #fecaca;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;">🗑️ 일괄 삭제</button>
+                <button id="btn-trx-view-toggle" title="달력/목록 전환" style="font-size:12px;font-weight:700;color:#6366f1;border:1px solid #c7d2fe;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;"><span data-icon="calendar"></span>달력</button>
+                <button id="btn-csv-export" title="현재 목록을 엑셀에서 열 수 있는 파일로 저장합니다" style="font-size:12px;font-weight:700;color:#059669;border:1px solid #a7f3d0;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;"><span data-icon="download"></span>엑셀 저장</button>
+                <button id="btn-bulk-del" style="font-size:12px;font-weight:700;color:var(--red);border:1px solid #fecaca;padding:6px 12px;border-radius:8px;background:transparent;cursor:pointer;"><span data-icon="trash"></span>일괄 삭제</button>
               </div>
             </div>
           </div>
           <div class="card" style="overflow:hidden;">
             <div style="overflow-x:auto;max-height:580px;">
-              <table style="width:100%;border-collapse:collapse;min-width:650px;">
+              <table id="history-table" style="width:100%;border-collapse:collapse;min-width:650px;">
                 <thead>
                   <tr>
                     <th style="width:24px;"></th>
@@ -579,8 +942,8 @@
         <div id="view-report" style="display:none;" class="animate-in">
           <!-- 서브탭: 월간 보고서 / 연간 통계 -->
           <div id="rpt-subtabs" style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--border);" class="no-print">
-            <button class="rpt-subtab active" data-subtab="monthly" style="padding:8px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;border-bottom:2px solid var(--blue);margin-bottom:-2px;color:var(--blue);">📋 월간 보고서</button>
-            <button class="rpt-subtab" data-subtab="annual" style="padding:8px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;color:var(--muted);">📈 연간 통계</button>
+            <button class="rpt-subtab active" data-subtab="monthly" style="padding:8px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;border-bottom:2px solid var(--blue);margin-bottom:-2px;color:var(--blue);"><span data-icon="report"></span>월간 보고서</button>
+            <button class="rpt-subtab" data-subtab="annual" style="padding:8px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;color:var(--muted);"><span data-icon="chart"></span>연간 통계</button>
           </div>
           <!-- 월간 보고서 패널 -->
           <div id="rpt-subtab-monthly">
@@ -589,7 +952,7 @@
               <div><label class="label">입주자</label><select id="r-client" class="input" style="padding:8px 12px;"></select></div>
               <div><label class="label">연도</label><select id="r-year" class="input" style="padding:8px 12px;"></select></div>
               <div><label class="label">월</label><select id="r-month" class="input" style="padding:8px 12px;"></select></div>
-              <button class="btn" id="btn-rpt-load">📊 조회</button>
+              <button class="btn" id="btn-rpt-load"><span data-icon="search"></span>조회</button>
             </div>
           </div>
           <!-- ⑥ 결재 대기 섹션 -->
@@ -609,14 +972,19 @@
                 저장된 보고서
                 <span id="rpt-list-count" style="font-size:11px;font-weight:600;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:99px;padding:1px 8px;"></span>
               </button>
-              <button id="btn-rpt-list-refresh" style="font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;">↺ 새로고침</button>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;" title="기본은 올해와 작년만 불러옵니다. 그 이전 보고서를 보려면 켜세요.">
+                  <input type="checkbox" id="rpt-list-all-years" style="cursor:pointer;"> 전체 기간
+                </label>
+                <button id="btn-rpt-list-refresh" style="font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;">↺ 새로고침</button>
+              </div>
             </div>
             <div id="rpt-list" style="display:flex;flex-direction:column;gap:8px;"></div>
           </div>
 
           <div id="report-area" style="display:none;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;" class="no-print">
-              <button onclick="document.getElementById('report-area').style.display='none';if(window.S)S.reportData=null;document.querySelectorAll('#rpt-list .card').forEach(el=>el.style.background='');" style="font-size:13px;font-weight:700;color:var(--muted);background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;">← 목록으로</button>
+              <button onclick="closeReportView()" style="font-size:13px;font-weight:700;color:var(--muted);background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;">← 목록으로</button>
               <div style="display:flex;gap:8px;align-items:center;">
                 <div id="rpt-status-badge"></div>
                 <div style="display:flex;gap:8px;" id="rpt-action-btns"></div>
@@ -634,7 +1002,7 @@
                   <label style="font-size:12px;color:var(--sub);display:flex;align-items:center;gap:4px;cursor:pointer;">
                     <input type="checkbox" id="rpt-summary-print" checked style="accent-color:var(--blue);"> 인쇄 포함
                   </label>
-                  <button class="btn" id="btn-gen-summary" style="font-size:12px;padding:6px 12px;">✨ 생성</button>
+                  <button class="btn" id="btn-gen-summary" style="font-size:12px;padding:6px 12px;"><span data-icon="sparkle"></span>생성</button>
                 </div>
               </div>
               <div id="rpt-summary-text" style="font-size:14px;color:var(--sub);line-height:1.7;min-height:40px;">조회 후 생성 버튼을 클릭하세요.</div>
@@ -663,7 +1031,7 @@
               </div>
               <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
                 <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">수입 / 지출 요약</div>
-                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div id="rpt-sum-cards" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
                   <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;font-weight:700;color:#16a34a;margin-bottom:3px;">총 수입</div><div id="rpt-total-in" style="font-size:18px;font-weight:900;color:#15803d;"></div></div>
                   <div style="background:#fff1f2;border:1px solid #fecaca;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;font-weight:700;color:#dc2626;margin-bottom:3px;">총 지출</div><div id="rpt-total-out" style="font-size:18px;font-weight:900;color:#b91c1c;"></div></div>
                   <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;font-weight:700;color:#2563eb;margin-bottom:3px;">잔액</div><div id="rpt-balance" style="font-size:18px;font-weight:900;color:#1d4ed8;"></div></div>
@@ -684,15 +1052,15 @@
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                   <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;">통장 사진</div>
                   <div style="display:flex;gap:6px;" class="no-print">
-                    <button id="btn-view-bank-stmts" style="font-size:11px;font-weight:700;color:#059669;border:1px solid #a7f3d0;background:#ecfdf5;padding:3px 10px;border-radius:6px;cursor:pointer;">🔍 전체보기</button>
-                    <button id="btn-upload-bank-stmt" style="font-size:11px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:3px 10px;border-radius:6px;cursor:pointer;">📸 사진 추가</button>
+                    <button id="btn-view-bank-stmts" style="font-size:11px;font-weight:700;color:#059669;border:1px solid #a7f3d0;background:#ecfdf5;padding:3px 10px;border-radius:6px;cursor:pointer;"><span data-icon="search"></span>전체보기</button>
+                    <button id="btn-upload-bank-stmt" style="font-size:11px;font-weight:700;color:var(--blue);border:1px solid #bfdbfe;background:#eff6ff;padding:3px 10px;border-radius:6px;cursor:pointer;"><span data-icon="camera"></span>사진 추가</button>
                   </div>
                 </div>
                 <div id="rpt-bank-stmt-gallery" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;"></div>
               </div>
 
-              <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
-                <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">거래 내역</div>
+              <div id="rpt-trx-section" style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
+                <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">거래 내역<span id="rpt-trx-edit-hint" class="no-print" style="margin-left:8px;font-weight:600;text-transform:none;letter-spacing:0;color:#9ca3af;"></span></div>
                 <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
                   <colgroup>
                     <col style="width:62px;"><!-- 날짜 -->
@@ -701,6 +1069,7 @@
                     <col style="width:80px;"><!-- 수입 -->
                     <col style="width:80px;"><!-- 지출 -->
                     <col style="width:44px;"><!-- 증빙 -->
+                    <col class="no-print" style="width:34px;"><!-- 수정(화면 전용) -->
                   </colgroup>
                   <thead><tr style="border-bottom:2px solid #d1d5db;">
                     <th data-rpt-sort="date" style="padding:8px 4px;text-align:left;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">날짜 <span class="rpt-sort-arrow"></span></th>
@@ -709,6 +1078,7 @@
                     <th data-rpt-sort="amountIn" style="padding:8px 4px;text-align:right;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">수입 <span class="rpt-sort-arrow"></span></th>
                     <th data-rpt-sort="amountOut" style="padding:8px 4px;text-align:right;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">지출 <span class="rpt-sort-arrow"></span></th>
                     <th data-rpt-sort="receiptUrl" style="padding:8px 4px;text-align:center;font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;cursor:pointer;user-select:none;">증빙 <span class="rpt-sort-arrow"></span></th>
+                    <th class="no-print" style="padding:8px 2px;"></th>
                   </tr></thead>
                   <tbody id="rpt-trx-body"></tbody>
                   <tfoot><tr style="border-top:2px solid #d1d5db;">
@@ -716,18 +1086,22 @@
                     <td id="rpt-foot-in"  style="padding:8px 4px;text-align:right;font-size:14px;font-weight:900;color:#15803d;"></td>
                     <td id="rpt-foot-out" style="padding:8px 4px;text-align:right;font-size:14px;font-weight:900;color:#b91c1c;"></td>
                     <td></td>
+                    <td class="no-print"></td>
                   </tr></tfoot>
                 </table>
               </div>
               <div style="padding:14px 24px;border-bottom:1px solid #e5e7eb;">
                 <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px;">결재</div>
                 <div id="rpt-approval-grid" style="display:flex;border:1px solid #d1d5db;border-radius:10px;overflow:hidden;width:fit-content;"></div>
-                <p style="font-size:11px;color:#6b7280;margin-top:12px;">작성일: <span id="rpt-created-bottom"></span></p>
+                <!-- 제출 전에는 「작성일」로 바뀐다 — 같은 자리에 다른 뜻이
+                     들어가므로 이름표도 함께 바꾼다(domain/timestamps.js) -->
+                <p style="font-size:11px;color:#6b7280;margin-top:12px;"><span id="rpt-date-label">제출일</span>: <span id="rpt-created-bottom"></span></p>
               </div>
               <!-- ⑦ 의견란 -->
               <div id="rpt-comments-area" style="padding:14px 24px;"></div>
             </div>
             <!-- 제출/결재 버튼 (보고서 하단) -->
+            <div id="rpt-checklist" class="no-print" style="display:none;margin-top:12px;"></div>
             <div id="rpt-submit-btns" class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-top:12px;padding:12px 0;border-top:1px solid var(--border);"></div>
           </div>
           </div><!-- /rpt-subtab-monthly -->
@@ -737,7 +1111,7 @@
               <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
                 <div><label class="label">입주자</label><select id="a-client" class="input" style="padding:8px 12px;min-width:140px;"></select></div>
                 <div><label class="label">연도</label><select id="a-year" class="input" style="padding:8px 12px;width:110px;"></select></div>
-                <button class="btn" id="btn-annual-load">📈 조회</button>
+                <button class="btn" id="btn-annual-load"><span data-icon="search"></span>조회</button>
               </div>
             </div>
             <div id="annual-content" style="display:none;">
@@ -762,22 +1136,39 @@
 
         <!-- 설정 (관리 통합) -->
         <div id="view-settings" style="display:none;" class="animate-in">
-          <!-- 설정 탭 래퍼 -->
-          <div style="display:flex;flex-direction:column;gap:14px;">
-            <!-- 탭 버튼 -->
-            <div class="settings-tab-buttons">
-              <button class="settings-tab-btn active" data-tab="list">목록</button>
-              <button class="settings-tab-btn" data-tab="category">카테고리</button>
-              <button class="settings-tab-btn" data-tab="fixed">고정 수입/지출</button>
-              <button class="settings-tab-btn" data-tab="budget">예산 관리</button>
-              <button class="settings-tab-btn admin-only" data-tab="archive">데이터 초기화/마감</button>
-              <button class="settings-tab-btn admin-only" data-tab="permissions">권한</button>
+          <!-- 설정 화면 — 좌측 그룹 레일(데스크톱) / 상단 select(모바일) + 패널.
+               레일과 select, 패널 표시는 모두 modules/settings-nav.js의
+               SETTINGS_TABS 배열 하나가 구동한다. 탭을 늘릴 때 HTML에서
+               손댈 것은 패널 div 하나뿐이다. -->
+          <div class="ui-settings">
+            <!-- 데스크톱: 그룹별 사이드 레일 -->
+            <nav id="settings-rail" class="ui-settings__rail" aria-label="설정 메뉴"></nav>
+
+            <!-- 모바일: 그룹(optgroup)으로 묶은 선택 -->
+            <div class="ui-settings__picker">
+              <label class="ui-label" for="settings-tab-picker">설정 항목</label>
+              <select id="settings-tab-picker" class="ui-select"></select>
             </div>
 
             <!-- 탭 콘텐츠 -->
             <div class="settings-tab-content">
+              <!-- 패널 제목·설명 — settings-nav가 채운다 -->
+              <h2 id="settings-panel-title" class="ui-settings__panel-title"></h2>
+              <p id="settings-panel-desc" class="ui-settings__panel-desc"></p>
+
+              <!-- 개요: 해야 할 일 -->
+              <div id="overview-tab-content" class="tab-content active"></div>
+
+              <!-- 변경 이력 -->
+              <div id="audit-tab-content" class="tab-content"></div>
+
+              <!-- 팀 (modules/settings-teams.js) -->
+              <div id="team-tab-content" class="tab-content"></div>
+              <!-- 은행 파서 (modules/bank-parser-ui.js) -->
+              <div id="bankparser-tab-content" class="tab-content"></div>
+
               <!-- 목록 탭 (3열 그리드) -->
-              <div id="list-tab-content" class="tab-content active">
+              <div id="list-tab-content" class="tab-content">
                 <div class="list-grid">
                   <!-- 직원 목록 -->
                   <div class="list-column">
@@ -785,7 +1176,7 @@
                       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                         <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">👤</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">직원 목록</h3></div>
                         <div style="display:flex;gap:8px;">
-                          <button class="btn-sub" id="btn-bulk-staff" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄</button>
+                          <button class="btn-sub" id="btn-bulk-staff" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;"><span data-icon="download"></span>일괄</button>
                           <button class="btn" id="btn-add-staff" style="font-size:13px;padding:7px 14px;">+ 등록</button>
                         </div>
                       </div>
@@ -797,7 +1188,7 @@
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                       <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏠</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">입주자 목록</h3></div>
                       <div style="display:flex;gap:8px;">
-                        <button class="btn-sub" id="btn-bulk-client" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄</button>
+                        <button class="btn-sub" id="btn-bulk-client" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;"><span data-icon="download"></span>일괄</button>
                         <button class="btn" id="btn-add-client" style="font-size:13px;padding:7px 14px;">+ 등록</button>
                       </div>
                     </div>
@@ -808,7 +1199,7 @@
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                       <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:18px;">🏦</span><h3 style="font-size:15px;font-weight:800;color:var(--text);">계좌 관리</h3></div>
                       <div style="display:flex;gap:8px;">
-                        <button class="btn-sub" id="btn-bulk-account" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;">📥 일괄</button>
+                        <button class="btn-sub" id="btn-bulk-account" style="display:none;color:#7c3aed;border-color:#ddd6fe;font-size:13px;padding:7px 14px;"><span data-icon="download"></span>일괄</button>
                         <button class="btn" id="btn-add-account" style="font-size:13px;padding:7px 14px;">+ 등록</button>
                       </div>
                     </div>
@@ -900,7 +1291,7 @@
                   </div>
                   <div id="budget-form" style="display:none;">
                     <div id="budget-cat-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;"></div>
-                    <button id="btn-budget-save" class="btn" style="padding:10px 24px;">💾 예산 저장</button>
+                    <button id="btn-budget-save" class="btn" style="padding:10px 24px;"><span data-icon="check"></span>예산 저장</button>
                   </div>
                 </div>
               </div>
@@ -917,7 +1308,7 @@
                   <p style="margin:0 0 15px 0;color:#7f1d1d;font-size:14px;">마감 연도 거래를 Archive_YYYY 컬렉션에 백업하고 계좌 기초잔액을 업데이트합니다. <span style="color:#dc2626;font-weight:700;">되돌릴 수 없습니다.</span></p>
                   <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:16px;">
                     <div><label class="label">마감할 연도</label><select id="archive-year" class="input" style="width:130px;padding:8px 12px;"></select></div>
-                    <button id="btn-archive" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;">📦 마감 실행</button>
+                    <button id="btn-archive" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;"><span data-icon="archive"></span>마감 실행</button>
                   </div>
                   <div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -927,15 +1318,59 @@
                     <div id="archive-history"></div>
                   </div>
                 </div>
-                <!-- Firebase 초기화 -->
-                <div style="background:#fef2f2;border:2px solid #dc2626;border-radius:8px;padding:20px;margin:0 0 20px 0;">
+
+                <!-- 파생 문서 다시 만들기 -->
+                <div class="ui-card" style="padding:20px;">
                   <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                    <span style="font-size:20px;">🗑️</span>
-                    <h3 style="margin:0;color:#dc2626;font-size:15px;font-weight:800;">Firebase 전체 초기화</h3>
-                    <span style="font-size:11px;font-weight:700;color:#fff;background:#dc2626;padding:3px 8px;border-radius:99px;margin-left:auto;">관리자 전용</span>
+                    <span style="font-size:20px;">🔁</span>
+                    <h3 style="margin:0;font-size:15px;font-weight:800;">파생 문서 다시 만들기</h3>
+                    <span class="ui-badge" style="margin-left:auto;">관리자 전용</span>
                   </div>
-                  <p style="margin:0 0 15px 0;color:#7f1d1d;font-size:14px;">모든 거래, 계좌, 입주자, 보고서 데이터를 삭제합니다. <span style="color:#dc2626;font-weight:700;">절대 되돌릴 수 없습니다.</span></p>
-                  <button id="btn-firebase-reset" style="font-size:13px;font-weight:700;color:#fff;background:#dc2626;border:none;padding:10px 20px;border-radius:9px;cursor:pointer;">🗑️ 전체 초기화</button>
+                  <p style="margin:0 0 8px 0;color:var(--muted-foreground);font-size:13px;line-height:1.6;">
+                    마감 색인, 직원·분류 명부, 권한 투영본을 원본에서 다시 만듭니다.
+                    <strong>배포 직후에는 반드시 한 번 눌러야 합니다</strong> — 서버 트리거는
+                    배포 이후의 변경만 보므로 그전 데이터가 비어 있습니다.
+                  </p>
+                  <p style="margin:0 0 15px 0;color:#b45309;font-size:13px;line-height:1.6;">
+                    마감 색인이 비어 있으면 <strong>최종 결재된 달이 잠기지 않아
+                    누구나 수정할 수 있습니다.</strong> 권한 투영본이 어긋나면
+                    <strong>담당 팀장으로 지정돼 있는데도 그 입주자의 보고서가 안 보입니다</strong>
+                    — 입주자 화면에서 다시 저장해도 낫지 않고, 이 버튼만이 되돌립니다.
+                    명부가 비어 있으면 화면은 정상이고 읽기만 늘어납니다.
+                    여러 번 눌러도 결과는 같습니다.
+                  </p>
+                  <p style="margin:0 0 15px 0;color:var(--muted-foreground);font-size:13px;line-height:1.6;">
+                    권한 투영본은 <strong>관리자만</strong> 다시 만들 수 있습니다(센터장이 누르면
+                    나머지만 처리되고 그렇게 알려 줍니다).
+                  </p>
+                  <button id="btn-rebuild-derived" class="ui-btn ui-btn--primary"><span data-icon="refresh"></span>다시 만들기</button>
+                  <div id="rebuild-derived-result" style="margin-top:12px;font-size:13px;"></div>
+                </div>
+
+                <!-- 잔액 색인 다시 만들기 -->
+                <div class="ui-card" style="padding:20px;">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                    <span style="font-size:20px;">💰</span>
+                    <h3 style="margin:0;font-size:15px;font-weight:800;">잔액 색인 다시 만들기</h3>
+                    <span class="ui-badge" style="margin-left:auto;">관리자 전용</span>
+                  </div>
+                  <p style="margin:0 0 8px 0;color:var(--muted-foreground);font-size:13px;line-height:1.6;">
+                    계좌마다 <strong>현재 잔액</strong>과 <strong>월말 잔액 색인</strong>을
+                    전체 거래에서 다시 계산합니다. <strong>배포 직후에 한 번 눌러 주세요.</strong>
+                  </p>
+                  <p style="margin:0 0 8px 0;color:var(--muted-foreground);font-size:13px;line-height:1.6;">
+                    안 눌러도 <strong>금액은 맞습니다.</strong> 다만 색인이 빈 계좌는 보고서가
+                    그 입주자의 거래를 처음부터 다 읽으므로, 읽기 비용만 예전으로 돌아갑니다
+                    — 화면으로는 티가 나지 않습니다.
+                  </p>
+                  <p style="margin:0 0 15px 0;color:#b45309;font-size:13px;line-height:1.6;">
+                    ⚠️ <strong>계좌마다 그 계좌의 거래를 전부 읽습니다.</strong> 1년치가 쌓여
+                    있으면 계좌당 수백 건이라, 이 버튼 한 번이 하루치 읽기 할당량에 가까울 수
+                    있습니다. 업무 시간이 아닐 때 한 번만 누르세요. 이미 끝난 계좌는 다시
+                    읽지 않으므로 중간에 멈춰도 이어서 누르면 됩니다.
+                  </p>
+                  <button id="btn-rebuild-balances" class="ui-btn ui-btn--primary"><span data-icon="coin"></span>잔액 색인 다시 만들기</button>
+                  <div id="rebuild-balances-result" style="margin-top:12px;font-size:13px;"></div>
                 </div>
               </div>
 
@@ -968,82 +1403,6 @@
   </div>
 </div>
 
-<!-- 모바일 전용 뷰 -->
-<div id="mobile-view" style="display:none;height:100vh;width:100%;flex-direction:column;background:var(--bg);overflow:hidden;">
-  <!-- 헤더 -->
-  <div id="m-header" style="background:var(--surface);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;">
-    <div style="width:32px;height:32px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;" id="m-avatar">?</div>
-    <div style="flex:1;">
-      <div style="font-size:14px;font-weight:800;color:var(--text);" id="m-title">대시보드</div>
-      <div style="font-size:11px;color:var(--muted);" id="m-subtitle"></div>
-    </div>
-    <button onclick="handleLogout()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);" title="로그아웃">🚪</button>
-  </div>
-  <!-- 콘텐츠 -->
-  <div id="m-content" style="flex:1;overflow-y:auto;padding:12px 14px;-webkit-overflow-scrolling:touch;">
-    <!-- 대시보드 -->
-    <div id="m-dashboard" style="display:block;">
-      <div id="m-client-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;"></div>
-    </div>
-    <!-- 거래내역 -->
-    <div id="m-history" style="display:none;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-        <button onclick="mobileView('dashboard')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">‹</button>
-        <span style="font-size:14px;font-weight:700;color:var(--text);" id="m-client-name"></span>
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
-        <select id="m-acc-filter" class="input" style="flex:1;padding:7px 10px;font-size:13px;" onchange="renderMobileHistory()"><option value="">전체 계좌</option></select>
-        <select id="m-type-filter" class="input" style="flex:1;padding:7px 10px;font-size:13px;" onchange="renderMobileHistory()">
-          <option value="">전체</option><option value="수입">수입</option><option value="지출">지출</option>
-        </select>
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:12px;">
-        <input type="month" id="m-month-filter" class="input" style="flex:1;padding:7px 10px;font-size:13px;" onchange="renderMobileHistory()">
-        <button onclick="document.getElementById('m-month-filter').value='';renderMobileHistory();" style="padding:7px 12px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--muted);">전체</button>
-      </div>
-      <div id="m-trx-list" style="display:flex;flex-direction:column;gap:8px;"></div>
-    </div>
-    <!-- 수기 입력 -->
-    <div id="m-trx-form" style="display:none;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
-        <button onclick="mobileView('history')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">‹</button>
-        <span style="font-size:14px;font-weight:700;color:var(--text);">수기 입력</span>
-      </div>
-      <div id="m-form-body" style="display:flex;flex-direction:column;gap:12px;"></div>
-    </div>
-    <!-- 보고서 목록 -->
-    <div id="m-report" style="display:none;">
-      <div id="m-report-list-area">
-        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:12px;">📑 보고서</div>
-        <div id="m-report-list"></div>
-      </div>
-      <!-- 보고서 상세 -->
-      <div id="m-report-detail" style="display:none;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
-          <button onclick="document.getElementById('m-report-detail').style.display='none';document.getElementById('m-report-list-area').style.display='block';" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">‹</button>
-          <span style="font-size:14px;font-weight:700;color:var(--text);">보고서 상세</span>
-        </div>
-        <div id="m-report-content"></div>
-        <div id="m-report-actions" style="display:flex;flex-direction:column;gap:8px;margin-top:14px;"></div>
-      </div>
-    </div>
-  </div>
-  <!-- 하단 탭바 -->
-  <div id="m-bottom-nav" style="display:flex;border-top:1px solid var(--border);background:var(--surface);flex-shrink:0;safe-area-inset-bottom:env(safe-area-inset-bottom);">
-    <button class="m-tab active" onclick="mobileView('dashboard')" style="flex:1;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:2px;border:none;background:none;cursor:pointer;font-size:10px;font-weight:700;color:var(--blue);">
-      <span style="font-size:22px;">🏠</span>홈
-    </button>
-    <button class="m-tab" onclick="mobileView('history')" style="flex:1;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:2px;border:none;background:none;cursor:pointer;font-size:10px;font-weight:700;color:var(--muted);">
-      <span style="font-size:22px;">📋</span>거래
-    </button>
-    <button class="m-tab" onclick="mobileView('trx-form')" style="flex:1;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:2px;border:none;background:none;cursor:pointer;font-size:10px;font-weight:700;color:var(--muted);">
-      <span style="font-size:22px;">✍️</span>입력
-    </button>
-    <button class="m-tab" id="m-tab-report" onclick="mobileView('report')" style="flex:1;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:2px;border:none;background:none;cursor:pointer;font-size:10px;font-weight:700;color:var(--muted);">
-      <span style="font-size:22px;">📑</span>보고서
-    </button>
-  </div>
-</div>
 
 <script type="module" src="app.js"></script>
 

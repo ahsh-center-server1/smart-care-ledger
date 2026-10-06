@@ -6,24 +6,59 @@
 'use strict';
 
 import { S } from '../state.js';
-import { COLS, CAT_COLORS, cs } from '../constants.js';
-import { toast, showConfirm, showLoading, setText, escAttr } from '../utils/ui.js';
-import { fb, fdb, batchAddDocs } from '../services/firestore.js';
-import { uploadToStorage, uploadImageWithThumb, uploadExcelOriginal, deleteFromStorage, deleteManyFromStorage, getImageUrl } from '../services/storage.js';
-import { fetchBaseData, loadTransactions, refetchUsers, refetchClients, refetchAccounts, isConfirmedLocked } from './core.js';
+import { COLS, cs } from '../constants.js';
+import { toast, escAttr, makeDraggable } from '../utils/ui.js';
+import { fb, fdb, batchAddDocs, invalidateReportTrxCache } from '../services/firestore.js';
+import { uploadImageWithThumb, uploadExcelOriginal, deleteManyFromStorage, getImageUrl, validateUploadSize } from '../services/storage.js';
+import { loadTransactions, refetchUsers, refetchClients, refetchAccounts, isConfirmedLocked, trxEditBlockReason, myScope } from './core.js';
 import { saveTrx, updateAccBalance, renderHistoryTable } from './transactions.js';
 import { renderManagement } from './settings.js';
 import { can } from './permissions.js';
-
+import { refreshSetupAfterChange } from './setup.js';
+import { uploadReceipt, removeReceipt } from '../services/receipt-upload.js';
+// 고정항목은 fixed-items.js 로 나갔다. openModal 이 그 렌더러를 부르므로
+// 이 방향(modals → fixed-items)만 import 하고, 반대 방향은 주입으로 끊는다.
+import { renderFixedItemForm, registerModalShell } from './fixed-items.js';
+// 고정항목을 부르던 곳들이 계속 modals.js 를 보게 둔다 — 옮긴 사실이
+// 호출부까지 번지지 않게 하는 것이 분리의 목적이다.
+export { getUnpaidMandatoryItems, renderFixedItemsList } from './fixed-items.js';
+import * as ExcelParser from '../services/excel-parser.js';
+import { dupKey, fetchExistingForDup, isImageFile, renderXlSkipped, parserConfigs, offerBankParser } from './excel-support.js'; export { isImageFile };
+import { iconSvg } from '../utils/icons.js';   // 버튼 아이콘 한 벌 (utils/icons.js 머리말)
+import { renderReceiptIntakeForm, cleanupReceiptIntake, refreshReceiptIntakeButtons } from './receipt-intake.js';
+import { staffPickerHtml, bindStaffPicker, teamSelectHtml, bindClientTeamField } from './staff-picker.js';
+import { bankbookRowsToParsed } from '../domain/receipt.js';
+import { orderedCategories } from '../domain/category-order.js';
+import { dayOrderAllocator } from '../domain/trx-order.js';
+import { PAYMENT_METHODS, detectPaymentMethod, normalizePaymentMethod } from '../domain/payment-method.js';
+import { isExcludedFromTotals } from '../domain/trx-totals.js';
+import { parseAmount, attachAmountInput } from '../utils/amount-input.js';
+import { classifyMerchant } from '../domain/receipt-match.js';
+import { compressImage, heicToJpeg, compressForReading, fileToBase64 } from '../services/image.js';
+import { hasReceipt, receiptAccess, receiptAccessUrl, receiptViewKind } from '../services/receipt-access.js';
+import { fnErrorMessage } from '../services/fn-errors.js';
 // ─────────────────────────────────────────────
 // 모달
 // ─────────────────────────────────────────────
+/**
+ * 넓은 모달이 필요한 종류. 검토 표가 들어가는 화면들은 기본 폭(500px)에
+ * 들어가지 않아 내용이 잘린다.
+ */
+const WIDE_MODALS = new Set(['receipt-intake', 'excel']);
+
+registerModalShell({
+  open: openModal, close: closeModal,
+  loadTransactions, isConfirmedLocked, scope: myScope,
+});
+
 export function openModal(type,data){
   document.getElementById('modal-wrap').classList.add('show');
+  document.getElementById('modal-box')?.classList.toggle('wide', WIDE_MODALS.has(type));
   if(type==='trx')           renderTrxForm(data);
   if(type==='excel')         renderExcelForm();
   if(type==='bankbook')      openBankStatementModal();
   if(type==='receipt-upload')renderReceiptUploadForm(data?.id);
+  if(type==='receipt-intake')renderReceiptIntakeForm();
   if(type==='client')        renderClientForm(data);
   if(type==='account')       renderAccountForm(data);
   if(type==='staff')         renderStaffForm(data);
@@ -34,7 +69,11 @@ export function openModal(type,data){
 }
 export function closeModal(){
   document.getElementById('modal-wrap').classList.remove('show');
+  document.getElementById('modal-box')?.classList.remove('wide');
   document.getElementById('modal-body').innerHTML='';
+  // 영수증 자동입력이 만든 미리보기 URL을 해제한다 — 안 하면 사진마다
+  // blob이 남아 메모리를 계속 먹는다.
+  cleanupReceiptIntake();
 }
 
 // ─────────────────────────────────────────────
@@ -42,6 +81,7 @@ export function closeModal(){
 // ─────────────────────────────────────────────
 export function renderTrxForm(t){
   const isEdit=!!t;
+  const hasCurrentReceipt=isEdit&&hasReceipt(t);
   // 취소는 amountIn/amountOut에 따라 수입/지출 취소로 구분
   const editTypeUI=isEdit&&t.type==='취소'
     ?(Number(t.amountIn||0)>0?'취소-수입':'취소-지출')
@@ -60,11 +100,9 @@ export function renderTrxForm(t){
         <div><label class="label">구분</label><select id="f-type" class="input" style="padding:8px 12px;">
           <option value="지출"${editTypeUI==='지출'?' selected':''}>지출</option>
           <option value="수입"${editTypeUI==='수입'?' selected':''}>수입</option>
-          <option value="자산이동"${editTypeUI==='자산이동'?' selected':''}>자산이동 (계좌간 이체)</option>
-          <option value="취소-지출"${editTypeUI==='취소-지출'?' selected':''}>취소(지출, 카드승인취소)</option>
-          <option value="취소-수입"${editTypeUI==='취소-수입'?' selected':''}>취소(수입 환수)</option>
+          ${legacyTypeOption(editTypeUI)}
         </select></div>
-        <div><label class="label">금액</label><input type="number" id="f-amount" class="input" value="${editAmount}" placeholder="0" min="0" style="text-align:right;"></div>
+        <div><label class="label">금액</label><input type="text" inputmode="numeric" id="f-amount" class="input" value="${editAmount}" placeholder="0" style="text-align:right;"></div>
       </div>
       <div id="f-type-hint" style="font-size:12px;color:var(--sub);background:#f1f5f9;border-radius:8px;padding:8px 11px;line-height:1.5;"></div>
       <div id="f-to-acc-row" style="display:none;">
@@ -75,21 +113,40 @@ export function renderTrxForm(t){
         <div><label class="label">분류</label><select id="f-cat" class="input" style="padding:8px 12px;"></select></div>
         <div><label class="label">내용</label><input type="text" id="f-desc" class="input" value="${isEdit?t.description||'':''}" placeholder="거래 내용"></div>
       </div>
+      <div><label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sub);cursor:pointer;">
+        <input type="checkbox" id="f-exclude" style="accent-color:var(--blue);width:15px;height:15px;"${
+          isEdit&&isExcludedFromTotals(t)?' checked':''}>
+        합계에서 제외 <span style="font-size:11px;color:var(--muted);">(계좌 간 이동·승인취소 등 — 잔액에는 반영됩니다)</span>
+      </label></div>
+      <div><label class="label">결제수단 <span style="font-size:10px;color:var(--muted);">(비워 두면 내용에서 읽습니다)</span></label>
+        <select id="f-method" class="input" style="padding:8px 12px;width:100%;"><option value="">— 미지정 —</option>${
+          PAYMENT_METHODS.map(m=>`<option value="${m}"${isEdit&&t.method===m?' selected':''}>${m}</option>`).join('')}</select></div>
       <div>
         <label class="label">영수증 첨부 <span style="font-size:10px;color:var(--muted);">(선택)</span></label>
-        ${isEdit&&t.receiptUrl?`<div id="trx-receipt-current" style="margin-bottom:6px;"><a href="${escAttr(t.receiptUrl)}" target="_blank" style="font-size:12px;color:var(--blue);">📎 현재 첨부파일 보기</a> <button onclick="document.getElementById('trx-receipt-current').innerHTML='<span style=\\'font-size:12px;color:#dc2626;\\'>삭제됨</span>';window._trxReceiptClear=true;" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button></div>`:''}
-        <div id="trx-receipt-drop" style="border:2px dashed var(--border);border-radius:8px;background:var(--bg);padding:12px;text-align:center;cursor:pointer;font-size:13px;color:var(--muted);" onclick="document.getElementById('trx-receipt-file').click()">
-          📎 영수증 클릭 또는 드래그
+        ${isEdit&&t.receiptUrl?`<div id="trx-receipt-current" style="margin-bottom:6px;"><a href="${escAttr(t.receiptUrl)}" target="_blank" style="font-size:12px;color:var(--blue);">${iconSvg('clip')}현재 첨부파일 보기</a>${can('receipt.replace')?` <button onclick="document.getElementById('trx-receipt-current').innerHTML='<span style=\\'font-size:12px;color:#dc2626;\\'>삭제됨</span>';window._trxReceiptClear=true;" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button>`:''}</div>`:''}
+        ${isEdit&&t.receiptPath?`<div id="trx-receipt-current" style="margin-bottom:6px;"><button type="button" id="f-receipt-view" style="font-size:12px;color:var(--blue);background:none;border:none;cursor:pointer;">${iconSvg('clip')}현재 첨부파일 보기</button>${can('receipt.replace')?` <button id="f-receipt-clear" type="button" style="font-size:11px;color:#dc2626;background:none;border:none;cursor:pointer;">× 삭제</button>`:''}</div>`:''}
+        ${hasCurrentReceipt&&!can('receipt.replace')?'<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">기존 증빙을 교체하려면 담당자 권한이 필요합니다.</div>':''}
+        <div id="trx-receipt-drop" style="border:2px dashed var(--border);border-radius:8px;background:var(--bg);padding:12px;text-align:center;cursor:pointer;font-size:13px;color:var(--muted);${hasCurrentReceipt&&!can('receipt.replace')?'display:none;':''}" onclick="document.getElementById('trx-receipt-file').click()">
+          ${iconSvg('clip')}영수증 클릭 또는 드래그
           <input type="file" id="trx-receipt-file" accept="image/*" style="display:none;">
         </div>
         <div id="trx-receipt-preview" style="display:none;margin-top:6px;font-size:12px;color:var(--green);"></div>
       </div>
       <div style="display:flex;gap:8px;">
-        <button id="f-copy-btn" class="btn" style="flex:1;padding:11px;">📋 복사하기</button>
-        <button id="f-save-btn" class="btn" style="flex:1;padding:11px;">💾 저장하기</button>
+        <button id="f-copy-btn" class="btn" style="flex:1;padding:11px;">${iconSvg('copy')}복사하기</button>
+        <button id="f-save-btn" class="btn" style="flex:1;padding:11px;">${iconSvg('check')}저장하기</button>
       </div>
     </div>`;
   window._trxReceiptClear=false;
+  document.getElementById('f-receipt-view')?.addEventListener('click',async()=>{
+    try{const a=await receiptAccess(t);openReceiptModal(a.url,t.id,{contentType:a.contentType});}
+    catch(e){toast('증빙을 열지 못했습니다: '+(e.message||e),'error');}
+  });
+  document.getElementById('f-receipt-clear')?.addEventListener('click',()=>{
+    const current=document.getElementById('trx-receipt-current');
+    if(current)current.textContent='삭제됨';
+    window._trxReceiptClear=true;
+  });
   const accSel=document.getElementById('f-acc');
   const toAccSel=document.getElementById('f-to-acc');
   const allAccs=S.activeClient?S.accounts.filter(a=>a.clientId===S.activeClient):S.accounts;
@@ -104,13 +161,14 @@ export function renderTrxForm(t){
   const toAccRow=document.getElementById('f-to-acc-row');
   const showToAcc=()=>{const type=document.getElementById('f-type').value;if(toAccRow)toAccRow.style.display=type==='자산이동'?'block':'none';};
   showToAcc();
+  attachAmountInput(document.getElementById('f-amount'));
   updateTrxCatSel();
   updateTrxTypeHint();
   if(isEdit&&t.category)document.getElementById('f-cat').value=t.category;
   document.getElementById('f-type').addEventListener('change',()=>{updateTrxCatSel();showToAcc();updateTrxTypeHint();});
   document.getElementById('f-save-btn').addEventListener('click',async()=>{
     const accId=document.getElementById('f-acc').value;
-    const amount=Number(document.getElementById('f-amount').value);
+    const amount=parseAmount(document.getElementById('f-amount').value);
     if(!accId){toast('계좌를 선택하세요.','error');return;}
     if(!amount){toast('금액을 입력하세요.','error');return;}
     const acc=S.accounts.find(a=>a.id===accId);
@@ -123,86 +181,75 @@ export function renderTrxForm(t){
     // 최종 결재 완료 월 잠금 (자산이동은 출금/입금 계좌 입주자 모두 검사)
     const toAccIdChk=document.getElementById('f-to-acc')?.value||'';
     const toAccChk=S.accounts.find(a=>a.id===toAccIdChk);
-    if(isConfirmedLocked(acc?.clientId,date)||(type==='자산이동'&&toAccChk&&isConfirmedLocked(toAccChk.clientId,date))){toast('최종 결재 완료된 월에는 거래를 추가/수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
+    const stageBlocked=trxEditBlockReason(acc?.clientId,date)||(type==='자산이동'&&toAccChk&&trxEditBlockReason(toAccChk.clientId,date)); if(stageBlocked){toast(stageBlocked,'error',5000);return;}
     if(type==='자산이동'){
       const toAccId=document.getElementById('f-to-acc').value;
       if(!toAccId){toast('입금 계좌를 선택하세요.','error');return;}
       if(toAccId===accId){toast('출금 계좌와 입금 계좌가 같습니다.','error');return;}
       const toAcc=S.accounts.find(a=>a.id===toAccId);
+      if(!toAcc){toast('입금 계좌를 찾을 수 없습니다.','error');return;}
+      try{
+        await saveTransfer({existing:isEdit?t:null,existId,acc,toAcc,accId,toAccId,date,time,desc,amount});
+      }catch(e){toast('자산이동 저장 실패: '+e.message,'error',6000);return;}
       closeModal();
-      if(existId){
-        const outData={clientId:acc.clientId,accountId:accId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:0,amountOut:amount,receiptUrl:t.receiptUrl||'',linkedAccountId:toAccId};
-        outData.id=existId; await saveTrx(outData);
-        // B003: 연결 입금 거래 동기화
-        if(t.linkedTrxId){
-          const toAcc2=S.accounts.find(a=>a.id===toAccId);
-          const{doc:d2,updateDoc:ud2}=fb();
-          await ud2(d2(fdb(),COLS.TRANSACTIONS,t.linkedTrxId),{clientId:toAcc2?.clientId||acc.clientId,accountId:toAccId,date,time,description:desc,amountIn:amount,amountOut:0,linkedAccountId:accId});
-          await updateAccBalance(toAccId);
-          if(S.activeClient)await loadTransactions(S.activeClient);
-        } else {
-          // Feature 5: 반대편 거래 자동 매칭 (엑셀 업로드된 단일 거래를 자산이동으로 변환)
-          const candidates=S.transactions.filter(x=>
-            x.id!==existId &&
-            x.accountId===toAccId &&
-            (x.date||'')===date &&
-            x.type!=='자산이동' &&
-            Number(x.amountIn||0)===amount &&
-            Number(x.amountOut||0)===0
-          );
-          if(candidates.length===1){
-            const cand=candidates[0];
-            const{doc:d3,updateDoc:ud3}=fb();
-            await ud3(d3(fdb(),COLS.TRANSACTIONS,cand.id),{type:'자산이동',category:'자산이동',amountIn:amount,amountOut:0,linkedAccountId:accId,linkedTrxId:existId,clientId:toAcc?.clientId||acc.clientId});
-            await ud3(d3(fdb(),COLS.TRANSACTIONS,existId),{linkedTrxId:cand.id});
-            await updateAccBalance(toAccId);
-            if(S.activeClient)await loadTransactions(S.activeClient);
-            toast('반대편 거래 자동 매칭 완료','success');
-          } else if(candidates.length>1){
-            toast('반대편 후보 '+candidates.length+'건 — 입금 계좌에서 직접 정리 필요','info',4000);
-          } else {
-            toast('반대편 거래 미발견 — 입금 계좌에서 별도 입력 필요','info',4000);
-          }
-        }
-      } else {
-        const{addDoc,collection,updateDoc,doc}=fb();
-        const outRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:acc.clientId,accountId:accId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:0,amountOut:amount,receiptUrl:'',linkedAccountId:toAccId});
-        const inRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:toAcc.clientId,accountId:toAccId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:amount,amountOut:0,receiptUrl:'',linkedAccountId:accId,linkedTrxId:outRef.id});
-        await updateDoc(doc(fdb(),COLS.TRANSACTIONS,outRef.id),{linkedTrxId:inRef.id});
-        await updateAccBalance(accId); await updateAccBalance(toAccId);
-        if(S.activeClient===acc.clientId||S.activeClient===toAcc?.clientId)await loadTransactions(S.activeClient);
-        toast('자산이동 저장됨','success');
-      }
     } else {
-      // 영수증 업로드 처리
-      const oldReceiptUrl=isEdit?(t.receiptUrl||''):'';
-      let receiptUrl=oldReceiptUrl;
-      if(window._trxReceiptClear)receiptUrl='';
-      const receiptFile=document.getElementById('trx-receipt-file')?.files[0];
-      if(receiptFile){
-        try{
-          const url=await uploadToStorage(receiptFile,`receipts/${acc.clientId}/${Date.now()}_${receiptFile.name}`);
-          if(url)receiptUrl=url;
-        }catch(e){toast('영수증 업로드 실패: '+e.message,'error');}
+      // 자산이동을 다른 유형으로 바꾸면 상대편이 짝 없이 남는다.
+      // 예전에는 linkedTrxId가 그대로 남아 한쪽은 지출, 다른 쪽은 여전히
+      // 자산이동인 짝이 만들어졌다. 조용히 상대편을 고치는 것은 다른 입주자의
+      // 장부를 말없이 바꾸는 일이라, 삭제 후 재입력을 안내한다.
+      if(isEdit&&t.type==='자산이동'&&t.linkedTrxId){
+        toast('자산이동은 다른 유형으로 바꿀 수 없습니다.\n'
+          +'이 거래를 삭제하면 상대편도 함께 지워집니다. 그 뒤에 다시 입력해 주세요.','error',7000);
+        return;
       }
-      // 증빙이 교체/해제되면 기존 파일은 Storage에서 삭제(고아 파일 방지)
-      if(oldReceiptUrl&&oldReceiptUrl!==receiptUrl)deleteFromStorage(oldReceiptUrl);
+      // 영수증은 거래가 저장된 **뒤에** 서버가 붙인다. 브라우저는 최종 경로를
+      // 쓸 수 없고, 새 거래는 아직 문서 ID 가 없기 때문이다.
+      const receiptFile=document.getElementById('trx-receipt-file')?.files[0];
       // 취소-수입/취소-지출은 저장 시 '취소'로 정규화
       const isCancelIn=type==='취소-수입';
       const isCancelOut=type==='취소-지출';
       const normType=(isCancelIn||isCancelOut)?'취소':type;
-      const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,
+      // 고르지 않았으면 내용에서 읽어 본다. 못 읽으면 빈 칸 — 틀린 값보다 낫다.
+      const method=normalizePaymentMethod(document.getElementById('f-method')?.value)||detectPaymentMethod(desc);
+      const excludeFromTotals=!!document.getElementById('f-exclude')?.checked;
+      const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,method,excludeFromTotals,
         amountIn:(type==='수입'||isCancelIn)?amount:0,
-        amountOut:(type==='지출'||isCancelOut)?amount:0,
-        receiptUrl};
+        amountOut:(type==='지출'||isCancelOut)?amount:0};
       if(existId)trxData.id=existId;
-      closeModal(); await saveTrx(trxData);
+      closeModal();
+      const savedId=await saveTrx(trxData);
+      if(receiptFile&&savedId){
+        try{
+          const r=await uploadReceipt({
+            clientId:acc.clientId,file:receiptFile,trxId:savedId,
+            expectedReceiptPath:t?.receiptPath||'',
+            expectedReceiptGeneration:t?.receiptGeneration||'',
+            expectedReceiptUrl:t?.receiptUrl||'',
+          });
+          [S.transactions,S.filteredTrx].forEach(arr=>{const x=arr.find(y=>y.id===savedId);
+            if(x){delete x.receiptUrl;x.receiptPath=r.path;x.receiptGeneration=r.generation;x.receiptMissing=false;}});
+        }catch(e){toast('영수증 첨부 실패: '+(e.message||e),'error',6000);}
+      }
+      if(window._trxReceiptClear&&!receiptFile&&savedId&&isEdit){
+        try{
+          await removeReceipt({
+            trxId:savedId,
+            expectedReceiptPath:t?.receiptPath||'',
+            expectedReceiptGeneration:t?.receiptGeneration||'',
+            expectedReceiptUrl:t?.receiptUrl||'',
+          });
+          [S.transactions,S.filteredTrx].forEach(arr=>{const x=arr.find(y=>y.id===savedId);
+            if(x){delete x.receiptUrl;delete x.receiptPath;delete x.receiptGeneration;x.receiptMissing=false;}});
+        }catch(e){toast('영수증 해제 실패: '+(e.message||e),'error',6000);}
+      }
+      // 교체된 기존 증빙은 감사·보존 정책에 따라 서버 정리 대상으로 남긴다.
+      // 브라우저가 최종 receipts 경로를 삭제하는 권한은 없다.
     }
   });
   document.getElementById('f-copy-btn').addEventListener('click',async()=>{
     if(!isEdit){toast('수정 중인 거래가 없습니다.','error');return;}
     const accId=document.getElementById('f-acc').value;
-    const amount=Number(document.getElementById('f-amount').value);
+    const amount=parseAmount(document.getElementById('f-amount').value);
     if(!accId){toast('계좌를 선택하세요.','error');return;}
     if(!amount){toast('금액을 입력하세요.','error');return;}
     const acc=S.accounts.find(a=>a.id===accId);
@@ -211,30 +258,31 @@ export function renderTrxForm(t){
     const time=document.getElementById('f-time')?.value||'';
     const cat=document.getElementById('f-cat').value;
     const desc=document.getElementById('f-desc').value;
-    // 최종 결재 완료 월 잠금 (복사 대상 월도 검사)
+    // 결재 단계 잠금 (복사 대상 월도)
     const toAccIdCp=document.getElementById('f-to-acc')?.value||'';
     const toAccCp=S.accounts.find(a=>a.id===toAccIdCp);
-    if(isConfirmedLocked(acc?.clientId,date)||(type==='자산이동'&&toAccCp&&isConfirmedLocked(toAccCp.clientId,date))){toast('최종 결재 완료된 월에는 거래를 추가할 수 없습니다.','error');return;}
+    const cpBlocked=trxEditBlockReason(acc?.clientId,date)||(type==='자산이동'&&toAccCp&&trxEditBlockReason(toAccCp.clientId,date)); if(cpBlocked){toast(cpBlocked,'error',5000);return;}
     if(type==='자산이동'){
       const toAccId=document.getElementById('f-to-acc').value;
       if(!toAccId){toast('입금 계좌를 선택하세요.','error');return;}
       if(toAccId===accId){toast('출금 계좌와 입금 계좌가 같습니다.','error');return;}
       const toAcc=S.accounts.find(a=>a.id===toAccId);
-      const{addDoc,collection,updateDoc,doc}=fb();
-      const outRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:acc.clientId,accountId:accId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:0,amountOut:amount,receiptUrl:'',linkedAccountId:toAccId});
-      const inRef=await addDoc(collection(fdb(),COLS.TRANSACTIONS),{clientId:toAcc.clientId,accountId:toAccId,date,time,type:'자산이동',category:'자산이동',description:desc,amountIn:amount,amountOut:0,receiptUrl:'',linkedAccountId:accId,linkedTrxId:outRef.id});
-      await updateDoc(doc(fdb(),COLS.TRANSACTIONS,outRef.id),{linkedTrxId:inRef.id});
-      await updateAccBalance(accId); await updateAccBalance(toAccId);
-      if(S.activeClient===acc.clientId||S.activeClient===toAcc?.clientId)await loadTransactions(S.activeClient);
-      toast('✅ 거래가 복사되었습니다.','success');
+      // 자산이동은 saveTransfer 한 곳에서만 쓴다.
+      //
+      // 여기에 있던 addDoc → addDoc → updateDoc 3회 연속 쓰기는 두 가지가
+      // 잘못됐다: (1) 두 번째에서 끊기면 출금만 남아 장부에서 돈이 증발하고,
+      // (2) createdBy를 남기지 않아 보안 규칙이 **생성을 거부한다**
+      //     (규칙은 모든 거래 생성에 createdBy == 본인 uid를 요구한다).
+      // 짝을 한 배치로 쓰는 로직이 이미 있으므로 그것을 부른다.
+      // saveTransfer가 잔액 갱신·목록 재조회·토스트까지 마친다.
+      await saveTransfer({acc,toAcc,accId,toAccId,date,time,desc,amount});
     } else {
       const isCancelIn=type==='취소-수입';
       const isCancelOut=type==='취소-지출';
       const normType=(isCancelIn||isCancelOut)?'취소':type;
       const trxData={clientId:acc.clientId,accountId:accId,date,time,type:normType,category:cat,description:desc,
         amountIn:(type==='수입'||isCancelIn)?amount:0,
-        amountOut:(type==='지출'||isCancelOut)?amount:0,
-        receiptUrl:''};
+        amountOut:(type==='지출'||isCancelOut)?amount:0};
       await saveTrx(trxData);
       toast('✅ 거래가 복사되었습니다.','success');
     }
@@ -265,15 +313,35 @@ export function renderTrxForm(t){
   }
 }
 // 구분(유형)별 한 줄 안내 — 엑셀만 써온 사용자가 낯선 항목을 이해하도록 돕는다
+/**
+ * 구분 선택칸에 남길 구형 유형.
+ *
+ * 자산이동·취소는 **새로 만들 수 없다.** 둘 다 "합계에는 안 들어가지만 잔액에는
+ * 들어간다"는 한 가지 성질을 말하려고 만든 유형이었고, 그 성질은 이제 체크 한
+ * 칸이다. 자산이동은 그 대가로 두 거래를 서로 링크하는 콜러블과 규칙 예외까지
+ * 달고 있었는데, 실제로 쓰는 사람은 많지 않았다.
+ *
+ * 다만 **이미 그렇게 저장된 거래를 열었을 때는** 그 유형이 보여야 한다.
+ * 목록에 없으면 select 가 「지출」로 떨어지고, 저장을 누르는 순간 짝이 있는
+ * 자산이동이 말없이 지출로 바뀐다.
+ */
+function legacyTypeOption(editTypeUI){
+  const legacy={'자산이동':'자산이동 (계좌간 이체)','취소-지출':'취소(지출)','취소-수입':'취소(수입 환수)'};
+  return legacy[editTypeUI]
+    ? `<option value="${editTypeUI}" selected>${legacy[editTypeUI]}</option>` : '';
+}
+
 export function updateTrxTypeHint(){
   const el=document.getElementById('f-type-hint'); if(!el)return;
   const type=document.getElementById('f-type')?.value||'지출';
   const hints={
     '지출':'💸 돈이 나간 거래예요.',
     '수입':'💰 돈이 들어온 거래예요.',
-    '자산이동':'🔁 출금 계좌에서 입금 계좌로 옮기는 거래예요. 출금·입금 2건이 함께 만들어지고, 수입/지출 합계에는 포함되지 않아요.',
-    '취소-지출':'↩️ 카드 승인취소 등 지출 취소예요. 수입/지출 합계와 잔액에서 제외돼요.',
-    '취소-수입':'↩️ 받았던 수입을 되돌리는(환수) 거래예요. 수입/지출 합계와 잔액에서 제외돼요.',
+    // 아래 셋은 **구형 기록을 열었을 때만** 보인다. 새로 만들 수는 없다 —
+    // 「합계에서 제외」 체크 한 칸이 같은 일을 하고, 링크된 짝도 만들지 않는다.
+    '자산이동':'🔁 계좌 간 이체로 기록된 구형 거래예요. 출금·입금 2건이 짝을 이룹니다. 유형은 바꿀 수 없어요.',
+    '취소-지출':'↩️ 지출 취소로 기록된 구형 거래예요. 합계에서는 빠지고 잔액에는 반영됩니다.',
+    '취소-수입':'↩️ 수입 환수로 기록된 구형 거래예요. 합계에서는 빠지고 잔액에는 반영됩니다.',
   };
   el.textContent=hints[type]||'';
 }
@@ -282,22 +350,29 @@ export function updateTrxCatSel(){
   const sel=document.getElementById('f-cat');
   const catRow=document.getElementById('f-cat-row');
   if(!sel)return;
-  if(type==='자산이동'||type==='취소'||type==='취소-지출'||type==='취소-수입'){
+  if(type==='자산이동'||type.startsWith('취소')){
     if(catRow)catRow.style.display='none';
     sel.innerHTML='<option value="">-</option>';
     return;
   }
   if(catRow)catRow.style.display='';
   sel.innerHTML='';
-  const clientId=S.activeClient||'';
-  const cats=[...new Set(
-    S.categories
-      .filter(c=>c.keyword===''&&c.type===type&&(!c.clientId||c.clientId===clientId))
-      .sort((a,b)=>(a.sortOrder??999)-(b.sortOrder??999))
-      .map(c=>c.category)
-  )];
-  if(!cats.includes('확인필요'))cats.push('확인필요');
-  cats.forEach(c=>sel.add(new Option(c,c)));
+  // 「최근」 묶음을 위에 얹는다. 드래그로 정한 순서는 그대로 두고, 전체 목록도
+  // 줄이지 않는다 — 익숙한 자리가 그대로 있어야 한다.
+  const {recent,all}=orderedCategories({
+    categories:S.categories, transactions:S.transactions,
+    type, clientId:S.activeClient||'',
+  });
+  if(recent.length){
+    const g=document.createElement('optgroup'); g.label='최근';
+    recent.forEach(c=>g.appendChild(new Option(c,c)));
+    sel.appendChild(g);
+    const rest=document.createElement('optgroup'); rest.label='전체';
+    all.forEach(c=>rest.appendChild(new Option(c,c)));
+    sel.appendChild(rest);
+    return;
+  }
+  all.forEach(c=>sel.add(new Option(c,c)));
 }
 
 // ─────────────────────────────────────────────
@@ -315,11 +390,19 @@ export function renderExcelForm(){
         <div style="font-size:13px;font-weight:700;color:var(--sub);">클릭하거나 파일을 끌어다 놓으세요</div>
         <div style="font-size:11px;color:var(--muted);margin-top:4px;">xlsx · xls · html · xml · csv</div>
       </div>
+      <!-- 통장 사진 판독 — 서버에 AI가 설정되지 않았으면 숨는다.
+           읽은 줄은 엑셀과 **같은 경로**(중복검사 → 미리보기 → 저장)로 들어간다.
+           저장 로직을 두 벌로 만들면 반드시 갈라진다. -->
+      <div id="xl-photo-box" data-receipt-intake style="display:none;background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:10px 14px;font-size:12px;color:#115e59;">
+        📷 <strong>통장 거래내역 사진</strong>으로도 가져올 수 있습니다. 은행 파일이 없을 때 쓰세요.
+        <input type="file" id="xl-photo-file" accept="image/*,.heic,.heif" style="display:none;">
+        <button id="xl-photo-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #0d9488;color:#0d9488;background:#fff;cursor:pointer;font-size:12px;">${iconSvg('camera')}사진 선택</button>
+      </div>
       <div style="background:#f0fdf4;border:1px solid #a7f3d0;border-radius:8px;padding:10px 14px;font-size:12px;color:#065f46;">
         💡 은행 파일이 없으신가요? <strong>수기 입력 양식</strong>을 다운로드하여 직접 작성 후 업로드하세요.
-        <button onclick="downloadManualTemplate()" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #059669;color:#059669;background:#fff;cursor:pointer;font-size:12px;">📥 양식 다운로드</button>
+        <button onclick="downloadManualTemplate()" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #059669;color:#059669;background:#fff;cursor:pointer;font-size:12px;">${iconSvg('download')}양식 다운로드</button>
       </div>
-      <button id="xl-btn" class="btn" style="width:100%;padding:10px;">📊 파일 분석 시작</button>
+      <button id="xl-btn" class="btn" style="width:100%;padding:10px;">${iconSvg('chart')}파일 분석 시작</button>
       <div id="xl-preview" style="display:none;"></div>
     </div>`;
   const accSel=document.getElementById('xl-acc');
@@ -334,6 +417,14 @@ export function renderExcelForm(){
   zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('drag-over');if(e.dataTransfer.files.length){fi.files=e.dataTransfer.files;onXlFileSelect();}});
   fi.addEventListener('change',onXlFileSelect);
   document.getElementById('xl-btn').addEventListener('click',analyzeXlFile);
+
+  // 통장 사진 경로
+  const photoFi=document.getElementById('xl-photo-file');
+  document.getElementById('xl-photo-btn')?.addEventListener('click',()=>photoFi.click());
+  photoFi?.addEventListener('change',()=>{
+    if(photoFi.files&&photoFi.files.length)analyzeBankbookPhoto(photoFi.files[0]);
+  });
+  refreshReceiptIntakeButtons().catch(()=>{ /* 못 물어보면 숨긴 채로 둔다 */ });
 }
 export function downloadManualTemplate(){
   // CSV 형식 수기 입력 양식 생성 후 다운로드
@@ -353,6 +444,38 @@ export function downloadManualTemplate(){
   URL.revokeObjectURL(a.href);
   toast('양식 다운로드 완료. 내용 작성 후 업로드하세요.','success');
 }
+/**
+ * 자산이동 — **서버가 두 다리를 한 트랜잭션에서 만든다.**
+ *
+ * 예전에는 세 가지 방식으로 한쪽만 남는 상태가 만들어졌다.
+ *   1. 생성이 addDoc → addDoc → updateDoc 3회 연속 쓰기였다(트랜잭션 아님).
+ *      두 번째에서 끊기면 출금만 남고 입금이 없다 → 장부에서 돈이 증발한다.
+ *   2. 지출 → 자산이동으로 바꿀 때 상대편을 못 찾으면 토스트만 띄우고
+ *      그대로 '자산이동'으로 저장했다.
+ *   3. 자산이동 → 지출로 바꾸면 linkedTrxId가 남아 짝이 어긋났다.
+ *
+ * writeBatch 로 1·3 을 고친 뒤에도 한 곳이 남아 있었다: **상대편을 찾는
+ * 조회가 배치 밖에 있었다.** 두 사람이 같은 순간 각자의 거래를 자산이동으로
+ * 바꾸면 둘 다 같은 상대편을 발견해 서로를 덮어쓴다.
+ * 서버는 그 조회까지 트랜잭션 안에 둔다(functions/transfer-fns.js).
+ */
+async function saveTransfer({existing,existId,acc,toAcc,accId,toAccId,date,time,desc,amount}){
+  const res=await window._fbFn.call('saveTransfer')({
+    fromAccountId:accId,toAccountId:toAccId,date,time,description:desc,amount,
+    existId:existId||'',
+  });
+  const out=res.data||{};
+  const msg=out.linkedExisting?'반대편 거래를 찾아 자산이동으로 연결했습니다.'
+    :out.createdMate?'입금 계좌에 상대편 거래를 새로 만들었습니다.'
+    :existId?'자산이동 수정됨':'자산이동 저장됨';
+  void existing;
+  invalidateReportTrxCache('', {clientIds:[...new Set([acc.clientId,toAcc.clientId].filter(Boolean))],forceRefresh:true});
+  await updateAccBalance(acc.id); await updateAccBalance(toAcc.id);
+  if(S.activeClient===acc.clientId||S.activeClient===toAcc.clientId)
+    await loadTransactions(S.activeClient);
+  toast(msg,'success',4000);
+}
+
 export function onXlFileSelect(){
   const fi=document.getElementById('xl-file'), btn=document.getElementById('xl-btn');
   if(fi.files.length){
@@ -360,42 +483,215 @@ export function onXlFileSelect(){
     if(btn)btn.textContent=`📊 분석 시작 (${fi.files[0].name})`;
   }
 }
-export function analyzeXlFile(){
-  const fi=document.getElementById('xl-file'); if(!fi?.files?.length){toast('파일을 선택하세요.','error');return;}
+export async function analyzeXlFile(){
+  const fi=document.getElementById('xl-file');
+  if(!fi?.files?.length){toast('파일을 선택하세요.','error');return;}
+  // 계좌를 먼저 받는다 — 계좌를 모르면 중복 여부를 판정할 수 없다
+  const accId=document.getElementById('xl-acc')?.value;
+  const acc=S.accounts.find(a=>a.id===accId);
+  if(!acc){toast('먼저 계좌를 선택하세요. 계좌를 알아야 중복 여부를 판정할 수 있습니다.','error',4000);return;}
   const btn=document.getElementById('xl-btn'); btn.disabled=true; btn.textContent='분석 중...';
-  const clientId=S.activeClient||'';
-  // C002: 입주자별 규칙 우선, 공통 규칙 후순위로 정렬
-  const parserCats=S.categories.filter(c=>c.keyword&&c.keyword!==''&&(!c.clientId||c.clientId===clientId)).sort((a,b)=>(a.clientId===clientId?0:1)-(b.clientId===clientId?0:1)).map(c=>({keyword:c.keyword,category:c.category,subcategory:c.subcategory||''}));
-  ExcelParser.parseFile(fi.files[0],parserCats)
-    .then(parsed=>{
-      if(!parsed.length){toast('인식된 거래 데이터가 없습니다.','error');btn.disabled=false;btn.textContent='파일 분석 시작';return;}
-      const existSet=new Set(S.transactions.map(t=>`${t.date}_${Math.abs(t.amountIn||0)}_${Math.abs(t.amountOut||0)}`));
-      const existingMaxOrder=S.transactions.length>0?Math.max(...S.transactions.map(t=>t.sortOrder??0)):0;
-      S.excelTemp=parsed.map((p,i)=>{
-        const rawIn=p.in||0, rawOut=p.out||0;
-        let amIn=0, amOut=0, type='지출';
-        if(rawIn>0){amIn=rawIn;type='수입';}
-        else if(rawOut>0){amOut=rawOut;type='지출';}
-        else if(rawOut<0){amOut=rawOut;type='지출';}
-        else if(rawIn<0){amOut=Math.abs(rawIn);type='취소';}
-        const isDup=existSet.has(`${p.date}_${Math.abs(amIn)}_${Math.abs(amOut)}`);
-        return {date:p.date,description:p.desc,amountIn:amIn,amountOut:amOut,type,category:p.cat||'확인필요',subcategory:p.sub||'',receiptUrl:'',_dup:isDup,sortOrder:existingMaxOrder+i+1};
-      });
-      // 원본 행 임시 보관 (미리보기/중복 대조용, Firestore에는 저장하지 않음)
-      S.excelRawRows=parsed.map(p=>({date:p.date,desc:p.desc,amountIn:p.in>0?p.in:0,amountOut:p.out>0?p.out:0}));
-      // 가장 빈번한 연월 자동 감지
-      const mCount={};parsed.forEach(p=>{const m=(p.date||'').substring(0,7);if(m)mCount[m]=(mCount[m]||0)+1;});
-      S.excelMonth=Object.entries(mCount).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
-      const dupCount=S.excelTemp.filter(x=>x._dup).length;
-      btn.disabled=false; btn.textContent=`분석 완료 (${S.excelTemp.length}건)`;
-      if(dupCount>0)toast(`⚠️ ${dupCount}건이 기존 거래와 중복됩니다. 저장 시 자동 제외됩니다.`,'info',5000);
-      renderXlPreview();
-    })
-    .catch(err=>{btn.disabled=false;btn.textContent='파일 분석 시작';toast('파싱 오류: '+err.message,'error');});
+  const reset=()=>{btn.disabled=false;btn.innerHTML=iconSvg('chart')+'파일 분석 시작';};
+  const clientId=acc.clientId;
+  // 입주자별 규칙 우선, 공통 규칙 후순위
+  const parserCats=S.categories
+    .filter(c=>c.keyword&&c.keyword!==''&&(!c.clientId||c.clientId===clientId))
+    .sort((a,b)=>(a.clientId===clientId?0:1)-(b.clientId===clientId?0:1))
+    .map(c=>({keyword:c.keyword,category:c.category,subcategory:c.subcategory||''}));
+
+  try{
+    // 사진을 여기 떨어뜨리는 일이 잦다(드롭 존은 accept 를 우회한다). 엑셀
+    // 파서의 "지원하지 않는 형식"은 **바로 옆에 통장 사진 판독이 있으므로**
+    // 사실도 아니고 무엇을 하라는 안내도 아니다.
+    if(isImageFile(fi.files[0])){
+      const photoBox=document.getElementById('xl-photo-box');
+      const photoReady=photoBox&&photoBox.style.display!=='none';
+      reset();
+      if(photoReady){ await analyzeBankbookPhoto(fi.files[0]); return; }
+      toast('사진은 엑셀 파일이 아닙니다. 통장 사진은 「통장 사진으로 입력」에서 판독합니다 '
+        +'(지금은 사용할 수 없으면 수기 입력을 써 주세요).','error',6000);
+      return;
+    }
+
+    const parsed=await ExcelParser.parseFile(fi.files[0],parserCats,{configs:parserConfigs()});
+    S.excelSkipped=parsed.skipped||[];
+    S.excelTemp=[];
+
+    if(!parsed.rows.length){
+      // 예전에는 "인식된 거래 데이터가 없습니다" 한 줄이 전부였다.
+      // 제외 사유가 있으면 그걸 보여준다 — 원인을 알 수 있는 유일한 단서다.
+      renderXlPreview(); offerBankParser(fi.files[0],analyzeXlFile);
+      toast(S.excelSkipped.length
+        ? `인식된 거래가 없습니다. 제외된 행 ${S.excelSkipped.length}건의 이유를 아래에서 확인하세요.`
+        : '인식된 거래가 없습니다. 등록되지 않은 은행이면 아래 「이 파일로 은행 추가」로 추가할 수 있습니다.','error',7000);
+      reset(); return;
+    }
+
+    // 파일과 사진이 **같은 변환**을 지난다. 주석만 그렇게 적혀 있고 실제로는
+    // 두 벌이었다 — 한쪽만 고치면 같은 거래가 경로에 따라 다르게 저장된다.
+    await fillExcelTempFromRows(parsed.rows,accId);
+    btn.disabled=false; btn.textContent=`분석 완료 (${S.excelTemp.length}건)`;
+    if(parsed.encoding&&parsed.encoding!=='utf-8')
+      toast(`${parsed.encoding} 인코딩으로 읽었습니다.`,'info',3000);
+    if(S.excelSkipped.length)
+      toast(`${S.excelSkipped.length}건이 제외되었습니다. 아래 "제외된 행"을 확인하세요.`,'info',5000);
+  }catch(err){
+    reset(); toast('파싱 오류: '+err.message,'error',5000);
+  }
 }
+
+
+/**
+ * 통장 거래내역 사진을 판독해 **엑셀과 같은 미리보기 경로**에 투입한다.
+ *
+ * 새 저장 경로를 만들지 않는 것이 요점이다. 중복검사·미리보기·행 삭제·
+ * 배치 저장은 이미 엑셀 업로드가 하고 있고 검증돼 있다. 사진은 입력 형식만
+ * 다르므로 파서 행 형태로 바꿔서 그 뒤를 그대로 태운다.
+ */
+export async function analyzeBankbookPhoto(file){
+  const accId=document.getElementById('xl-acc')?.value;
+  if(!accId){toast('계좌를 선택하세요.','error');return;}
+
+  const btn=document.getElementById('xl-photo-btn');
+  const setBusy=(on)=>{ if(btn){btn.disabled=on;btn.innerHTML=on?'판독 중…':iconSvg('camera')+'사진 선택';} };
+
+  setBusy(true);
+  try{
+    validateUploadSize(file);
+    const jpeg=await heicToJpeg(file);
+    // 판독용과 보관용은 **다른 사진**이다 — 통장은 한 장에 스무 줄이 넘고 글자가
+    // 작아서, 보관용 1200px·0.78 로 줄이면 숫자가 뭉개진다(services/image.js).
+    const forRead=await compressForReading(jpeg);
+    const compressed=await compressImage(jpeg);
+    const base64=await fileToBase64(forRead);
+
+    const res=await window._fbFn.call('analyzeBankbook')({
+      imageBase64:base64,
+      mediaType:forRead.type||'image/jpeg',
+      clientId:S.accounts.find(a=>a.id===accId)?.clientId||'',
+    });
+
+    const { rows, skipped }=bankbookRowsToParsed(res.data&&res.data.extracted);
+    S.excelSkipped=skipped;
+
+    if(!rows.length){
+      S.excelTemp=[];
+      renderXlPreview();
+      // 무엇을 하면 되는지까지 말한다. 「선명한지 확인하세요」만 남기면 같은 사진을
+      // 한 번 더 올려 보고 끝난다 — 통장은 대개 **가까이서 한 면씩** 찍으면 읽힌다.
+      toast(skipped.length
+        ? `읽을 수 있는 줄이 없습니다. 제외된 ${skipped.length}건의 이유를 아래에서 확인하세요.`
+        : '거래내역을 읽지 못했습니다. 통장을 화면 가득 채워 한 면씩 다시 찍어 보시고, '
+          +'그래도 안 되면 은행 엑셀 파일이나 수기 입력을 써 주세요.','error',7000);
+      return;
+    }
+
+    // 카테고리는 사용자가 관리하는 규칙이 정한다 (모델이 아니라) — 엑셀과 동일.
+    const clientId=S.accounts.find(a=>a.id===accId)?.clientId||'';
+    const rules=S.categories.filter(c=>c&&c.keyword);
+    for(const r of rows){
+      const hit=classifyMerchant(r.desc,rules,clientId);
+      if(hit){r.cat=hit.category;r.sub=hit.subcategory;}
+    }
+
+    await fillExcelTempFromRows(rows,accId);
+    // 판독한 사진은 그 달의 통장 사진으로도 남긴다. 예전에는 읽고 버려서,
+    // 나중에 보고서에서 그 달 통장을 보려면 같은 사진을 다시 올려야 했다.
+    const filed=await fileBankbookPhoto(compressed,accId,S.excelMonth,file.name);
+    toast(`사진에서 ${rows.length}건을 읽었습니다. 저장 전에 확인하세요.`
+      +(skipped.length?` (제외 ${skipped.length}건)`:'')
+      +(filed?`\n📸 ${S.excelMonth} 통장 사진으로도 보관했습니다.`:''),'success',6000);
+  }catch(err){
+    // 서버가 이미 사용자용 문장으로 바꿔 보낸다(끝이 "직접 입력할 수 있습니다").
+    toast(err.message||'판독에 실패했습니다. 직접 입력할 수 있습니다.','error',6000);
+  }finally{
+    setBusy(false);
+  }
+}
+
+/**
+ * 판독한 통장 사진을 그 달의 통장 사진으로 보관한다.
+ *
+ * 왜 여기서 하나
+ *   사진을 올려 거래를 읽고 나면, 그 사진 자체가 그 달의 통장이다. 그런데
+ *   예전에는 읽고 버렸다. 보고서에서 그 달 통장을 보려면 「계좌 관리 →
+ *   통장 사진 관리」에서 **같은 사진을 한 번 더** 올려야 했다.
+ *
+ * 어느 달인지 모르면 남기지 않는다 — 날짜 없는 사진이 갤러리에 쌓이면
+ * 나중에 어느 달 것인지 아무도 모른다. 그럴 때는 손으로 올리는 편이 낫다.
+ *
+ * 실패해도 거래는 살린다. 판독은 이미 성공했고, 사진 보관은 덤이다.
+ * @returns {Promise<boolean>} 보관했는가
+ */
+async function fileBankbookPhoto(image,accId,month,name){
+  const acc=S.accounts.find(a=>a.id===accId);
+  if(!month||!acc)return false;
+  try{
+    const{url,thumbUrl}=await uploadImageWithThumb(image,
+      `bankbooks/${acc.clientId}/${accId}/${month}_${Date.now()}_${name}`);
+    const{getDoc,doc,updateDoc}=fb();
+    const ref=doc(fdb(),COLS.ACCOUNTS,accId);
+    const snap=await getDoc(ref);
+    const raw=(snap.exists()?snap.data().bankStatements:[])||[];
+    // 구형 기록은 URL 문자열이었다. 형태를 맞춰 두지 않으면 갤러리가 깨진다.
+    const existing=raw.map(x=>typeof x==='string'?{url:x,month:''}:x);
+    // 같은 달에 이미 있어도 덮지 않는다 — 통장은 여러 장이 정상이다.
+    await updateDoc(ref,{bankStatements:[...existing,{url,thumbUrl,month}]});
+    return true;
+  }catch(e){
+    toast('거래는 읽었지만 통장 사진 보관에 실패했습니다: '+(e.message||e),'error',5000);
+    return false;
+  }
+}
+
+/**
+ * 파서 행 → S.excelTemp. 엑셀 경로(analyzeXlFile)와 **같은 변환**을 쓴다.
+ * 여기가 두 벌이 되면 사진과 파일이 다르게 저장된다.
+ */
+async function fillExcelTempFromRows(rows,accId){
+  const existSet=await fetchExistingForDup(accId,rows);
+  // 번호는 **그 날 안에서만** 뜻이 있다 — 배급기가 날짜마다 따로 센다.
+  const takeOrder=dayOrderAllocator(S.transactions,String(S.accounts.find(a=>a.id===accId)?.clientId||''));
+
+  S.excelTemp=rows.map((p)=>{
+    const rawIn=p.in||0, rawOut=p.out||0;
+    let amIn=0, amOut=0, type='지출', exclude=false;
+    if(rawIn>0){amIn=rawIn;type='수입';}
+    else if(rawOut>0){amOut=rawOut;type='지출';}
+    else if(rawOut<0){amOut=rawOut;type='지출';}       // 음수 지출 = 환불
+    // 음수 입금 = 들어왔던 돈이 되돌아 나간 것. 돈은 실제로 빠져나가므로
+    // 잔액에는 넣되 지출 합계에는 넣지 않는다. 예전에는 구형 '취소' 유형을
+    // 새로 만들었는데, 이제 그 뜻은 표시 한 칸이다.
+    else if(rawIn<0){amOut=Math.abs(rawIn);type='지출';exclude=true;}
+    const item={date:p.date,description:p.desc,descRaw:p.descRaw||p.desc,
+      amountIn:amIn,amountOut:amOut,type,
+      category:p.cat||'확인필요',subcategory:p.sub||'',
+      // 결제수단은 **지우기 전의 원문**에서 읽는다 (domain/payment-method.js).
+      method:detectPaymentMethod(p.descRaw||p.desc),
+      excludeFromTotals:exclude,
+      sortOrder:takeOrder(p.date)};
+    item._dup=existSet.has(dupKey({...item,accountId:accId}));
+    return item;
+  });
+
+  const mCount={};
+  rows.forEach(p=>{const m=(p.date||'').substring(0,7);if(m)mCount[m]=(mCount[m]||0)+1;});
+  S.excelMonth=Object.entries(mCount).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
+
+  const dupCount=S.excelTemp.filter(x=>x._dup).length;
+  if(dupCount>0)toast(`⚠️ ${dupCount}건이 이미 등록된 거래와 같습니다. 저장 시 제외됩니다.`,'info',5000);
+  renderXlPreview();
+}
+
+/** 제외된 행 목록 — 조용히 사라지지 않도록 이유와 원문을 함께 보여준다 */
 export function renderXlPreview(){
   const el=document.getElementById('xl-preview'); if(!el)return;
-  if(!S.excelTemp.length){el.style.display='none';return;}
+  const skippedHtml=renderXlSkipped();
+  if(!S.excelTemp.length){
+    // 인식된 거래가 없어도 제외 사유는 보여준다
+    if(!skippedHtml){el.style.display='none';el.innerHTML='';return;}
+    el.style.display='block'; el.innerHTML=skippedHtml; return;
+  }
   const dupCount=S.excelTemp.filter(x=>x._dup).length;
   el.style.display='block';
   el.innerHTML=`
@@ -405,6 +701,7 @@ export function renderXlPreview(){
         <input type="month" id="xl-month-label" class="input" value="${S.excelMonth}" style="padding:4px 8px;font-size:12px;width:130px;">
       </label>
     </div>
+    ${skippedHtml}
     <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:9px;background:#f8fafc;margin-bottom:10px;">
       <table style="width:100%;border-collapse:collapse;">
         <thead style="background:#fff;position:sticky;top:0;"><tr>
@@ -417,19 +714,22 @@ export function renderXlPreview(){
         <tbody id="xl-tbody"></tbody>
       </table>
     </div>
-    <button id="xl-save-btn" class="btn" style="width:100%;padding:11px;background:#10b981;">✅ 최종 저장 (원본 파일 백업 포함)</button>`;
+    <button id="xl-save-btn" class="btn" style="width:100%;padding:11px;background:#10b981;">${iconSvg('check')}최종 저장 (원본 파일 백업 포함)</button>`;
   const tbody=document.getElementById('xl-tbody');
   S.excelTemp.forEach((t,i)=>{
     const isIn=t.amountIn>0, amt=isIn?t.amountIn:Math.abs(t.amountOut), c=cs(t.category);
     const tr=document.createElement('tr'); tr.style.cssText='border-top:1px solid var(--border);';
-    const dupBadge=t._dup?'<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;margin-left:4px;">중복의심</span>':'';
+    const dupBadge=t._dup?'<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;margin-left:4px;">이미 등록됨</span>':'';
     tr.style.background=t._dup?'#fffbeb':'';
-    tr.innerHTML=`<td style="padding:6px 10px;font-size:12px;color:var(--sub);white-space:nowrap;">${t.date}</td><td style="padding:6px 10px;font-size:13px;color:var(--text);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.description}">${t.description}${dupBadge}</td><td style="padding:6px 10px;"><span style="background:${c.bg};color:${c.text};padding:2px 7px;border-radius:6px;font-size:11px;font-weight:700;">${t.category}</span></td><td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${isIn?'#059669':t.type==='취소'?'#71717a':'#dc2626'};">${isIn?'+':''}${amt.toLocaleString()}원${t.type==='취소'?' (취소)':''}</td><td style="padding:6px 10px;text-align:center;"><button style="font-size:12px;color:#94a3b8;background:none;border:none;cursor:pointer;">✕</button></td>`;
+    // 노이즈 단어를 떼기 전 원문을 툴팁에 남긴다 (상호명이 잘렸는지 확인할 수 있도록)
+    const title=escAttr(t.descRaw&&t.descRaw!==t.description?`${t.description}  (원문: ${t.descRaw})`:t.description||'');
+    tr.innerHTML=`<td style="padding:6px 10px;font-size:12px;color:var(--sub);white-space:nowrap;">${escAttr(t.date)}</td><td style="padding:6px 10px;font-size:13px;color:var(--text);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${title}">${escAttr(t.description)}${dupBadge}</td><td style="padding:6px 10px;"><span style="background:${c.bg};color:${c.text};padding:2px 7px;border-radius:6px;font-size:11px;font-weight:700;">${escAttr(t.category)}</span></td><td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${isIn?'#059669':t.type==='취소'?'#71717a':'#dc2626'};">${isIn?'+':''}${amt.toLocaleString()}원${t.type==='취소'?' (취소)':''}</td><td style="padding:6px 10px;text-align:center;"><button style="font-size:12px;color:#94a3b8;background:none;border:none;cursor:pointer;">✕</button></td>`;
     tr.querySelector('button').addEventListener('click',()=>removeXlItem(i));
     tbody.appendChild(tr);
   });
   document.getElementById('xl-save-btn').addEventListener('click',saveExcelData);
 }
+
 export function removeXlItem(idx){
   S.excelTemp.splice(idx,1);
   if(!S.excelTemp.length){document.getElementById('xl-preview').style.display='none';toast('모든 항목이 제거되었습니다.','info');return;}
@@ -440,22 +740,35 @@ export async function saveExcelData(){
   if(!accId){toast('계좌를 선택하세요.','error');return;}
   if(!S.excelTemp.length){toast('데이터가 없습니다.','error');return;}
   const acc=S.accounts.find(a=>a.id===accId); if(!acc)return;
-  // 최종 결재 완료 월에 속한 행이 있으면 업로드 차단
-  const lockedRows=S.excelTemp.filter(item=>!item._dup&&isConfirmedLocked(acc.clientId,item.date));
-  if(lockedRows.length){toast(`최종 결재 완료된 월의 거래 ${lockedRows.length}건이 포함되어 있습니다. 해당 행을 제거한 뒤 저장하세요.`,'error',6000);return;}
+  // 잠긴 달(제출·결재·마감)의 행이 있으면 차단 — 결재자가 본 숫자가 달라진다.
+  const lockedRows=S.excelTemp.filter(item=>!item._dup&&trxEditBlockReason(acc.clientId,item.date));
+  if(lockedRows.length){toast(`${trxEditBlockReason(acc.clientId,lockedRows[0].date)} (해당 행 ${lockedRows.length}건을 제거한 뒤 저장하세요.)`,'error',6000);return;}
   const btn=document.getElementById('xl-save-btn'); if(btn){btn.disabled=true;btn.textContent='저장 중...';}
-  // 중복(_dup) 행 제외하고 저장
-  const toSave=S.excelTemp.filter(item=>!item._dup);
-  const dupCount=S.excelTemp.length-toSave.length;
-  const{addDoc,collection}=fb();
-  for(const item of toSave){
-    await addDoc(collection(fdb(),COLS.TRANSACTIONS),{
-      clientId:acc.clientId,accountId:accId,date:item.date,type:item.type,
-      category:item.category,subcategory:item.subcategory||'',
-      description:item.description,amountIn:item.amountIn||0,amountOut:item.amountOut||0,
-      receiptUrl:'',sortOrder:item.sortOrder??null
-    });
+  // 저장 직전에 중복을 한 번 더 확인한다.
+  // 분석 이후 계좌를 바꿨거나 동료가 같은 파일을 먼저 올렸을 수 있다.
+  let toSave, dupCount;
+  try{
+    const existSet=await fetchExistingForDup(accId,S.excelTemp);
+    toSave=S.excelTemp.filter(item=>!existSet.has(dupKey({...item,accountId:accId})));
+    dupCount=S.excelTemp.length-toSave.length;
+  }catch(e){
+    if(btn){btn.disabled=false;btn.innerHTML=iconSvg('check')+'최종 저장 (원본 파일 백업 포함)';}
+    toast('중복 확인 실패: '+e.message,'error',5000); return;
   }
+  if(!toSave.length){
+    if(btn){btn.disabled=false;btn.innerHTML=iconSvg('check')+'최종 저장 (원본 파일 백업 포함)';}
+    toast(`${dupCount}건 모두 이미 등록된 거래입니다. 저장할 것이 없습니다.`,'info',5000); return;
+  }
+  // 한 건씩 addDoc하면 중간에 끊겼을 때 절반만 들어간다 → 배치로 묶는다
+  await batchAddDocs(toSave.map(item=>({col:COLS.TRANSACTIONS,data:{
+    clientId:acc.clientId,accountId:accId,date:item.date,type:item.type,
+    category:item.category,subcategory:item.subcategory||'',
+    description:item.description,amountIn:item.amountIn||0,amountOut:item.amountOut||0,
+    method:item.method||'',
+    excludeFromTotals:item.excludeFromTotals===true,
+    sortOrder:item.sortOrder??null,
+    createdBy:String(S.user?.userId||''),
+  }})));
   await updateAccBalance(accId);
   const msg=dupCount>0?`${toSave.length}건 저장됨 (중복 ${dupCount}건 제외)`:toSave.length+'건 저장됨';
   toast(msg,'success'); closeModal();
@@ -465,7 +778,7 @@ export async function saveExcelData(){
     const uploadFile=S.excelFile;
     const uploadMonth=document.getElementById('xl-month-label')?.value||S.excelMonth;
     const savedCount=toSave.length;
-    S.excelFile=null; S.excelRawRows=[]; S.excelMonth='';
+    S.excelFile=null; S.excelRawRows=[]; S.excelMonth=''; S.excelSkipped=[];
     try{
       toast('원본 파일 저장 중...','info',3000);
       const url=await uploadExcelOriginal(uploadFile,`excel/${acc.clientId}/${accId}/${Date.now()}_${uploadFile.name}`);
@@ -534,19 +847,23 @@ export function onReceiptFileSelect(file){
 export async function doReceiptUpload(trxId){
   if(!_receiptSelectedFile){toast('파일을 선택하세요.','error');return;}
   const _lk=S.transactions.find(x=>x.id===trxId);
-  if(_lk&&isConfirmedLocked(_lk.clientId,_lk.date)){toast('최종 결재 완료된 월의 거래는 수정할 수 없습니다. (센터장이 결재를 취소하면 다시 편집할 수 있어요.)','error');return;}
+  const _blocked=_lk&&trxEditBlockReason(_lk.clientId,_lk.date); if(_blocked){toast(_blocked,'error',5000);return;}
   const btn=document.getElementById('ru-btn'), status=document.getElementById('ru-status');
   btn.disabled=true; btn.textContent='압축 중...';
   if(status){status.textContent='이미지 압축 중...';status.style.display='block';}
   try{
     btn.textContent='업로드 중...';
     if(status)status.textContent='Firebase Storage에 업로드 중입니다...';
-    const oldUrl=S.transactions.find(x=>x.id===trxId)?.receiptUrl||'';
-    const url=await uploadToStorage(_receiptSelectedFile,`receipts/${S.activeClient||'all'}/${Date.now()}_${_receiptSelectedFile.name}`);
-    const{doc,updateDoc}=fb();
-    await updateDoc(doc(fdb(),COLS.TRANSACTIONS,trxId),{receiptUrl:url,receiptMissing:false});
-    if(oldUrl&&oldUrl!==url)deleteFromStorage(oldUrl);
-    [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);if(t){t.receiptUrl=url;t.receiptMissing=false;}});
+    const target=S.transactions.find(x=>x.id===trxId);
+    // 최종 경로 복사와 거래 갱신은 서버가 한다 — 브라우저는 스테이징까지만.
+    const r=await uploadReceipt({
+      clientId:target?.clientId||S.activeClient,file:_receiptSelectedFile,trxId,
+      expectedReceiptPath:target?.receiptPath||'',
+      expectedReceiptGeneration:target?.receiptGeneration||'',
+      expectedReceiptUrl:target?.receiptUrl||'',
+    });
+    [S.transactions,S.filteredTrx].forEach(arr=>{const t=arr.find(x=>x.id===trxId);
+      if(t){delete t.receiptUrl;t.receiptPath=r.path;t.receiptGeneration=r.generation;t.receiptMissing=false;}});
     toast('업로드 완료!','success'); _receiptSelectedFile=null; closeModal(); renderHistoryTable();
   }catch(e){btn.disabled=false;btn.textContent='📤 업로드';if(status)status.style.display='none';toast('업로드 실패: '+e.message,'error');}
 }
@@ -560,11 +877,10 @@ export function openReceiptModal(url, trxId, opts){
   if(!url)return;
   const large=!!(opts&&opts.large);
   const trx=trxId?[...S.transactions,...(S.reportData?.trxList||[])].find(x=>x.id===trxId):null;
-  const driveMatch=url.match(/\/d\/([^/?]+)/);
-  const isDrive=!!driveMatch;
-  const isStorage=url.includes('firebasestorage.googleapis.com');
-  const isPdf=/\.pdf/i.test(decodeURIComponent(url));
-  const isLocalImg=(/\.(jpg|jpeg|png|gif|webp|bmp)/i.test(url)||(isStorage&&!isPdf))&&!isDrive;
+  // 종류 판정은 receiptViewKind(순수 함수)에 있다 — 서명 URL 에서 전부
+  // 빗나가던 로직이고, 여기 인라인으로 있어서 테스트되지 않았다.
+  const kind=receiptViewKind(url,opts&&opts.contentType);
+  const isDrive=kind==='drive', isPdf=kind==='pdf', isLocalImg=kind==='image';
   // 기존 플로팅 패널 제거
   const existing=document.getElementById('receipt-float-panel');
   if(existing)existing.remove();
@@ -608,12 +924,8 @@ export function openReceiptModal(url, trxId, opts){
     const img=panel.querySelector('#rfp-img'), loading=panel.querySelector('#rfp-loading');
     if(img&&loading){img.onload=()=>{loading.style.display='none';img.style.display='block';};img.onerror=()=>{loading.style.display='none';};}
   }
-  // 드래그 이동
-  const handle=panel.querySelector('#rfp-drag-handle');
-  let ox=0,oy=0,dragging=false;
-  handle.addEventListener('mousedown',e=>{dragging=true;ox=e.clientX-panel.offsetLeft;oy=e.clientY-panel.offsetTop;handle.style.cursor='grabbing';e.preventDefault();});
-  document.addEventListener('mousemove',e=>{if(!dragging)return;panel.style.left=(e.clientX-ox)+'px';panel.style.top=(e.clientY-oy)+'px';panel.style.right='auto';});
-  document.addEventListener('mouseup',()=>{dragging=false;handle.style.cursor='grab';});
+  // 드래그 이동 — 누르고 있는 동안에만 문서에 리스너가 붙는다(누수 없음)
+  makeDraggable(panel, panel.querySelector('#rfp-drag-handle'));
 }
 export function closeReceiptModal(){
   const p=document.getElementById('receipt-float-panel');
@@ -629,169 +941,22 @@ export function closeReceiptModal(){
 export async function printReceiptSheet(){
   const clientId=S.activeClient;
   if(!clientId){toast('입주자를 선택하세요.','error');return;}
-  const trxWithReceipt=S.filteredTrx.filter(t=>t.receiptUrl);
+  const trxWithReceipt=S.filteredTrx.filter(hasReceipt);
   if(!trxWithReceipt.length){toast('증빙이 있는 거래가 없습니다.','info');return;}
   const client=S.clients.find(c=>c.id===clientId)||{name:''};
   const win=window.open('','_blank');
   let cells='';
-  trxWithReceipt.forEach((t,i)=>{
-    const imgSrc=getImageUrl(t.receiptUrl,'w400');
+  const resolved=await Promise.all(trxWithReceipt.map(async t=>({
+    t,url:await receiptAccessUrl(t).catch(()=>''),
+  })));
+  resolved.forEach(({t,url},i)=>{
+    const imgSrc=getImageUrl(url,'w400');
     cells+='<div class="cell"><div class="cell-info">'+t.date+' · '+(t.description||'')+' · '+(t.amountOut>0?t.amountOut.toLocaleString()+'원':t.amountIn.toLocaleString()+'원')+'</div><div class="cell-img"><img src="'+imgSrc+'" onerror="this.src=\'\';this.parentElement.innerHTML=\'이미지 없음\'"></div></div>';
     if((i+1)%8===0&&i+1<trxWithReceipt.length)cells+='<div style="grid-column:1/-1;page-break-after:always;height:0;margin:0;padding:0;border:none;"></div>';
   });
   // A4(210×297mm) - 여백16mm - 제목8mm → 유효높이 약273mm, 4행이므로 행높이 약66mm, 이미지영역 약58mm
   win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>증빙 출력 — '+client.name+'</title><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:"Noto Sans KR",sans-serif;background:#fff;padding:8mm;}h2{font-size:12px;font-weight:700;color:#374151;margin-bottom:4mm;}.grid{display:grid;grid-template-columns:1fr 1fr;gap:3mm;}.cell{border:1px solid #d1d5db;border-radius:3px;padding:2px;break-inside:avoid;page-break-inside:avoid;height:62mm;display:flex;flex-direction:column;overflow:hidden;}.cell-info{font-size:7.5px;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;padding-bottom:2px;border-bottom:1px solid #f3f4f6;margin-bottom:2px;}.cell-img{flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:0;}.cell-img img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;}@page{size:A4 portrait;margin:8mm;}@media print{body{padding:0;}.grid{height:calc(297mm - 16mm - 10mm);grid-template-rows:repeat(4,1fr);}}</style></head><body><h2>📎 증빙 출력 — '+client.name+' ('+trxWithReceipt.length+'건)</h2><div class="grid">'+cells+'</div><script>window.onload=()=>{window.print();};<\/script></body></html>');
   win.document.close();
-}
-
-// ─────────────────────────────────────────────
-// 고정항목
-// ─────────────────────────────────────────────
-export async function loadFixedItems(clientId){
-  if(!clientId)return;
-  const{getDocs,collection,query,where}=fb();
-  const snap=await getDocs(query(collection(fdb(),'fixedItems'),where('clientId','==',clientId)));
-  S.fixedItems=snap.docs.map(d=>({id:d.id,...d.data()}));
-}
-export async function applyFixedItems(){
-  const clientId=S.activeClient;
-  if(!clientId){toast('입주자를 먼저 선택하세요.','error');return;}
-  await loadFixedItems(clientId);
-  if(!S.fixedItems.length){toast('등록된 고정항목이 없습니다. 설정에서 추가하세요.','info');return;}
-  // 기본값: 이전 달
-  const now=new Date();
-  const prev=new Date(now.getFullYear(),now.getMonth()-1,1);
-  const defaultYM=prev.getFullYear()+'-'+String(prev.getMonth()+1).padStart(2,'0');
-  // 월 선택 모달
-  document.getElementById('modal-body').innerHTML=`
-    <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">📌 고정항목 입력</h3>
-    <div style="display:flex;flex-direction:column;gap:14px;">
-      <div>
-        <label class="label">입력 대상 월</label>
-        <input type="month" id="fi-month-sel" class="input" value="${defaultYM}" style="padding:8px 12px;">
-      </div>
-      <button id="fi-month-ok" class="btn" style="padding:11px;width:100%;">📌 이 달로 입력하기</button>
-    </div>`;
-  document.getElementById('modal-wrap').classList.add('show');
-  document.getElementById('fi-month-ok').addEventListener('click',async()=>{
-    const yearMonth=document.getElementById('fi-month-sel').value;
-    if(!yearMonth){toast('월을 선택하세요.','error');return;}
-    // 최종 결재 완료 월에는 고정항목 입력 불가
-    if(isConfirmedLocked(clientId,yearMonth+'-01')){toast(`${yearMonth}은 최종 결재 완료된 월이라 고정항목을 입력할 수 없습니다.`,'error',5000);return;}
-    closeModal();
-    const existing=S.transactions.filter(t=>(t.date||'').startsWith(yearMonth)&&t.isFixed);
-    const existKeys=new Set(existing.map(t=>t.fixedItemId));
-    const toAdd=S.fixedItems.filter(f=>!existKeys.has(f.id));
-    if(!toAdd.length){toast(`${yearMonth} 고정항목이 이미 입력되었습니다.`,'info');return;}
-    showConfirm('고정항목 입력',`${yearMonth} 기준 고정항목 ${toAdd.length}건을 입력하시겠습니까?`,async()=>{
-      const{addDoc,collection}=fb();
-      for(const f of toAdd){
-        await addDoc(collection(fdb(),COLS.TRANSACTIONS),{
-          clientId,accountId:f.accountId,
-          date:f.day?yearMonth+'-'+String(f.day).padStart(2,'0'):yearMonth+'-01',
-          type:f.type,category:f.category,description:f.description,
-          amountIn:f.type==='수입'?Number(f.amount):0,
-          amountOut:f.type==='지출'?Number(f.amount):0,
-          receiptUrl:'',isFixed:true,fixedItemId:f.id
-        });
-      }
-      toast(`${toAdd.length}건 입력 완료`,'success');
-      await loadTransactions(clientId);
-    },'입력');
-  });
-}
-async function refreshAllFixedItems(){
-  try{
-    const{getDocs,collection}=fb();
-    const snap=await getDocs(collection(fdb(),'fixedItems'));
-    S.allFixedItems=snap.docs.map(d=>({id:d.id,...d.data()}));
-  }catch(e){/* no-op */}
-}
-export async function saveFixedItem(data){
-  const{addDoc,setDoc,doc,collection}=fb();
-  if(data.id){const id=data.id;delete data.id;await setDoc(doc(fdb(),'fixedItems',id),data);}
-  else await addDoc(collection(fdb(),'fixedItems'),data);
-  await refreshAllFixedItems();
-  toast('고정항목 저장됨','success');
-}
-export async function deleteFixedItem(id){
-  const{doc,deleteDoc}=fb();
-  await deleteDoc(doc(fdb(),'fixedItems',id));
-  await refreshAllFixedItems();
-  toast('삭제됨','success');
-}
-
-// 필수 고정항목 중 해당 월에 미납된 항목 배열 반환
-// @param clientId
-// @param ym 'YYYY-MM'
-// @param trxList 해당 월 거래 목록(없으면 S.transactions에서 자동 추출)
-export function getUnpaidMandatoryItems(clientId, ym, trxList){
-  if(!clientId||!ym)return[];
-  // 미래 월은 알림 없음 — 당월 또는 과거만
-  const now=new Date();
-  const curYM=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-  if(ym>curYM)return[];
-  const pool=(S.allFixedItems&&S.allFixedItems.length)?S.allFixedItems:S.fixedItems;
-  const mandatory=pool.filter(f=>f.clientId===clientId&&f.isMandatory);
-  if(!mandatory.length)return[];
-  const txs=Array.isArray(trxList)?trxList:S.transactions.filter(t=>t.clientId===clientId&&(t.date||'').startsWith(ym));
-  const paidIds=new Set(txs.filter(t=>t.isFixed&&t.fixedItemId).map(t=>t.fixedItemId));
-  return mandatory.filter(f=>!paidIds.has(f.id));
-}
-
-// ─────────────────────────────────────────────
-// 고정항목 폼
-// ─────────────────────────────────────────────
-export function renderFixedItemForm(item){
-  const isEdit=!!item;
-  const accs=S.activeClient?S.accounts.filter(a=>a.clientId===S.activeClient):S.accounts;
-  document.getElementById('modal-body').innerHTML=`
-    <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">⚙️ 고정항목 ${isEdit?'수정':'등록'}</h3>
-    <div style="display:flex;flex-direction:column;gap:12px;">
-      <div><label class="label">계좌</label><select id="fi-acc" class="input" style="padding:8px 12px;"></select></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <div><label class="label">구분</label><select id="fi-type" class="input" style="padding:8px 12px;"><option value="지출">지출</option><option value="수입">수입</option></select></div>
-        <div><label class="label">매월 몇 일</label><input type="number" id="fi-day" class="input" min="1" max="31" value="${isEdit?item.day||1:1}"></div>
-      </div>
-      <div><label class="label">카테고리</label><select id="fi-cat" class="input" style="padding:8px 12px;"></select></div>
-      <div><label class="label">내용</label><input type="text" id="fi-desc" class="input" value="${isEdit?item.description||'':''}" placeholder="예: 국민연금, 복지관 이용료"></div>
-      <div><label class="label">금액</label><input type="number" id="fi-amt" class="input" value="${isEdit?item.amount||0:0}" style="text-align:right;"></div>
-      <div style="display:flex;align-items:center;gap:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;">
-        <input type="checkbox" id="fi-mandatory" ${isEdit&&item.isMandatory?'checked':''} style="width:16px;height:16px;cursor:pointer;accent-color:#dc2626;">
-        <label for="fi-mandatory" style="font-size:13px;color:#991b1b;cursor:pointer;">필수 항목 (미납 시 알림 표시)</label>
-      </div>
-      <button id="fi-save" class="btn" style="width:100%;padding:11px;">💾 저장</button>
-    </div>`;
-  const accSel=document.getElementById('fi-acc');
-  accs.forEach(a=>accSel.add(new Option(a.label,a.id)));
-  if(isEdit&&item.accountId)accSel.value=item.accountId;
-  const catSel=document.getElementById('fi-cat');
-  const fillCats=()=>{const type=document.getElementById('fi-type').value;catSel.innerHTML='';const cats=[...new Map(S.categories.filter(c=>c.keyword===''&&c.type===type).sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)).map(c=>[c.category,c.category])).keys()];cats.forEach(c=>catSel.add(new Option(c,c)));if(isEdit&&item.category)catSel.value=item.category;};
-  fillCats();
-  document.getElementById('fi-type').addEventListener('change',fillCats);
-  document.getElementById('fi-save').addEventListener('click',async()=>{
-    const data={clientId:S.activeClient,accountId:document.getElementById('fi-acc').value,type:document.getElementById('fi-type').value,day:Number(document.getElementById('fi-day').value)||1,category:document.getElementById('fi-cat').value,description:document.getElementById('fi-desc').value,amount:Number(document.getElementById('fi-amt').value)||0,isMandatory:!!document.getElementById('fi-mandatory')?.checked};
-    if(isEdit)data.id=item.id;
-    await saveFixedItem(data); closeModal();
-  });
-}
-
-export async function renderFixedItemsList(clientId){
-  if(!clientId)return;
-  await loadFixedItems(clientId);
-  const el=document.getElementById('fixed-items-list'); if(!el)return;
-  el.innerHTML='';
-  if(!S.fixedItems.length){el.innerHTML='<div style="font-size:13px;color:var(--muted);padding:8px 0;">등록된 고정항목이 없습니다.</div>';return;}
-  S.fixedItems.forEach(f=>{
-    const acc=S.accounts.find(a=>a.id===f.accountId)?.label||'-';
-    const div=document.createElement('div');
-    div.style.cssText='display:flex;justify-content:space-between;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 14px;';
-    const mandBadge=f.isMandatory?' <span style="font-size:10px;background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:4px;font-weight:700;">필수</span>':'';
-    div.innerHTML='<div><div style="font-size:14px;font-weight:700;color:var(--text);">'+(f.description||'(이름없음)')+mandBadge+' <span style="font-size:12px;font-weight:400;color:var(--muted);">매월 '+(f.day||1)+'일</span></div><div style="font-size:12px;color:var(--muted);margin-top:2px;">'+acc+' · '+f.type+' · '+f.category+' · '+Number(f.amount||0).toLocaleString()+'원</div></div><div style="display:flex;gap:6px;"><button class="fi-edit-btn icon-btn" style="color:#64748b;">✏️</button><button class="fi-del-btn icon-btn" style="color:#94a3b8;">🗑️</button></div>';
-    div.querySelector('.fi-edit-btn').addEventListener('click',()=>{S.activeClient=clientId;openModal('fixed-item',f);});
-    div.querySelector('.fi-del-btn').addEventListener('click',()=>showConfirm('삭제','"'+f.description+'" 고정항목을 삭제하시겠습니까?',async()=>{await deleteFixedItem(f.id);renderFixedItemsList(clientId);}));
-    el.appendChild(div);
-  });
 }
 
 // ─────────────────────────────────────────────
@@ -920,12 +1085,16 @@ export async function renderBankStatementsList(accountId, targetEl){
 }
 export async function uploadBankStatements(files,accRef,existing,renderGallery){
   const status=document.getElementById('bs-status');
+  const bsClientId=String((S.allAccounts||[]).find(a=>a.id===accRef.id)?.clientId||'');
+  if(!bsClientId){toast('계좌의 입주자를 찾을 수 없습니다.','error');return;}
   const total=files.length;
   const monthVal=document.getElementById('bs-month')?.value||'';
   for(let i=0;i<total;i++){
     if(status)status.textContent=`업로드 중... ${i+1}/${total}`;
     try{
-      const{url,thumbUrl}=await uploadImageWithThumb(files[i],`bankbooks/${accRef.id}/${monthVal}_${Date.now()}_${files[i].name}`);
+      // 경로에 clientId 를 넣는다 — Storage 규칙이 계좌→입주자를 되짚으려면
+      // Firestore 조회가 한 번 더 필요하고, 그러면 2회 한도에 걸린다.
+      const{url,thumbUrl}=await uploadImageWithThumb(files[i],`bankbooks/${bsClientId}/${accRef.id}/${monthVal}_${Date.now()}_${files[i].name}`);
       existing.push({url,thumbUrl,month:monthVal});
       const{updateDoc}=fb();
       await updateDoc(accRef,{bankStatements:[...existing]});
@@ -941,25 +1110,49 @@ export async function uploadBankStatements(files,accRef,existing,renderGallery){
 // 입주자 폼
 // ─────────────────────────────────────────────
 export function renderClientForm(c){
-  const isEdit=!!c, isAdmin=can('nav.staff');
+  const isEdit=!!c, canAssign=can('assignments.manage'), canEditDetails=can('settings.client');
   const teamLeaders=S.users.filter(u=>u.role==='팀장'&&u.active!==false);
   document.getElementById('modal-body').innerHTML=`
     <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">${isEdit?'입주자 수정':'입주자 등록'}</h3>
     <input type="hidden" id="fc-id" value="${isEdit?c.id:'cli_'+Date.now()}">
     <div style="display:flex;flex-direction:column;gap:12px;">
-      <div><label class="label">성명</label><input type="text" id="fc-name" class="input" value="${isEdit?c.name:''}"></div>
-      ${isAdmin?`<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div><div><label class="label">담당 직원</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:140px;overflow-y:auto;padding:4px;">${S.users.filter(u=>u.active!==false).map(u=>{const ex=isEdit?String(c.userIds||'').split(',').map(s=>s.trim()):[];const ch=ex.includes(String(u.userId));return`<label style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${ch?'#eff6ff':'#f8fafc'};border:1px solid ${ch?'#bfdbfe':'var(--border)'};border-radius:8px;cursor:pointer;font-size:13px;"><input type="checkbox" name="fc-staff" value="${u.userId}" ${ch?'checked':''} style="accent-color:var(--blue);"> ${u.name}</label>`;}).join('')}</div></div>`:''}
-      <div><label class="label">메모</label><textarea id="fc-memo" class="input" style="height:64px;resize:none;">${isEdit?c.memo||'':''}</textarea></div>
-      <button id="fc-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
+      <div><label class="label">성명</label><input type="text" id="fc-name" class="input" value="${isEdit?c.name:''}" ${canEditDetails?'':'disabled'}></div>
+      ${canAssign?`${teamSelectHtml('fc-team',isEdit?c.team:'')}<div><label class="label">담당 팀장</label><select id="fc-leader" class="input" style="padding:8px 12px;"><option value="">없음</option>${teamLeaders.map(u=>`<option value="${u.id}"${isEdit&&String(c.teamLeader)===String(u.id)?' selected':''}>${u.name}${u.team?' ('+u.team+')':''}</option>`).join('')}</select></div>${staffPickerHtml(isEdit?c.userIds:'')}`:''}
+      <div><label class="label">메모</label><textarea id="fc-memo" class="input" style="height:64px;resize:none;" ${canEditDetails?'':'disabled'}>${isEdit?c.memo||'':''}</textarea></div>
+      <button id="fc-save" class="btn" style="width:100%;padding:11px;">${iconSvg('check')}저장 완료</button>
     </div>`;
+  bindStaffPicker(); bindClientTeamField();   // 검색·팀 좁힘. 저장은 그대로 input[name="fc-staff"]:checked 를 읽는다
   document.getElementById('fc-save').addEventListener('click',async()=>{
-    const isAdm=can('nav.staff');
-    const staffIds=isAdm?Array.from(document.querySelectorAll('input[name="fc-staff"]:checked')).map(c=>c.value).join(','):String(S.user.userId);
+    const isAdm=can('assignments.manage');
+    // 담당 직원·팀장은 관리 권한자만 편집한다(체크박스가 그들에게만 보인다).
+    // 권한이 없는 사용자가 빈 값으로 덮어쓰면 동료의 접근권이 사라지고 팀장이
+    // 공석 처리되므로, 그 필드를 **아예 보내지 않는다** — 서버는 주지 않은
+    // 담당 필드를 바꾸지 않는다(근거는 functions/client-fns.js 머리말에).
     const leaderId=isAdm?document.getElementById('fc-leader')?.value||'':'';
-    const data={id:document.getElementById('fc-id').value,name:document.getElementById('fc-name').value,contact:isEdit?c.contact||'':'',memo:document.getElementById('fc-memo').value,userIds:staffIds,teamLeader:leaderId};
-    const{doc,setDoc}=fb();
-    await setDoc(doc(fdb(),COLS.CLIENTS,data.id),data);
+    const id=document.getElementById('fc-id').value;
+    const data={id,name:document.getElementById('fc-name').value,contact:isEdit?c.contact||'':'',memo:document.getElementById('fc-memo').value,team:document.getElementById('fc-team')?.value};
+    if(isAdm){
+      data.userIds=Array.from(document.querySelectorAll('input[name="fc-staff"]:checked')).map(x=>x.value).join(',');
+    } else if(!isEdit){
+      data.userIds=String(S.user.userId);   // 본인이 만든 입주자는 본인 담당으로
+    }
+    if(isAdm)data.teamLeader=leaderId;
+
+    const p={clientId:id};
+    if(canEditDetails)p.fields={name:data.name,contact:data.contact,memo:data.memo,...(data.team===undefined?{}:{team:data.team})};
+    if(data.userIds!==undefined)p.staffUids=String(data.userIds).split(',');
+    if(data.teamLeader!==undefined)p.leaderUid=data.teamLeader;
+    // 거부를 삼키지 않는다. saveClient 는 신규 등록·담당 범위·마지막 관리자 같은
+    // 조건을 서버에서 거절하는데, try 가 없으면 그 거절이 unhandled rejection 으로
+    // 사라져 **화면에 아무 일도 일어나지 않았다** — 저장된 줄 알고 넘어가게 된다.
+    try{
+      await window._fbFn.call('saveClient')(p);
+    }catch(e){
+      toast(fnErrorMessage(e,'입주자 저장에 실패했습니다.'),'error');
+      return;
+    }
     toast('저장됨','success'); closeModal(); await refetchClients(); renderManagement();
+    await refreshSetupAfterChange();
   });
 }
 
@@ -979,20 +1172,44 @@ export function renderAccountForm(a){
         <div><label class="label">기초 잔액 (기준일 잔액)</label><input type="number" id="fa-init" class="input" value="${isEdit?a.initialBalance||0:0}" style="text-align:right;"></div>
       </div>
       <p style="font-size:11px;color:var(--muted);background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:8px 12px;">💡 기준일 이후의 거래내역을 기초 잔액에 합산하여 현재 잔액을 계산합니다.</p>
-      <button id="fa-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
-      ${isEdit?`<button id="fa-stmt-btn" class="btn-sub" style="width:100%;padding:9px;color:#0369a1;border-color:#bae6fd;margin-top:4px;">📸 통장 사진 관리 (${(a.bankStatements||[]).length}장)</button>`:''}
+      <button id="fa-save" class="btn" style="width:100%;padding:11px;">${iconSvg('check')}저장 완료</button>
+      ${isEdit?`<button id="fa-stmt-btn" class="btn-sub" style="width:100%;padding:9px;color:#0369a1;border-color:#bae6fd;margin-top:4px;">${iconSvg('camera')}통장 사진 관리 (${(a.bankStatements||[]).length}장)</button>`:''}
     </div>`;
   const sel=document.getElementById('fa-client');
-  S.clients.forEach(c=>sel.add(new Option(c.name,c.id))); if(isEdit)sel.value=a.clientId;
+  S.clients.forEach(c=>sel.add(new Option(c.name,c.id)));
+  if(isEdit){
+    sel.value=a.clientId;
+    // 소속 입주자는 바꿀 수 없다(규칙이 clientId 를 불변으로 본다). 계좌를 옮기면
+    // 거래와 잔액이 통째로 따라가기 때문이다. 고를 수 있게 두면 서버가 거절만 한다.
+    // 목록에 없는 입주자면 value 가 비어 첫 항목으로 튀므로, 그때는 이름을 직접 넣는다.
+    if(sel.value!==a.clientId){
+      sel.add(new Option(S.clients.find(c=>c.id===a.clientId)?.name||a.clientId,a.clientId));
+      sel.value=a.clientId;
+    }
+    sel.disabled=true;
+  }
   if(isEdit){const stmtBtn=document.getElementById('fa-stmt-btn');if(stmtBtn)stmtBtn.addEventListener('click',()=>{closeModal();openBankStatementModal(a.id);});}
   document.getElementById('fa-save').addEventListener('click',async()=>{
     const id=document.getElementById('fa-id').value, init=Number(document.getElementById('fa-init').value||0);
     const initDate=document.getElementById('fa-init-date')?.value||'';
-    const data={clientId:document.getElementById('fa-client').value,label:document.getElementById('fa-label').value,accountNumber:isEdit?a.accountNumber||'':'',initialBalance:init,initialBalanceDate:initDate,currentBalance:init};
+    const data={clientId:document.getElementById('fa-client').value,label:document.getElementById('fa-label').value,accountNumber:isEdit?a.accountNumber||'':'',initialBalance:init,initialBalanceDate:initDate};
+    if(!isEdit)data.active=true;
+    // merge:true — 이 객체에 없는 필드를 보존한다.
+    // 예전에는 merge 없이 덮어써서 계좌를 한 번 수정하면 그 계좌의
+    // 통장 사진 기록(bankStatements)이 통째로 사라지고 비활성 계좌가 되살아났다.
+    // currentBalance도 여기서 쓰지 않는다 — syncAccountOnSettingsChange 트리거가
+    // 기초잔액·기준일 변경을 감지해 전체 거래 기준으로 다시 계산한다.
     const{doc,setDoc}=fb();
-    await setDoc(doc(fdb(),COLS.ACCOUNTS,id),data);
-    await updateAccBalance(id);
+    // 계좌 쓰기는 규칙이 settingsAccount capability 로 거절할 수 있다.
+    // try 가 없으면 그 거절이 조용히 사라져 저장된 것처럼 보였다.
+    try{
+      await setDoc(doc(fdb(),COLS.ACCOUNTS,id),data,{merge:true});
+    }catch(e){
+      toast(fnErrorMessage(e,'계좌 저장에 실패했습니다. 권한을 확인하세요.'),'error');
+      return;
+    }
     toast('저장됨','success'); closeModal(); await refetchAccounts(); renderManagement();
+    await refreshSetupAfterChange();
   });
 }
 
@@ -1003,24 +1220,50 @@ export function renderStaffForm(u){
   const isEdit=!!u;
   document.getElementById('modal-body').innerHTML=`
     <h3 style="font-size:18px;font-weight:900;color:var(--text);margin-bottom:18px;">${isEdit?'직원 수정':'직원 등록'}</h3>
-    <input type="hidden" id="fs-id" value="${isEdit?u.id:'usr_'+Date.now()}">
+    <!-- 문서 ID는 로그인 아이디를 그대로 쓴다 (별도 usr_xxx 생성 없음) -->
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div><label class="label">이름</label><input type="text" id="fs-name" class="input" value="${isEdit?u.name||'':''}"></div>
       <div><label class="label">아이디</label><input type="text" id="fs-uid" class="input" value="${isEdit?u.userId||'':''}" ${isEdit?'readonly':''}></div>
-      <div><label class="label">비밀번호</label><input type="password" id="fs-pw" class="input" placeholder="${isEdit?'변경 시만 입력':''}"></div>
-      <div><label class="label">역할</label><select id="fs-role" class="input" style="padding:8px 12px;"><option value="입력자"${isEdit&&u.role==='입력자'?' selected':''}>입력자 (수기입력 전용)</option><option value="담당자"${isEdit&&u.role==='담당자'?' selected':''}>담당자</option><option value="팀장"${isEdit&&u.role==='팀장'?' selected':''}>팀장</option><option value="센터장"${isEdit&&u.role==='센터장'?' selected':''}>센터장</option><option value="관리자"${isEdit&&u.role==='관리자'?' selected':''}>관리자</option></select></div>
-      <div><label class="label">팀</label><input type="text" id="fs-team" class="input" value="${isEdit?u.team||'':''}"></div>
-      <button id="fs-save" class="btn" style="width:100%;padding:11px;">💾 저장 완료</button>
+      ${isEdit?'<div style="font-size:12px;color:var(--muted);">비밀번호는 직원 정보와 분리되어 있으며 이 화면에서 변경할 수 없습니다.</div>':'<div><label class="label">비밀번호</label><input type="password" id="fs-pw" class="input"></div>'}
+      <div><label class="label">역할</label><select id="fs-role" class="input" style="padding:8px 12px;"><option value="입력자"${isEdit&&u.role==='입력자'?' selected':''}>입력자 (수기입력 전용)</option><option value="담당자"${isEdit&&u.role==='담당자'?' selected':''}>담당자</option><option value="팀장"${isEdit&&u.role==='팀장'?' selected':''}>팀장</option><option value="센터장"${isEdit&&u.role==='센터장'?' selected':''}>센터장</option></select></div>
+      ${teamSelectHtml('fs-team',isEdit?u.team:'')}
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;padding:8px 0;">
+        <input type="checkbox" id="fs-admin" ${isEdit&&u.isAdmin===true?'checked':''} style="accent-color:var(--blue);width:18px;height:18px;">
+        관리자 권한 (권한 설정·전체 초기화)
+      </label>
+      <button id="fs-save" class="btn" style="width:100%;padding:11px;">${iconSvg('check')}저장 완료</button>
     </div>`;
   document.getElementById('fs-save').addEventListener('click',async()=>{
-    const id=document.getElementById('fs-id').value;
-    const pw=document.getElementById('fs-pw').value;
-    const data={userId:document.getElementById('fs-uid').value,name:document.getElementById('fs-name').value,role:document.getElementById('fs-role').value,team:document.getElementById('fs-team').value};
-    if(pw)data.password=pw;
-    const{doc,setDoc}=fb();
-    // merge:true — 비밀번호 미입력 시 기존 값 유지, approved/active 등 기존 필드 보존
-    await setDoc(doc(fdb(),COLS.USERS,id),data,{merge:true});
-    toast('저장됨','success'); closeModal(); await refetchUsers(); renderManagement();
+    const btn=document.getElementById('fs-save');
+    const pw=document.getElementById('fs-pw')?.value||'';
+    const payload={
+      userId: (document.getElementById('fs-uid').value||'').trim(),
+      name:   (document.getElementById('fs-name').value||'').trim(),
+      role:   isEdit?(u.role||'입력자'):'입력자',
+      team:   (document.getElementById('fs-team').value||'').trim(),
+      isAdmin: isEdit&&u.isAdmin===true,
+    };
+    const desiredRole=document.getElementById('fs-role').value;
+    const desiredAdmin=document.getElementById('fs-admin')?.checked===true;
+    if(pw)payload.password=pw;
+    btn.disabled=true; btn.textContent='저장 중...';
+    try{
+      // users 쓰기는 보안 규칙이 막는다. 서버가 등급을 검증하고 비밀번호를 해시한다.
+      // 비밀번호 미입력 시 기존 값이 유지된다(merge).
+      const res=await window._fbFn.call('upsertStaff')(payload);
+      const fail=res.data?.results?.find(r=>!r.ok);
+      if(fail){toast('저장 실패: '+fail.error,'error');return;}
+      const needsPrivilege=!isEdit||desiredRole!==(u.role||'입력자')||desiredAdmin!==(u.isAdmin===true);
+      if(needsPrivilege){
+        const approval=await window._fbFn.call('approveStaff')({
+          userId:payload.userId,role:desiredRole,isAdmin:desiredAdmin,
+        });
+        const state=approval.data?.state;
+        toast(state==='executed'?'저장과 역할 변경이 완료됐습니다.':'일반 정보를 저장하고 역할 변경 승인을 요청했습니다.','success',5000);
+      }else toast('저장됨','success');
+      closeModal(); await refetchUsers(); renderManagement();
+    }catch(e){ toast('저장 오류: '+(e.message||'다시 시도하세요.'),'error'); }
+    finally{ btn.disabled=false; btn.innerHTML=iconSvg('check')+'저장 완료'; }
   });
 }
 
@@ -1083,7 +1326,7 @@ function renderBulkModal(title,desc,templateBtn,previewId){
     <h3 style="font-size:17px;font-weight:900;color:var(--text);margin-bottom:14px;">${title}</h3>
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:13px;color:#1e40af;">
-        💡 ${desc}<br><button id="bulk-tpl-btn" class="btn-sub" style="margin-top:8px;font-size:12px;padding:5px 12px;color:#2563eb;border-color:#bfdbfe;">📥 양식 다운로드</button>
+        💡 ${desc}<br><button id="bulk-tpl-btn" class="btn-sub" style="margin-top:8px;font-size:12px;padding:5px 12px;color:#2563eb;border-color:#bfdbfe;">${iconSvg('download')}양식 다운로드</button>
       </div>
       <div id="bulk-drop" style="border:2px dashed #cbd5e1;border-radius:12px;padding:28px;text-align:center;cursor:pointer;background:#f8fafc;">
         <input type="file" id="bulk-file" accept=".xlsx,.xls" style="display:none;">
@@ -1132,7 +1375,8 @@ function parseStaffRows(rows){
   if(rows.length<2)return[];
   const h=rows[0].map(v=>String(v).trim());
   const idx={name:h.findIndex(v=>v.includes('이름')),userId:h.findIndex(v=>v.includes('아이디')),password:h.findIndex(v=>v.includes('비밀번호')||v.includes('패스워드')),role:h.findIndex(v=>v.includes('역할')),team:h.findIndex(v=>v.includes('팀'))};
-  const validRoles=['담당자','팀장','센터장','관리자','입력자'];
+  // 관리자는 역할이 아니라 users.isAdmin 플래그다 (직원 폼의 체크박스로 부여)
+  const validRoles=['입력자','담당자','팀장','센터장'];
   const existIds=new Set(S.users.map(u=>u.userId));
   const seenIds=new Set();
   return rows.slice(1).map((row,i)=>{
@@ -1163,7 +1407,7 @@ function renderBulkStaffPreview(parsed){
     <div style="font-size:13px;font-weight:700;color:var(--text);">미리보기 — 총 ${parsed.length}행 (유효 ${validCount}건 / 오류 ${errCount}건)</div>
     ${errCount?`<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;">⚠️ 오류 행은 저장에서 제외됩니다. 빨간 행을 확인하세요.</div>`:''}
     <div id="bulk-staff-table" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
-    <button id="bulk-staff-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>✅ ${validCount}명 일괄 저장</button>`;
+    <button id="bulk-staff-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>${iconSvg('check')}${validCount}명 일괄 저장</button>`;
   renderBulkTable(document.getElementById('bulk-staff-table'),parsed,[
     {key:'name',label:'이름'},{key:'userId',label:'아이디'},{key:'password',label:'비밀번호',mask:true},{key:'role',label:'역할'},{key:'team',label:'팀'},
   ]);
@@ -1175,9 +1419,28 @@ async function saveBulkStaff(parsed){
   btn.disabled=true; btn.textContent='저장 중...';
   try{
     const valid=parsed.filter(r=>r._errors.length===0);
-    const adds=valid.map(s=>({col:COLS.USERS,data:{userId:s.userId,name:s.name,password:s.password,role:s.role,team:s.team||'',approved:true}}));
-    await batchAddDocs(adds);
-    toast(`직원 ${valid.length}명 등록 완료`,'success',4000);
+    // users 쓰기는 보안 규칙이 막는다. 서버가 건별로 등급·아이디를 검증하고
+    // 비밀번호를 해시한다. 실패한 건은 결과에 사유가 담겨 온다.
+    const res=await window._fbFn.call('upsertStaff')({
+      staff: valid.map(v=>({userId:v.userId,name:v.name,password:v.password,role:v.role,team:v.team||''}))
+    });
+    const {okCount=0,failCount=0,results=[]}=res.data||{};
+    const succeeded=new Set(results.filter(r=>r.ok).map(r=>r.userId));
+    let approvedCount=0,requestedCount=0;
+    for(const row of valid){
+      if(!succeeded.has(row.userId))continue;
+      const approval=await window._fbFn.call('approveStaff')({
+        userId:row.userId,role:row.role||'입력자',isAdmin:false,
+      });
+      if(approval.data?.state==='executed')approvedCount++; else requestedCount++;
+    }
+    if(failCount){
+      const lines=results.filter(r=>!r.ok).map(r=>`${r.userId}: ${r.error}`).join('\n');
+      toast(`${okCount}명 등록, ${failCount}명 실패`,'error',6000);
+      console.warn('직원 일괄 등록 실패 내역:\n'+lines);
+    } else {
+      const approvalSummary=[approvedCount?`${approvedCount}명 승인 완료`:'',requestedCount?`${requestedCount}명 승인 요청`:'' ].filter(Boolean).join(' · '); toast(`직원 ${okCount}명 등록${approvalSummary?' · '+approvalSummary:''}`,'success',4000);
+    }
     closeModal(); await refetchUsers(); renderManagement();
   }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
 }
@@ -1235,7 +1498,7 @@ function renderBulkClientPreview(parsed){
     <div style="font-size:13px;font-weight:700;color:var(--text);">미리보기 — 총 ${parsed.length}행 (유효 ${validCount}건 / 오류 ${errCount}건)</div>
     ${errCount?`<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;">⚠️ 오류 행은 저장에서 제외됩니다.</div>`:''}
     <div id="bulk-client-table" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
-    <button id="bulk-client-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>✅ ${validCount}명 일괄 저장</button>`;
+    <button id="bulk-client-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>${iconSvg('check')}${validCount}명 일괄 저장</button>`;
   renderBulkTable(document.getElementById('bulk-client-table'),parsed,[
     {key:'name',label:'이름'},{key:'userIds',label:'담당직원아이디'},{key:'teamLeader',label:'담당팀장아이디'},{key:'memo',label:'메모'},
   ]);
@@ -1307,7 +1570,7 @@ function renderBulkAccountPreview(parsed){
     <div style="font-size:13px;font-weight:700;color:var(--text);">미리보기 — 총 ${parsed.length}행 (유효 ${validCount}건 / 오류 ${errCount}건)</div>
     ${errCount?`<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;">⚠️ 오류 행은 저장에서 제외됩니다.</div>`:''}
     <div id="bulk-account-table" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
-    <button id="bulk-account-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>✅ ${validCount}개 일괄 저장</button>`;
+    <button id="bulk-account-save" class="btn" style="width:100%;padding:11px;" ${validCount===0?'disabled':''}>${iconSvg('check')}${validCount}개 일괄 저장</button>`;
   renderBulkTable(document.getElementById('bulk-account-table'),parsed,[
     {key:'clientName',label:'입주자이름'},{key:'label',label:'계좌명'},{key:'balance',label:'초기잔액'},{key:'date',label:'기준일'},
   ]);
@@ -1325,3 +1588,4 @@ async function saveBulkAccounts(parsed){
     closeModal(); await refetchAccounts(); renderManagement();
   }catch(e){toast('저장 오류: '+e.message,'error');btn.disabled=false;btn.textContent='✅ 일괄 저장';}
 }
+

@@ -1,0 +1,29 @@
+{
+  "phase": "VERIFY",
+  "scope": "fixed-role-policy-and-security-p1",
+  "status": "IN_PROGRESS",
+  "resumedAt": "2026-09-15",
+  "code_progress": {
+    "foundation": "implemented and verified",
+    "roleGuide": "implemented as read-only fixed-role guidance",
+    "current": "code-only final review fixes implemented and locally verified",
+    "remaining": "remote branch application, browser smoke, staging round-trip, and deployment remain"
+  },
+  "decisions": {
+    "teamLeaderScope": "clients.teamLeader UID only",
+    "sameApproverExecutor": "prohibited; remain pending without another approver"
+  },
+  "context_summary": "거래 갱신 순서, OCR 품목 AI 경계, 보고서 삭제 경합, canonical 조회 불일치를 수정하고 로컬 회귀 검증을 완료했다. 원격 브랜치와 운영 배포는 건드리지 않았다.",
+  "source": "claude/smart-care-ledger-final-review-kjicax commit 8fc1334c local overlay",
+  "deploymentAuthorized": false,
+  "productionDataAuthorized": false,
+  "checks": {
+    "check": "passed (1197 tests)",
+    "contract": "passed (24 tests)",
+    "contractRatchet": "not-run",
+    "rules": "not-run in this fix pass; previous branch run passed (277 tests)",
+    "browserSmoke": "not-run (requires seeded local emulators and a compatible Chromium runtime)"
+  },
+  "deployment": "not-run",
+  "productionDataAccess": "not-run"
+}

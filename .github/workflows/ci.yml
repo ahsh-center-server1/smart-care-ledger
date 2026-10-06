@@ -1,0 +1,187 @@
+# 검사 — 푸시할 때마다 돈다.
+#
+# 왜 별도 워크플로인가
+#   `deploy-staging.yml`도 `npm run check`를 하지만, 그것은 **배포 잡 안에** 있고
+#   배포 잡은 `FIREBASE_SA_STAGING` 시크릿이 있을 때만 돈다. 시크릿이 없으면
+#   워크플로는 「준비 확인」에서 조용히 끝나고 **초록불이 뜬다.**
+#
+#   즉 테스트가 한 줄도 돌지 않았는데 PR은 통과한 것처럼 보였다.
+#   게다가 그 워크플로는 `functions/**`·규칙·인덱스가 바뀔 때만 돌아서,
+#   `public/**`만 고친 커밋은 아무 검사도 받지 않았다.
+#
+#   이 파일은 시크릿도 경로 필터도 없다. 배포와 무관하게 **항상** 돈다.
+#
+# 브라우저 검증(tools/qa-smoke.mjs)은 여기에 없다 — 에뮬레이터 3종 + 시드 +
+# Chromium이 필요해 별도 잡이 필요하고, 이 저장소에서 아직 돌려 본 적이 없다.
+# 로컬에서 `npm run qa:smoke`로 돌린다(STAGING.md 참고).
+
+name: 검사
+
+# PR 브랜치에서는 pull_request로만 돈다. push까지 열어 두면 같은 커밋에
+# 워크플로가 두 번 걸린다(실제로 첫 실행에서 그랬다).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ESLint · 단위 테스트
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # functions/는 별도 package.json이다. 루트 npm ci는 그것을 설치하지 않는다.
+      # test/receipt-extract.test.mjs가 functions/ai/*를 require하므로
+      # 이 줄이 없으면 `Cannot find module`로 죽는다
+      # (로컬에서는 이미 설치돼 있어 드러나지 않았다 — 첫 CI 실행에서 잡혔다).
+      #
+      # 예전에는 루트 postinstall이 이것을 대신했지만, **설치 안에서 설치를
+      # 부르는 것**이라 Windows npm 11에서 멈췄다(test/portability.test.mjs).
+      # 이제 훅을 쓰지 않으므로 각 잡이 명시적으로 설치한다.
+      - run: npm ci
+        working-directory: functions
+      # vendor:check가 포함된다 — public/vendor/의 번들이 package.json의
+      # 버전과 어긋나면 실패한다(커밋된 번들이 낡은 채로 배포되는 것을 막는다).
+      - run: npm run check
+
+  rules:
+    name: 보안 규칙
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      # Firestore 에뮬레이터는 JVM에서 돈다.
+      # firebase-tools는 **JDK 21 이상**을 요구한다(17로는
+      # "no longer supports Java version before 21"로 죽는다).
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      # 규칙 테스트는 functions/의 고정 정책 사본을 읽는다.
+      - run: npm ci
+        working-directory: functions
+      # 규칙을 **실제로 평가한다.** RUNBOOK의 「배포 3」(규칙 잠금)은 되돌리기가
+      # 가장 어려운 단계이므로, 배포가 규칙의 첫 실행이 되면 안 된다.
+      - run: npm run test:rules
+
+  contract:
+    name: 집행 계약 게이트
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # 권한 마이그레이션의 각 단계가 게이트 하나씩을 통과로 바꾼다.
+    #
+    # 왜 래칫인가
+    #   처음에는 `continue-on-error: true`로 붙였다. 워크플로는 통과하지만
+    #   **체크 자체는 빨간 X로 남는다** — GitHub은 job conclusion을 그대로
+    #   보고한다. 영구적으로 빨간 체크는 리뷰어가 빨강을 무시하도록 학습시키고,
+    #   진짜 실패가 그 안에 묻힌다.
+    #
+    #   그래서 통과 개수를 test/contract/ratchet.json에 기준선으로 커밋한다.
+    #   늘어나면 기준선을 올리고, 줄어들면 실패한다. 첫날부터 진짜 게이트이면서
+    #   초록이다. 남은 게이트 목록은 잡 로그에 나온다.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # 집행 계약 게이트는 Functions 쪽 집행 지점을 직접 확인한다.
+      - run: npm ci
+        working-directory: functions
+      - run: npm run test:contract:ratchet
+
+  roundtrip:
+    name: 결재 왕복 (에뮬레이터)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # 단위·규칙·계약 검사가 전부 초록인데도 확인되지 않던 것이 있다:
+    # **네 역할이 실제로 로그인해서 보고서를 끝까지 올릴 수 있는가.**
+    #
+    # 그 길은 login → authz 투영본 → applyReportTransition → 잠금 색인을
+    # 차례로 지난다. 조각마다 테스트가 있어도 이어 붙인 길은 아무도 걷지
+    # 않았고, 실제로 시드 직후에는 authz 문서가 없어 모든 결재가 거부됐다
+    # (배포 순서 §10-2 의 2번을 빠뜨린 것과 같은 고장). 그래서 이 잡은
+    # backfillAuthz 부터 시작한다 — 그 단계 자체가 검사 대상이다.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      # Firestore·Auth 에뮬레이터는 JVM에서 돈다(규칙 잡과 같은 이유로 JDK 21).
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      # Functions 에뮬레이터가 실제 콜러블을 로드한다 — 여기서는 필수다.
+      - run: npm ci
+        working-directory: functions
+      # 에뮬레이터를 띄우고 → 시드 → 왕복 → 내린다. 실패하면 잡이 빨개진다.
+      #
+      # ⚠ Functions 에뮬레이터는 Firestore 트리거를 등록할 때
+      #   firebase-public.firebaseio.com 에 접속한다. GitHub 러너는 열려 있어
+      #   그대로 뜨지만, 폐쇄망에서 돌릴 때는 트리거를 뺀 진입점이 필요하다
+      #   (STAGING.md).
+      - run: npm run emu:roundtrip
+
+  browser:
+    name: 브라우저 화면 검증 (역할별)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # 네 역할로 **실제 앱을 브라우저에서 눌러 본다.**
+    #
+    # 단위 테스트는 순수 판정을, 규칙 테스트는 서버 집행을, 왕복 검사는 콜러블을
+    # 본다. 그런데 화면이 그려지는지, 권한대로 숨고 보이는지는 그중 어느 것도
+    # 보지 않는다 — PR #7 은 화면 모듈을 크게 고쳤지만 브라우저에서 한 번도
+    # 렌더된 적이 없었다.
+    #
+    # 기대치는 역할 이름이 아니라 **고정 정책에서 뽑는다**(capsOf). 손으로 적은
+    # 역할 목록은 등급제 시절의 것이라, 역할이 누적되지 않게 바뀐 뒤 전부
+    # 어긋나 있었다(팀장에게 엑셀 업로드가 보이기를 기대했다).
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      # 에뮬레이터(Firestore·Auth)는 JVM 에서 돈다 — 규칙 잡과 같은 이유로 JDK 21.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      # Hosting 이 서빙하는 앱이 콜러블을 부른다 — Functions 도 실제로 띄운다.
+      - run: npm ci
+        working-directory: functions
+      # Chromium 만 받는다(브라우저 셋을 다 받으면 몇 분이 더 걸린다).
+      - run: npx playwright install --with-deps chromium
+      # 에뮬레이터 기동 → 시드 → **권한 백필** → 화면 검증 → 종료.
+      # 백필을 빼면 로그인은 되는데 모든 쓰기가 거부된다(배포 순서 §10-2 의 2번).
+      - run: npm run emu:qa
+      # 실패했을 때 무엇이 보였는지가 로그보다 빠르다.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-artifacts
+          path: qa-artifacts/
+          retention-days: 7
